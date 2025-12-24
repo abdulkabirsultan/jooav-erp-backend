@@ -40,8 +40,15 @@ async function bootstrap() {
   app.use(compression());
 
   // CORS configuration
+  const corsOrigins = configService.get('CORS_ORIGIN')
+    ? configService
+        .get('CORS_ORIGIN')
+        .split(',')
+        .map((origin) => origin.trim())
+    : ['http://localhost:3001'];
+
   app.enableCors({
-    origin: configService.get('CORS_ORIGIN') || 'http://localhost:3001',
+    origin: corsOrigins,
     credentials: configService.get('CORS_CREDENTIALS') === 'true',
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
