@@ -1,7 +1,12 @@
-import { IsOptional, IsString, IsEnum, IsUUID, Matches } from 'class-validator';
+import { IsOptional, IsEnum, Matches, IsBoolean } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { BrandStatus } from '@prisma/client';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
+import {
+  SortByOptions,
+  SortOrderOptions,
+} from '../../../shared/constants/app.constants';
 
 export class BrandQueryDto extends PaginationDto {
   @ApiPropertyOptional({
@@ -24,7 +29,7 @@ export class BrandQueryDto extends PaginationDto {
     enum: ['name', 'createdAt', 'updatedAt'],
   })
   @IsOptional()
-  @IsString()
+  @IsEnum(SortByOptions)
   sortBy?: 'name' | 'createdAt' | 'updatedAt';
 
   @ApiPropertyOptional({
@@ -32,6 +37,62 @@ export class BrandQueryDto extends PaginationDto {
     enum: ['asc', 'desc'],
   })
   @IsOptional()
-  @IsString()
+  @IsEnum(SortOrderOptions)
   sortOrder?: 'asc' | 'desc';
+
+  @ApiPropertyOptional({
+    description: 'Include manufacturer in response',
+    example: true,
+    type: Boolean,
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    return Boolean(value);
+  })
+  @IsBoolean()
+  includeManufacturer?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Include products in response',
+    example: true,
+    type: Boolean,
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    return Boolean(value);
+  })
+  @IsBoolean()
+  includeProducts?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Include variants in response',
+    example: true,
+    type: Boolean,
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    return Boolean(value);
+  })
+  @IsBoolean()
+  includeVariants?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Include audit information (createdBy, updatedBy, etc.)',
+    example: false,
+    type: Boolean,
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    return Boolean(value);
+  })
+  @IsBoolean()
+  includeAuditInfo?: boolean;
 }

@@ -38,7 +38,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
           : undefined;
         code = responseObj.error || 'HTTP_EXCEPTION';
       } else {
-        message = exceptionResponse as string;
+        message = exceptionResponse;
         code = 'HTTP_EXCEPTION';
       }
     } else {

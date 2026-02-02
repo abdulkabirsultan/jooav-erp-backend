@@ -5,7 +5,7 @@ import {
   HealthCheck,
   PrismaHealthIndicator,
 } from '@nestjs/terminus';
-import { PrismaService } from '../database/prisma.service';
+import { PrismaService } from '../modules/prisma/prisma.service';
 import { CacheService } from '../modules/cache/cache.service';
 
 @ApiTags('Health')
@@ -56,6 +56,21 @@ export class HealthController {
     return {
       status: 'ok',
       timestamp: new Date().toISOString(),
+    };
+  }
+
+  @Get('cache')
+  @ApiOperation({ summary: 'Check Redis cache connection and status' })
+  @ApiResponse({ status: 200, description: 'Cache status information' })
+  async cacheStatus() {
+    const connectionInfo = await this.cacheService.getConnectionInfo();
+    const connectionStatus = this.cacheService.getConnectionStatus();
+
+    return {
+      status: connectionStatus.connected ? 'healthy' : 'unhealthy',
+      timestamp: new Date().toISOString(),
+      connection: connectionStatus,
+      details: connectionInfo,
     };
   }
 }

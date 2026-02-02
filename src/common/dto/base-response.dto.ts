@@ -26,6 +26,12 @@ export class BaseResponse<T = any> {
   data?: T;
 
   @ApiProperty({
+    description: 'Pagination metadata (for paginated responses)',
+    required: false,
+  })
+  meta?: any;
+
+  @ApiProperty({
     description: 'Response timestamp',
     example: '2023-12-08T10:30:00Z',
   })
@@ -35,10 +41,26 @@ export class BaseResponse<T = any> {
     message: string,
     data?: T,
     status: ResponseStatus = ResponseStatus.SUCCESS,
+    meta?: any,
   ) {
     this.status = status;
     this.message = message;
-    this.data = data;
+
+    // Handle paginated data structure - flatten it if it has nested data
+    if (
+      data &&
+      typeof data === 'object' &&
+      'data' in data &&
+      'meta' in data &&
+      !meta // Only flatten if meta wasn't explicitly passed
+    ) {
+      this.data = (data as any).data;
+      this.meta = (data as any).meta;
+    } else {
+      this.data = data;
+      this.meta = meta;
+    }
+
     this.timestamp = new Date().toISOString();
   }
 }

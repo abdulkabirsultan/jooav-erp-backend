@@ -12,14 +12,14 @@ import {
 export class LoginDto {
   @ApiProperty({
     description: 'Email address',
-    example: 'admin@jooav.com',
+    example: 'superadmin@jooav.com',
   })
   @IsEmail({}, { message: 'Please provide a valid email address' })
   email: string;
 
   @ApiProperty({
     description: 'Password',
-    example: 'Password123!',
+    example: 'password123',
     minLength: 8,
   })
   @IsString()
@@ -35,11 +35,6 @@ export class RegisterDto {
   @IsEmail({}, { message: 'Please provide a valid email address' })
   email: string;
 
-  @ApiProperty({
-    description: 'Username (optional)',
-    example: 'johndoe',
-    required: false,
-  })
   @IsOptional()
   @IsString()
   @MinLength(3, { message: 'Username must be at least 3 characters long' })
@@ -78,11 +73,6 @@ export class RegisterDto {
   @MaxLength(50, { message: 'Last name cannot exceed 50 characters' })
   lastName: string;
 
-  @ApiProperty({
-    description: 'Phone number (optional)',
-    example: '+234-801-234-5678',
-    required: false,
-  })
   @IsOptional()
   @IsString()
   phone?: string;

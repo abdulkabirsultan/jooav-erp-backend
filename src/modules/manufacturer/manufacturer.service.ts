@@ -5,7 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { ManufacturerStatus } from '@prisma/client';
-import { PrismaService } from '../../database/prisma.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { StringUtils } from '../../common/utils/helpers.utils';
 import {
@@ -66,19 +66,6 @@ export class ManufacturerService {
       throw new ConflictException('Manufacturer with this name already exists');
     }
 
-    // Check registration number uniqueness if provided
-    if (createDto.registrationNumber) {
-      const existingByRegNumber = await this.prisma.manufacturer.findUnique({
-        where: { registrationNumber: createDto.registrationNumber },
-      });
-
-      if (existingByRegNumber) {
-        throw new ConflictException(
-          'Manufacturer with this registration number already exists',
-        );
-      }
-    }
-
     const manufacturer = await this.prisma.manufacturer.create({
       data: {
         ...createDto,
@@ -119,8 +106,11 @@ export class ManufacturerService {
     filters?: {
       search?: string;
       status?: ManufacturerStatus;
-      country?: string;
-      state?: string;
+    },
+    includes?: {
+      includeBrands?: boolean;
+      includeProducts?: boolean;
+      includeAuditInfo?: boolean;
     },
   ): Promise<PaginatedResponse<ManufacturerResponseDto>> {
     const { page = 1, limit = 10 } = paginationDto;
@@ -134,7 +124,6 @@ export class ManufacturerService {
     if (filters?.search) {
       where.OR = [
         { name: { contains: filters.search, mode: 'insensitive' } },
-        { email: { contains: filters.search, mode: 'insensitive' } },
         { description: { contains: filters.search, mode: 'insensitive' } },
       ];
     }
@@ -143,12 +132,46 @@ export class ManufacturerService {
       where.status = filters.status;
     }
 
-    if (filters?.country) {
-      where.country = filters.country;
+    // Build dynamic include object
+    const includeObject: any = {
+      _count: {
+        select: {
+          products: true,
+          orders: true,
+        },
+      },
+    };
+
+    // Include audit info if requested
+    if (includes?.includeAuditInfo === true) {
+      includeObject.createdByUser = {
+        select: { id: true, email: true, firstName: true, lastName: true },
+      };
+      includeObject.updatedByUser = {
+        select: { id: true, email: true, firstName: true, lastName: true },
+      };
+      includeObject.deletedByUser = {
+        select: { id: true, email: true, firstName: true, lastName: true },
+      };
     }
 
-    if (filters?.state) {
-      where.state = filters.state;
+    // Include brands if requested
+    if (includes?.includeBrands === true) {
+      includeObject.brands = true;
+    }
+
+    // Include products if requested
+    if (includes?.includeProducts === true) {
+      includeObject.products = {
+        select: {
+          id: true,
+          name: true,
+          sku: true,
+          status: true,
+          price: true,
+        },
+        take: 10, // Limit to first 10 products
+      };
     }
 
     const [manufacturers, total] = await Promise.all([
@@ -157,23 +180,7 @@ export class ManufacturerService {
         skip,
         take: limit,
         orderBy: { createdAt: 'desc' },
-        include: {
-          createdByUser: {
-            select: { id: true, email: true, firstName: true, lastName: true },
-          },
-          updatedByUser: {
-            select: { id: true, email: true, firstName: true, lastName: true },
-          },
-          deletedByUser: {
-            select: { id: true, email: true, firstName: true, lastName: true },
-          },
-          _count: {
-            select: {
-              products: true,
-              orders: true,
-            },
-          },
-        },
+        include: includeObject,
       }),
       this.prisma.manufacturer.count({ where }),
     ]);
@@ -198,36 +205,59 @@ export class ManufacturerService {
   /**
    * Get manufacturer by ID
    */
-  async findOne(id: string): Promise<ManufacturerResponseDto> {
-    const manufacturer = await this.prisma.manufacturer.findFirst({
-      where: { id, deletedAt: null },
-      include: {
-        createdByUser: {
-          select: { id: true, email: true, firstName: true, lastName: true },
-        },
-        updatedByUser: {
-          select: { id: true, email: true, firstName: true, lastName: true },
-        },
-        deletedByUser: {
-          select: { id: true, email: true, firstName: true, lastName: true },
-        },
-        products: {
-          select: {
-            id: true,
-            name: true,
-            sku: true,
-            status: true,
-            price: true,
-          },
-          take: 10, // Limit to first 10 products
-        },
-        _count: {
-          select: {
-            products: true,
-            orders: true,
-          },
+  async findOne(
+    id: string,
+    includes?: {
+      includeBrands?: boolean;
+      includeProducts?: boolean;
+      includeAuditInfo?: boolean;
+    },
+  ): Promise<ManufacturerResponseDto> {
+    // Build dynamic include object
+    const includeObject: any = {
+      _count: {
+        select: {
+          products: true,
+          orders: true,
         },
       },
+    };
+
+    // Include audit info if requested (default to true for backward compatibility)
+    if (includes?.includeAuditInfo !== false) {
+      includeObject.createdByUser = {
+        select: { id: true, email: true, firstName: true, lastName: true },
+      };
+      includeObject.updatedByUser = {
+        select: { id: true, email: true, firstName: true, lastName: true },
+      };
+      includeObject.deletedByUser = {
+        select: { id: true, email: true, firstName: true, lastName: true },
+      };
+    }
+
+    // Include brands if requested (default to true for backward compatibility)
+    if (includes?.includeBrands !== false) {
+      includeObject.brands = true;
+    }
+
+    // Include products if requested (default to true for backward compatibility)
+    if (includes?.includeProducts !== false) {
+      includeObject.products = {
+        select: {
+          id: true,
+          name: true,
+          sku: true,
+          status: true,
+          price: true,
+        },
+        take: 10, // Limit to first 10 products
+      };
+    }
+
+    const manufacturer = await this.prisma.manufacturer.findFirst({
+      where: { id, deletedAt: null },
+      include: includeObject,
     });
 
     if (!manufacturer) {
@@ -275,25 +305,6 @@ export class ManufacturerService {
       if (duplicateExists) {
         throw new ConflictException(
           'Manufacturer with this name already exists',
-        );
-      }
-    }
-
-    // Check registration number uniqueness if being updated
-    if (
-      updateDto.registrationNumber &&
-      updateDto.registrationNumber !== existingManufacturer.registrationNumber
-    ) {
-      const duplicateRegNumber = await this.prisma.manufacturer.findFirst({
-        where: {
-          registrationNumber: updateDto.registrationNumber,
-          id: { not: id },
-        },
-      });
-
-      if (duplicateRegNumber) {
-        throw new ConflictException(
-          'Manufacturer with this registration number already exists',
         );
       }
     }
@@ -398,7 +409,7 @@ export class ManufacturerService {
     id: string,
     adminId: string,
     request: any,
-  ): Promise<{ message: string }> {
+  ): Promise<{ message: string; manufacturerName: string }> {
     const manufacturer = await this.prisma.manufacturer.findUnique({
       where: { id },
       include: {
@@ -412,7 +423,7 @@ export class ManufacturerService {
 
     // Check if manufacturer has active products
     const activeProducts = manufacturer.products.filter(
-      (p) => p.status === 'ACTIVE',
+      (p) => p.status === 'LIVE',
     );
     if (activeProducts.length > 0) {
       throw new BadRequestException(
@@ -443,7 +454,195 @@ export class ManufacturerService {
       metadata: { manufacturerName: manufacturer.name },
     });
 
-    return { message: 'Manufacturer successfully deleted' };
+    return {
+      message: 'Manufacturer successfully deleted',
+      manufacturerName: manufacturer.name,
+    };
+  }
+
+  async activate(
+    id: string,
+    adminId: string,
+    request: any,
+  ): Promise<ManufacturerResponseDto> {
+    // Check if manufacturer exists in deleted state
+    const deletedManufacturer = await this.prisma.manufacturer.findFirst({
+      where: { id, deletedAt: { not: null } },
+    });
+
+    if (!deletedManufacturer) {
+      throw new NotFoundException(
+        'Manufacturer not found or is not in deleted state',
+      );
+    }
+
+    // Check for name conflicts with active manufacturers
+    const conflictManufacturer = await this.prisma.manufacturer.findFirst({
+      where: {
+        name: { equals: deletedManufacturer.name, mode: 'insensitive' },
+        deletedAt: null,
+        NOT: { id },
+      },
+    });
+
+    if (conflictManufacturer) {
+      throw new ConflictException(
+        `A manufacturer with name "${deletedManufacturer.name}" already exists`,
+      );
+    }
+
+    // Reactivate the manufacturer
+    const manufacturer = await this.prisma.manufacturer.update({
+      where: { id },
+      data: {
+        status: ManufacturerStatus.ACTIVE,
+        deletedAt: null,
+        deletedBy: null,
+        updatedBy: adminId,
+      },
+      include: {
+        _count: {
+          select: {
+            products: { where: { deletedAt: null } },
+          },
+        },
+      },
+    });
+
+    // Log audit event
+    await this.auditService.createAuditLog({
+      userId: adminId,
+      action: 'ACTIVATE_MANUFACTURER',
+      resource: 'MANUFACTURER',
+      resourceId: id,
+      newData: manufacturer,
+      ipAddress: request?.ip,
+      userAgent: request?.get('user-agent'),
+      metadata: { manufacturerName: manufacturer.name },
+    });
+
+    return {
+      id: manufacturer.id,
+      name: manufacturer.name,
+      description: manufacturer.description || undefined,
+      status: manufacturer.status,
+      productsCount: manufacturer._count.products,
+      ordersCount: 0,
+      createdAt: manufacturer.createdAt,
+      updatedAt: manufacturer.updatedAt,
+    };
+  }
+
+  /**
+   * Bulk soft delete manufacturers
+   */
+  async bulkDelete(
+    manufacturerIds: string[],
+    adminId: string,
+    request: any,
+  ): Promise<{
+    deletedCount: number;
+    deletedManufacturers: string[];
+    failedDeletions: Array<{ name: string; reason: string }>;
+  }> {
+    const manufacturers = (await this.prisma.manufacturer.findMany({
+      where: {
+        id: { in: manufacturerIds },
+        deletedAt: null,
+      },
+      include: {
+        products: {
+          where: {
+            deletedAt: null,
+            // Products don't have isActive field, they have status
+          },
+          select: {
+            id: true,
+            status: true,
+          },
+        },
+      },
+    })) as Array<{
+      id: string;
+      name: string;
+      description: string | null;
+      status: any;
+      createdBy: string;
+      updatedBy: string;
+      deletedBy: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+      deletedAt: Date | null;
+      regionId: string | null;
+      products: Array<{ id: string; status: any }>;
+    }>;
+
+    const deletedManufacturers: string[] = [];
+    const failedDeletions: Array<{ name: string; reason: string }> = [];
+
+    // Process each manufacturer
+    for (const manufacturer of manufacturers) {
+      try {
+        // Check if manufacturer has active products
+        if (manufacturer.products.length > 0) {
+          failedDeletions.push({
+            name: manufacturer.name,
+            reason: `Cannot delete manufacturer with ${manufacturer.products.length} product(s). Please deactivate or delete all products first.`,
+          });
+          continue;
+        }
+
+        // Soft delete the manufacturer
+        await this.prisma.manufacturer.update({
+          where: { id: manufacturer.id },
+          data: {
+            status: ManufacturerStatus.SUSPENDED,
+            updatedBy: adminId,
+            deletedBy: adminId,
+            deletedAt: new Date(),
+          },
+        });
+
+        // Log audit event for each deletion
+        await this.auditService.createAuditLog({
+          userId: adminId,
+          action: 'DELETE_MANUFACTURER',
+          resource: 'MANUFACTURER',
+          resourceId: manufacturer.id,
+          oldData: manufacturer,
+          ipAddress: request?.ip,
+          userAgent: request?.get('user-agent'),
+          metadata: {
+            manufacturerName: manufacturer.name,
+            bulkOperation: true,
+          },
+        });
+
+        deletedManufacturers.push(manufacturer.name);
+      } catch (error) {
+        failedDeletions.push({
+          name: manufacturer.name,
+          reason: `Failed to delete manufacturer: ${error.message}`,
+        });
+      }
+    }
+
+    // Handle case where some IDs don't exist
+    const foundIds = manufacturers.map((m) => m.id);
+    const notFoundIds = manufacturerIds.filter((id) => !foundIds.includes(id));
+
+    for (const id of notFoundIds) {
+      failedDeletions.push({
+        name: `Manufacturer ID: ${id}`,
+        reason: 'Manufacturer not found or already deleted',
+      });
+    }
+
+    return {
+      deletedCount: deletedManufacturers.length,
+      deletedManufacturers,
+      failedDeletions,
+    };
   }
 
   /**
@@ -457,7 +656,6 @@ export class ManufacturerService {
     totalProducts: number;
     totalOrders: number;
     createdThisMonth: number;
-    topCountries: Array<{ country: string; count: number }>;
   }> {
     // Calculate date for this month
     const now = new Date();
@@ -471,7 +669,6 @@ export class ManufacturerService {
       totalProducts,
       totalOrders,
       createdThisMonth,
-      countryStats,
     ] = await Promise.all([
       this.prisma.manufacturer.count(),
       this.prisma.manufacturer.count({
@@ -492,24 +689,7 @@ export class ManufacturerService {
           },
         },
       }),
-      this.prisma.manufacturer.groupBy({
-        by: ['country'],
-        _count: {
-          country: true,
-        },
-        orderBy: {
-          _count: {
-            country: 'desc',
-          },
-        },
-        take: 5, // Top 5 countries
-      }),
     ]);
-
-    const topCountries = countryStats.map((stat) => ({
-      country: stat.country,
-      count: stat._count.country,
-    }));
 
     return {
       total: totalManufacturers,
@@ -519,7 +699,6 @@ export class ManufacturerService {
       totalProducts,
       totalOrders,
       createdThisMonth,
-      topCountries,
     };
   }
 
@@ -529,7 +708,7 @@ export class ManufacturerService {
   async getManufacturerProducts(
     manufacturerId: string,
     paginationDto: PaginationDto,
-  ): Promise<PaginatedResponse<any>> {
+  ): Promise<PaginatedResponse<any> & { manufacturerName: string }> {
     const { page = 1, limit = 10 } = paginationDto;
     const skip = (page - 1) * limit;
 
@@ -559,6 +738,7 @@ export class ManufacturerService {
 
     return {
       data: products,
+      manufacturerName: manufacturer.name,
       meta: {
         page,
         limit,
@@ -567,7 +747,7 @@ export class ManufacturerService {
         hasNextPage: page < Math.ceil(totalCount / limit),
         hasPreviousPage: page > 1,
       },
-    };
+    } as PaginatedResponse<any> & { manufacturerName: string };
   }
 
   /**
@@ -576,7 +756,7 @@ export class ManufacturerService {
   async getManufacturerOrders(
     manufacturerId: string,
     paginationDto: PaginationDto,
-  ): Promise<PaginatedResponse<any>> {
+  ): Promise<PaginatedResponse<any> & { manufacturerName: string }> {
     const { page = 1, limit = 10 } = paginationDto;
     const skip = (page - 1) * limit;
 
@@ -604,7 +784,6 @@ export class ManufacturerService {
         take: limit,
         orderBy: { createdAt: 'desc' },
         include: {
-          customer: true,
           items: {
             include: {
               product: true,
@@ -629,6 +808,7 @@ export class ManufacturerService {
 
     return {
       data: orders,
+      manufacturerName: manufacturer.name,
       meta: {
         page,
         limit,
@@ -637,7 +817,7 @@ export class ManufacturerService {
         hasNextPage: page < Math.ceil(totalCount / limit),
         hasPreviousPage: page > 1,
       },
-    };
+    } as PaginatedResponse<any> & { manufacturerName: string };
   }
 
   /**
@@ -648,15 +828,6 @@ export class ManufacturerService {
       id: manufacturer.id,
       name: manufacturer.name,
       description: manufacturer.description,
-      email: manufacturer.email,
-      phone: manufacturer.phone,
-      website: manufacturer.website,
-      address: manufacturer.address,
-      city: manufacturer.city,
-      state: manufacturer.state,
-      country: manufacturer.country,
-      postalCode: manufacturer.postalCode,
-      registrationNumber: manufacturer.registrationNumber,
       status: manufacturer.status,
       createdAt: manufacturer.createdAt,
       updatedAt: manufacturer.updatedAt,
@@ -684,6 +855,14 @@ export class ManufacturerService {
         : undefined,
       productsCount: manufacturer._count?.products || 0,
       ordersCount: manufacturer._count?.orders || 0,
+      brands:
+        manufacturer.brands?.map((brand: any) => ({
+          id: brand.id,
+          name: brand.name,
+          description: brand.description,
+          logo: brand.logo,
+          status: brand.status,
+        })) || [],
       products: manufacturer.products || [],
     };
   }
@@ -692,8 +871,6 @@ export class ManufacturerService {
     paginationDto: PaginationDto,
     filters?: {
       search?: string;
-      country?: string;
-      state?: string;
     },
   ): Promise<
     PaginatedResponse<
@@ -713,17 +890,8 @@ export class ManufacturerService {
     if (filters?.search) {
       where.OR = [
         { name: { contains: filters.search, mode: 'insensitive' } },
-        { email: { contains: filters.search, mode: 'insensitive' } },
         { description: { contains: filters.search, mode: 'insensitive' } },
       ];
-    }
-
-    if (filters?.country) {
-      where.country = filters.country;
-    }
-
-    if (filters?.state) {
-      where.state = filters.state;
     }
 
     const [manufacturers, total] = await Promise.all([

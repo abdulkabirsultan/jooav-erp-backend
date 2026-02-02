@@ -5,9 +5,10 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { Prisma, BrandStatus } from '@prisma/client';
-import { PrismaService } from '../../database/prisma.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { CloudinaryService } from '../storage/cloudinary.service';
+import { CacheInvalidationService } from '../cache/cache-invalidation.service';
 import { StringUtils } from '../../common/utils/helpers.utils';
 import {
   CreateBrandDto,
@@ -27,6 +28,7 @@ export class BrandService {
     private prisma: PrismaService,
     private cloudinaryService: CloudinaryService,
     private auditService: AuditService,
+    private cacheInvalidationService: CacheInvalidationService,
   ) {}
 
   /**
@@ -141,6 +143,9 @@ export class BrandService {
         },
       });
 
+      // Invalidate brand-related caches
+      await this.cacheInvalidationService.invalidateBrand(brand.id);
+
       return brand;
     } catch (error) {
       // Handle Prisma unique constraint error
@@ -156,6 +161,12 @@ export class BrandService {
 
   async findAll(
     query: BrandQueryDto,
+    includes?: {
+      includeManufacturer?: boolean;
+      includeProducts?: boolean;
+      includeVariants?: boolean;
+      includeAuditInfo?: boolean;
+    },
   ): Promise<PaginatedResponse<BrandResponseDto>> {
     const {
       page = 1,
@@ -186,21 +197,80 @@ export class BrandService {
       [sortBy]: sortOrder,
     };
 
+    // Build dynamic include object
+    const includeObject: any = {
+      _count: {
+        select: {
+          products: true,
+          variants: true,
+        },
+      },
+    };
+
+    // Include manufacturer if requested
+    if (includes?.includeManufacturer === true) {
+      includeObject.manufacturer = {
+        select: {
+          id: true,
+          name: true,
+          status: true,
+        },
+      };
+    }
+
+    // Include products if requested
+    if (includes?.includeProducts === true) {
+      includeObject.products = {
+        select: {
+          id: true,
+          name: true,
+          sku: true,
+          status: true,
+          price: true,
+        },
+        take: 10, // Limit to first 10 products
+      };
+    }
+
+    // Include variants if requested
+    if (includes?.includeVariants === true) {
+      includeObject.variants = {
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          createdAt: true,
+          updatedAt: true,
+          _count: {
+            select: {
+              products: true,
+            },
+          },
+        },
+        take: 10, // Limit to first 10 variants
+      };
+    }
+
+    // Include audit info if requested
+    if (includes?.includeAuditInfo === true) {
+      includeObject.createdByUser = {
+        select: { id: true, email: true, firstName: true, lastName: true },
+      };
+      includeObject.updatedByUser = {
+        select: { id: true, email: true, firstName: true, lastName: true },
+      };
+      includeObject.deletedByUser = {
+        select: { id: true, email: true, firstName: true, lastName: true },
+      };
+    }
+
     const [brands, total] = await Promise.all([
       this.prisma.brand.findMany({
         where,
         orderBy,
         skip,
         take: limit,
-        include: {
-          manufacturer: {
-            select: {
-              id: true,
-              name: true,
-              status: true,
-            },
-          },
-        },
+        include: includeObject,
       }),
       this.prisma.brand.count({ where }),
     ]);
@@ -211,18 +281,85 @@ export class BrandService {
     };
   }
 
-  async findOne(id: string): Promise<BrandResponseDto> {
-    const brand = await this.prisma.brand.findFirst({
-      where: { id, deletedAt: null },
-      include: {
-        manufacturer: {
-          select: {
-            id: true,
-            name: true,
-            status: true,
-          },
+  async findOne(
+    id: string,
+    includes?: {
+      includeManufacturer?: boolean;
+      includeProducts?: boolean;
+      includeVariants?: boolean;
+      includeAuditInfo?: boolean;
+    },
+  ): Promise<BrandResponseDto> {
+    // Build dynamic include object
+    const includeObject: any = {
+      _count: {
+        select: {
+          products: true,
+          variants: true,
         },
       },
+    };
+
+    // Include manufacturer if requested (default to true for backward compatibility)
+    if (includes?.includeManufacturer !== false) {
+      includeObject.manufacturer = {
+        select: {
+          id: true,
+          name: true,
+          status: true,
+        },
+      };
+    }
+
+    // Include products if requested (default to false)
+    if (includes?.includeProducts === true) {
+      includeObject.products = {
+        select: {
+          id: true,
+          name: true,
+          sku: true,
+          status: true,
+          price: true,
+        },
+        take: 10, // Limit to first 10 products
+      };
+    }
+
+    // Include variants if requested (default to false)
+    if (includes?.includeVariants === true) {
+      includeObject.variants = {
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          createdAt: true,
+          updatedAt: true,
+          _count: {
+            select: {
+              products: true,
+            },
+          },
+        },
+        take: 10, // Limit to first 10 variants
+      };
+    }
+
+    // Include audit info if requested (default to false)
+    if (includes?.includeAuditInfo === true) {
+      includeObject.createdByUser = {
+        select: { id: true, email: true, firstName: true, lastName: true },
+      };
+      includeObject.updatedByUser = {
+        select: { id: true, email: true, firstName: true, lastName: true },
+      };
+      includeObject.deletedByUser = {
+        select: { id: true, email: true, firstName: true, lastName: true },
+      };
+    }
+
+    const brand = await this.prisma.brand.findFirst({
+      where: { id, deletedAt: null },
+      include: includeObject,
     });
 
     if (!brand) {
@@ -352,34 +489,85 @@ export class BrandService {
       updateData.name = this.sanitizeBrandName(updateBrandDto.name);
     }
 
+    // Check if brand name will change (affects product names and SKUs)
+    const willAffectProducts =
+      updateBrandDto.name && updateBrandDto.name !== existingBrand.name;
+
     try {
-      const brand = await this.prisma.brand.update({
-        where: { id },
-        data: updateData,
-        include: {
-          manufacturer: {
-            select: {
-              id: true,
-              name: true,
-              status: true,
+      // Use transaction if brand name changes to update products
+      const result = await this.prisma.$transaction(async (tx) => {
+        const brand = await tx.brand.update({
+          where: { id },
+          data: updateData,
+          include: {
+            manufacturer: {
+              select: {
+                id: true,
+                name: true,
+                status: true,
+              },
             },
           },
-        },
+        });
+
+        // If brand name changed, update all linked product names and SKUs
+        if (willAffectProducts) {
+          const linkedProducts = await tx.product.findMany({
+            where: {
+              brandId: id,
+              deletedAt: null,
+            },
+            select: {
+              id: true,
+              variant: { select: { name: true } },
+              packSize: { select: { name: true } },
+              packType: { select: { name: true } },
+            },
+          });
+
+          // Update each product's name and SKU
+          for (const product of linkedProducts) {
+            const newName = `${brand.name} ${product.variant.name} ${product.packSize.name} (${product.packType.name})`;
+            const newSku = `${brand.name.toUpperCase().replace(/[^A-Z0-9]/g, '-')}-${product.variant.name.toUpperCase().replace(/[^A-Z0-9]/g, '-')}-${product.packSize.name.toUpperCase().replace(/[^A-Z0-9]/g, '-')}-${product.packType.name.toUpperCase().replace(/[^A-Z0-9]/g, '-')}`;
+
+            await tx.product.update({
+              where: { id: product.id },
+              data: {
+                name: newName,
+                sku: newSku,
+                updatedBy: userId,
+              },
+            });
+          }
+        }
+
+        return brand;
       });
 
       // Log audit trail
       await this.auditService.createAuditLog({
         action: 'UPDATE',
         resource: 'Brand',
-        resourceId: brand.id,
+        resourceId: result.id,
         userId,
         metadata: {
-          brandName: brand.name,
+          brandName: result.name,
           changes: Object.keys(updateBrandDto),
+          ...(willAffectProducts && {
+            updatedProductCount: 'Cascaded name/SKU updates',
+          }),
         },
       });
 
-      return brand;
+      // Invalidate brand-related caches
+      await this.cacheInvalidationService.invalidateBrand(id);
+
+      // Invalidate product caches if products were updated
+      if (willAffectProducts) {
+        await this.cacheInvalidationService.invalidateProducts();
+      }
+
+      return result;
     } catch (error) {
       // Handle Prisma unique constraint error
       if (error.code === 'P2002') {
@@ -432,10 +620,24 @@ export class BrandService {
     return brand;
   }
 
-  async remove(id: string, userId: string): Promise<{ message: string }> {
+  async remove(
+    id: string,
+    userId: string,
+  ): Promise<{ message: string; brandName: string }> {
     const existingBrand = await this.findOne(id);
 
-    // Soft delete the brand
+    // Check if brand has associated active products
+    const productCount = await this.prisma.product.count({
+      where: { brandId: id, deletedAt: null },
+    });
+
+    if (productCount > 0) {
+      throw new BadRequestException(
+        `Cannot delete brand with ${productCount} active product(s). Please remove or archive all products first.`,
+      );
+    }
+
+    // Soft delete the brand - variants and pack entities can remain for historical purposes
     await this.prisma.brand.update({
       where: { id },
       data: {
@@ -453,7 +655,110 @@ export class BrandService {
       metadata: { brandName: existingBrand.name },
     });
 
-    return { message: 'Brand deleted successfully' };
+    // Invalidate brand-related caches
+    await this.cacheInvalidationService.invalidateBrand(id);
+
+    return {
+      message: 'Brand deleted successfully',
+      brandName: existingBrand.name,
+    };
+  }
+
+  async activate(id: string, userId: string): Promise<BrandResponseDto> {
+    // Check if brand exists in deleted state
+    const deletedBrand = await this.prisma.brand.findFirst({
+      where: { id, deletedAt: { not: null } },
+    });
+
+    if (!deletedBrand) {
+      throw new NotFoundException('Brand not found or is not in deleted state');
+    }
+
+    // Check for name conflicts with active brands
+    const conflictBrand = await this.prisma.brand.findFirst({
+      where: {
+        name: { equals: deletedBrand.name, mode: 'insensitive' },
+        deletedAt: null,
+        NOT: { id },
+      },
+    });
+
+    if (conflictBrand) {
+      throw new ConflictException(
+        `A brand with name "${deletedBrand.name}" already exists`,
+      );
+    }
+
+    // Reactivate the brand
+    const brand = await this.prisma.brand.update({
+      where: { id },
+      data: {
+        deletedAt: null,
+        deletedBy: null,
+        updatedBy: userId,
+      },
+      include: {
+        manufacturer: {
+          select: { id: true, name: true, status: true },
+        },
+        variants: {
+          where: { deletedAt: null },
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            createdAt: true,
+            updatedAt: true,
+            _count: {
+              select: { products: { where: { deletedAt: null } } },
+            },
+          },
+        },
+        _count: {
+          select: { products: { where: { deletedAt: null } } },
+        },
+      },
+    });
+
+    // Invalidate brand-related caches
+    await this.cacheInvalidationService.invalidateBrand(id);
+
+    // Log audit trail
+    await this.auditService.createAuditLog({
+      action: 'ACTIVATE',
+      resource: 'Brand',
+      resourceId: id,
+      userId,
+      metadata: { brandName: brand.name },
+    });
+
+    return {
+      id: brand.id,
+      name: brand.name,
+      description: brand.description,
+      logo: brand.logo,
+      status: brand.status as BrandStatus,
+      manufacturerId: brand.manufacturerId || '',
+      createdAt: brand.createdAt,
+      updatedAt: brand.updatedAt,
+      createdBy: brand.createdBy,
+      updatedBy: brand.updatedBy,
+      manufacturer: brand.manufacturer
+        ? {
+            id: brand.manufacturer.id,
+            name: brand.manufacturer.name,
+            status: brand.manufacturer.status,
+          }
+        : undefined,
+      variants: brand.variants.map((variant) => ({
+        id: variant.id,
+        name: variant.name,
+        description: variant.description || undefined,
+        createdAt: variant.createdAt,
+        updatedAt: variant.updatedAt,
+        _count: { products: variant._count.products },
+      })),
+    };
   }
 
   async deleteLogo(id: string, userId: string): Promise<BrandResponseDto> {
@@ -567,29 +872,32 @@ export class BrandService {
   }
 
   async getStats(): Promise<BrandStatsDto> {
-    const [total, active, inactive, recentlyAdded] = await Promise.all([
-      this.prisma.brand.count({ where: { deletedAt: null } }),
-      this.prisma.brand.count({
-        where: { status: BrandStatus.ACTIVE, deletedAt: null },
-      }),
-      this.prisma.brand.count({
-        where: { status: BrandStatus.INACTIVE, deletedAt: null },
-      }),
-      this.prisma.brand.count({
-        where: {
-          deletedAt: null,
-          createdAt: {
-            gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // Last 7 days
+    const [total, active, inactive, recentlyAdded, totalManufacturers] =
+      await Promise.all([
+        this.prisma.brand.count({ where: { deletedAt: null } }),
+        this.prisma.brand.count({
+          where: { status: BrandStatus.ACTIVE, deletedAt: null },
+        }),
+        this.prisma.brand.count({
+          where: { status: BrandStatus.INACTIVE, deletedAt: null },
+        }),
+        this.prisma.brand.count({
+          where: {
+            deletedAt: null,
+            createdAt: {
+              gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // Last 7 days
+            },
           },
-        },
-      }),
-    ]);
+        }),
+        this.prisma.manufacturer.count({ where: { deletedAt: null } }),
+      ]);
 
     return {
       total,
       active,
       inactive,
       recentlyAdded,
+      totalManufacturers,
     };
   }
 

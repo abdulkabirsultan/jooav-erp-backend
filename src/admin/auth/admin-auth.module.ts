@@ -5,7 +5,7 @@ import { PassportModule } from '@nestjs/passport';
 
 import { AdminAuthService } from './admin-auth.service';
 import { AdminAuthController } from './admin-auth.controller';
-import { PrismaService } from '../../database/prisma.service';
+import { PrismaService } from '../../modules/prisma/prisma.service';
 import { AuditService } from '../../modules/audit/audit.service';
 
 // Strategies

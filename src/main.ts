@@ -10,7 +10,7 @@ import helmet from 'helmet';
 import compression from 'compression';
 
 import { AppModule } from './app.module';
-import { PrismaService } from './database/prisma.service';
+import { PrismaService } from './modules/prisma/prisma.service';
 import { LoggerService, AppLogger } from './common/utils/logger.service';
 
 async function bootstrap() {
@@ -61,7 +61,7 @@ async function bootstrap() {
       whitelist: true,
       forbidNonWhitelisted: true,
       transformOptions: {
-        enableImplicitConversion: true,
+        enableImplicitConversion: false,
       },
     }),
   );

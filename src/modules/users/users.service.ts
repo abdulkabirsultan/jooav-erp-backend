@@ -7,8 +7,10 @@ import {
 import { UserRole, UserStatus, User } from '@prisma/client';
 import * as argon2 from 'argon2';
 
-import { PrismaService } from '../../database/prisma.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { generatePasswordResetToken } from '../../common/utils/token.util';
 import { AuditService } from '../audit/audit.service';
+import { EmailService } from '../email/email.service';
 import { ConfigService } from '@nestjs/config';
 import { PaginationDto, PaginatedResponse } from '../../common/dto';
 import {
@@ -17,6 +19,7 @@ import {
   UpdateUserStatusDto,
   UpdateUserRoleDto,
   UpdateUserProfileDto,
+  UpdateAdminPermissionsDto,
 } from './dto/user.dto';
 import { UserProfileDto } from '../auth/dto/auth-response.dto';
 
@@ -32,6 +35,7 @@ export class UsersService {
   constructor(
     private prisma: PrismaService,
     private auditService: AuditService,
+    private emailService: EmailService,
     private configService: ConfigService,
   ) {}
 
@@ -49,14 +53,48 @@ export class UsersService {
       status?: UserStatus;
       search?: string;
     },
+    currentUserId?: string,
   ): Promise<PaginatedResponse<UserProfileDto>> {
     const { page, limit, search } = paginationDto;
     const { role, status } = filters || {};
 
+    // Get current user to check permissions
+    const currentUser = currentUserId
+      ? await this.prisma.user.findUnique({
+          where: { id: currentUserId },
+          include: { adminProfile: true },
+        })
+      : null;
+
     const where: any = {};
 
+    // Role-based filtering: Regular ADMIN cannot see SUPER_ADMIN or other ADMIN accounts
+    if (currentUser && currentUser.role === UserRole.ADMIN) {
+      where.role = {
+        not: { in: [UserRole.SUPER_ADMIN, UserRole.ADMIN] },
+      };
+    }
+
     // Apply filters
-    if (role) where.role = role;
+    if (role) {
+      if (where.role) {
+        // Combine with existing role filter
+        if (role === UserRole.ADMIN || role === UserRole.SUPER_ADMIN) {
+          if (currentUser?.role !== UserRole.SUPER_ADMIN) {
+            // Regular admin trying to filter admin roles - deny
+            where.role = {
+              not: { in: [UserRole.SUPER_ADMIN, UserRole.ADMIN] },
+            };
+          } else {
+            where.role = role;
+          }
+        } else {
+          where.role = role;
+        }
+      } else {
+        where.role = role;
+      }
+    }
     if (status) where.status = status;
 
     // Apply search
@@ -143,6 +181,28 @@ export class UsersService {
     createdBy: string,
     request?: any,
   ): Promise<UserProfileDto> {
+    // Get current user to check permissions
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: createdBy },
+      include: { adminProfile: true },
+    });
+
+    if (!currentUser) {
+      throw new NotFoundException('Current user not found');
+    }
+
+    // Check permissions for creating admin accounts
+    // Only users with canChangeUserRoles permission can create ADMIN or SUPER_ADMIN accounts
+    if (
+      (createUserDto.role === UserRole.ADMIN ||
+        createUserDto.role === UserRole.SUPER_ADMIN) &&
+      !currentUser.adminProfile?.canChangeUserRoles
+    ) {
+      throw new BadRequestException(
+        'Insufficient permissions to create admin accounts',
+      );
+    }
+
     // Check if user already exists
     const existingUser = await this.prisma.user.findFirst({
       where: {
@@ -163,32 +223,79 @@ export class UsersService {
       throw new ConflictException(`User with this ${field} already exists`);
     }
 
-    // Generate a temporary password
+    // Generate a temporary password (will be reset via email)
     const temporaryPassword = this.generateTemporaryPassword();
     const hashedPassword = await argon2.hash(
       temporaryPassword,
       this.argon2Options,
     );
+    console.log(temporaryPassword);
 
     // Create user
-    const user = await this.prisma.user.create({
-      data: {
-        email: createUserDto.email.toLowerCase(),
-        username: createUserDto.username?.toLowerCase(),
-        password: hashedPassword,
-        firstName: createUserDto.firstName,
-        lastName: createUserDto.lastName,
-        phone: createUserDto.phone,
-        role: createUserDto.role,
-        status: createUserDto.status || UserStatus.ACTIVE,
-        profile: {
-          create: {
-            // Initialize empty profile
-          },
+    const userData: any = {
+      email: createUserDto.email.toLowerCase(),
+      username: createUserDto.username?.toLowerCase(),
+      password: hashedPassword,
+      firstName: createUserDto.firstName,
+      lastName: createUserDto.lastName,
+      phone: createUserDto.phone,
+      role: createUserDto.role,
+      status: createUserDto.status || UserStatus.ACTIVE,
+      profile: {
+        create: {
+          // Initialize empty profile
         },
       },
-      include: { profile: true },
+    };
+
+    // Auto-create admin profile for admin roles
+    if (
+      createUserDto.role === UserRole.SUPER_ADMIN ||
+      createUserDto.role === UserRole.ADMIN
+    ) {
+      const isSuperAdmin = createUserDto.role === UserRole.SUPER_ADMIN;
+
+      userData.adminProfile = {
+        create: {
+          assignedRegions: [], // Can be updated later
+          canModifySystemConfig: isSuperAdmin, // Only SUPER_ADMIN can modify system config
+          canSuspendAdmins: isSuperAdmin, // Only SUPER_ADMIN can suspend other admins
+          canChangeUserRoles: isSuperAdmin, // Only SUPER_ADMIN can change user roles
+          canChangeUserEmails: isSuperAdmin, // Only SUPER_ADMIN can change user emails
+        },
+      };
+    }
+
+    const user = await this.prisma.user.create({
+      data: userData,
+      include: { profile: true, adminProfile: true },
     });
+
+    // Generate password reset token
+    const { token: resetToken, expiresAt } = generatePasswordResetToken(24);
+
+    // Store password reset token
+    await this.prisma.passwordReset.create({
+      data: {
+        email: user.email,
+        token: resetToken,
+        expiresAt,
+      },
+    });
+
+    // Send password setup email
+    try {
+      const resetUrl = `${this.configService.get('email.baseUrl')}/reset-password?token=${resetToken}`;
+
+      await this.emailService.sendTemplatedEmail(user.email, 'passwordSetup', {
+        firstName: user.firstName || 'User',
+        resetUrl,
+        platformName: 'JOOAV ERP',
+      });
+    } catch (error) {
+      // Log email error but don't fail user creation
+      console.error('Failed to send password setup email:', error);
+    }
 
     // Log user creation
     await this.auditService.logUserAction(
@@ -199,17 +306,12 @@ export class UsersService {
       {
         email: user.email,
         role: user.role,
-        temporaryPassword, // In production, send this via secure channel
       },
       request,
     );
 
     const { password, ...userWithoutPassword } = user;
-    return {
-      ...userWithoutPassword,
-      // Include temporary password in response for admin
-      temporaryPassword,
-    } as UserProfileDto & { temporaryPassword: string };
+    return userWithoutPassword as UserProfileDto;
   }
 
   /**
@@ -222,6 +324,28 @@ export class UsersService {
     request?: any,
   ): Promise<UserProfileDto> {
     const existingUser = await this.findOne(id);
+
+    // Get current user to check permissions
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: updatedBy },
+      include: { adminProfile: true },
+    });
+
+    if (!currentUser) {
+      throw new NotFoundException('Current user not found');
+    }
+
+    // Check permissions for updating admin accounts
+    // Only users with canSuspendAdmins permission can update ADMIN or SUPER_ADMIN accounts
+    if (
+      (existingUser.role === UserRole.ADMIN ||
+        existingUser.role === UserRole.SUPER_ADMIN) &&
+      !currentUser.adminProfile?.canSuspendAdmins
+    ) {
+      throw new BadRequestException(
+        'Insufficient permissions to update admin accounts',
+      );
+    }
 
     // Check for conflicts if username is being updated
     if (updateUserDto.username) {
@@ -287,6 +411,28 @@ export class UsersService {
   ): Promise<UserProfileDto> {
     const existingUser = await this.findOne(id);
 
+    // Get current user to check permissions
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: updatedBy },
+      include: { adminProfile: true },
+    });
+
+    if (!currentUser) {
+      throw new NotFoundException('Current user not found');
+    }
+
+    // Check permissions for status updates
+    // Only users with canSuspendAdmins permission can update admin account status
+    if (
+      (existingUser.role === UserRole.ADMIN ||
+        existingUser.role === UserRole.SUPER_ADMIN) &&
+      !currentUser.adminProfile?.canSuspendAdmins
+    ) {
+      throw new BadRequestException(
+        'Insufficient permissions to update admin account status',
+      );
+    }
+
     const updatedUser = await this.prisma.user.update({
       where: { id },
       data: {
@@ -343,6 +489,30 @@ export class UsersService {
   ): Promise<UserProfileDto> {
     const existingUser = await this.findOne(id);
 
+    // Get current user to check permissions
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: updatedBy },
+      include: { adminProfile: true },
+    });
+
+    if (!currentUser) {
+      throw new NotFoundException('Current user not found');
+    }
+
+    // Check permissions for role updates
+    // Only users with canChangeUserRoles permission can update roles of admin accounts or create new admin accounts
+    if (
+      (existingUser.role === UserRole.ADMIN ||
+        existingUser.role === UserRole.SUPER_ADMIN ||
+        updateRoleDto.role === UserRole.ADMIN ||
+        updateRoleDto.role === UserRole.SUPER_ADMIN) &&
+      !currentUser.adminProfile?.canChangeUserRoles
+    ) {
+      throw new BadRequestException(
+        'Insufficient permissions to manage admin account roles',
+      );
+    }
+
     const updatedUser = await this.prisma.user.update({
       where: { id },
       data: {
@@ -397,18 +567,8 @@ export class UsersService {
       data: {
         profile: {
           upsert: {
-            create: {
-              ...updateProfileDto,
-              dateOfBirth: updateProfileDto.dateOfBirth
-                ? new Date(updateProfileDto.dateOfBirth)
-                : undefined,
-            },
-            update: {
-              ...updateProfileDto,
-              dateOfBirth: updateProfileDto.dateOfBirth
-                ? new Date(updateProfileDto.dateOfBirth)
-                : undefined,
-            },
+            create: updateProfileDto,
+            update: updateProfileDto,
           },
         },
         updatedAt: new Date(),
@@ -445,10 +605,153 @@ export class UsersService {
   }
 
   /**
+   * Update admin permissions (Super Admin only)
+   */
+  async updateAdminPermissions(
+    id: string,
+    updatePermissionsDto: UpdateAdminPermissionsDto,
+    updatedBy: string,
+    request?: any,
+  ): Promise<UserProfileDto> {
+    const existingUser = await this.findOne(id);
+
+    // Get current user to check permissions
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: updatedBy },
+      include: { adminProfile: true },
+    });
+
+    if (!currentUser) {
+      throw new NotFoundException('Current user not found');
+    }
+
+    // Only SUPER_ADMIN can update admin permissions
+    if (currentUser.role !== UserRole.SUPER_ADMIN) {
+      throw new BadRequestException(
+        'Only Super Admin can update admin permissions',
+      );
+    }
+
+    // Target user must be an admin
+    if (
+      existingUser.role !== UserRole.ADMIN &&
+      existingUser.role !== UserRole.SUPER_ADMIN
+    ) {
+      throw new BadRequestException(
+        'Permissions can only be updated for admin accounts',
+      );
+    }
+
+    // Prevent updating own permissions
+    if (existingUser.id === updatedBy) {
+      throw new BadRequestException('Cannot update your own permissions');
+    }
+
+    // Get current admin profile
+    const currentAdminProfile = await this.prisma.adminProfile.findUnique({
+      where: { userId: id },
+    });
+
+    if (!currentAdminProfile) {
+      throw new NotFoundException('Admin profile not found');
+    }
+
+    // Update admin permissions
+    await this.prisma.adminProfile.update({
+      where: { userId: id },
+      data: {
+        canModifySystemConfig:
+          updatePermissionsDto.canModifySystemConfig ??
+          currentAdminProfile.canModifySystemConfig,
+        canSuspendAdmins:
+          updatePermissionsDto.canSuspendAdmins ??
+          currentAdminProfile.canSuspendAdmins,
+        canChangeUserRoles:
+          updatePermissionsDto.canChangeUserRoles ??
+          currentAdminProfile.canChangeUserRoles,
+        canChangeUserEmails:
+          updatePermissionsDto.canChangeUserEmails ??
+          currentAdminProfile.canChangeUserEmails,
+        assignedRegions:
+          updatePermissionsDto.assignedRegions ??
+          currentAdminProfile.assignedRegions,
+        updatedAt: new Date(),
+      },
+    });
+
+    // Get updated user with admin profile
+    const updatedUser = await this.prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        firstName: true,
+        lastName: true,
+        phone: true,
+        avatar: true,
+        role: true,
+        status: true,
+        emailVerified: true,
+        lastLogin: true,
+        createdAt: true,
+        updatedAt: true,
+        profile: true,
+        adminProfile: true,
+      },
+    });
+
+    // Log permission change
+    await this.auditService.logDataChange(
+      updatedBy,
+      'UPDATE_ADMIN_PERMISSIONS',
+      'ADMIN_PROFILE',
+      id,
+      {
+        canModifySystemConfig: currentAdminProfile.canModifySystemConfig,
+        canSuspendAdmins: currentAdminProfile.canSuspendAdmins,
+        canChangeUserRoles: currentAdminProfile.canChangeUserRoles,
+        canChangeUserEmails: currentAdminProfile.canChangeUserEmails,
+        assignedRegions: currentAdminProfile.assignedRegions,
+      },
+      updatePermissionsDto,
+      request,
+    );
+
+    return updatedUser as UserProfileDto;
+  }
+
+  /**
    * Soft delete user (set status to deactivated)
    */
   async remove(id: string, deletedBy: string, request?: any): Promise<void> {
     const user = await this.findOne(id);
+
+    // Get current user to check permissions
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: deletedBy },
+      include: { adminProfile: true },
+    });
+
+    if (!currentUser) {
+      throw new NotFoundException('Current user not found');
+    }
+
+    // Check permissions for deleting admin accounts
+    // Only users with canSuspendAdmins permission can delete ADMIN or SUPER_ADMIN accounts
+    if (
+      (user.role === UserRole.ADMIN || user.role === UserRole.SUPER_ADMIN) &&
+      !currentUser.adminProfile?.canSuspendAdmins
+    ) {
+      throw new BadRequestException(
+        'Insufficient permissions to delete admin accounts',
+      );
+    }
+
+    // Prevent super admin from deleting themselves
+    if (user.id === deletedBy && user.role === UserRole.SUPER_ADMIN) {
+      throw new BadRequestException('Super Admin cannot delete themselves');
+    }
 
     // Soft delete by setting status to deactivated
     await this.prisma.user.update({
@@ -556,5 +859,45 @@ export class UsersService {
     }
 
     return result;
+  }
+
+  /**
+   * Get user activity log (Admin only)
+   */
+  async getUserActivity(userId: string, paginationDto: PaginationDto) {
+    // Verify user exists
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Get audit logs for this user
+    const { page = 1, limit = 10 } = paginationDto;
+    const skip = (page - 1) * limit;
+
+    const [logs, total] = await Promise.all([
+      this.prisma.auditLog.findMany({
+        where: { userId: userId },
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.auditLog.count({ where: { userId: userId } }),
+    ]);
+
+    return {
+      data: logs,
+      meta: {
+        page,
+        limit,
+        totalItems: total,
+        totalPages: Math.ceil(total / limit),
+        hasNextPage: page * limit < total,
+        hasPreviousPage: page > 1,
+      },
+    };
   }
 }

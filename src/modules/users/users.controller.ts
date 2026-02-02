@@ -25,21 +25,22 @@ import { UserRole, UserStatus } from '@prisma/client';
 import { UsersService } from './users.service';
 import { UnifiedAuthGuard } from '../../common/guards/unified-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
-import {
-  CurrentUser,
-  CurrentUserId,
-} from '../../common/decorators/current-user.decorator';
+import { CurrentUserId } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { AuditLog } from '../../common/decorators/audit-log.decorator';
-import { PaginationDto, PaginatedResponse } from '../../common/dto';
+import { PaginatedResponse } from '../../common/dto/paginated-response.dto';
+import { SuccessResponse } from '../../common/dto/api-response.dto';
+import { ResponseMessages } from '../../common/utils/response-messages.util';
 import {
   CreateUserDto,
   UpdateUserDto,
   UpdateUserStatusDto,
   UpdateUserRoleDto,
   UpdateUserProfileDto,
+  UpdateAdminPermissionsDto,
 } from './dto/user.dto';
 import { UserProfileDto } from '../auth/dto/auth-response.dto';
+import { PaginationDto } from '../../common/dto';
 
 @ApiTags('Users')
 @Controller('users')
@@ -78,8 +79,13 @@ export class UsersController {
     @Query() paginationDto: PaginationDto,
     @Query('role') role?: UserRole,
     @Query('status') status?: UserStatus,
+    @CurrentUserId() currentUserId?: string,
   ): Promise<PaginatedResponse<UserProfileDto>> {
-    return this.usersService.findAll(paginationDto, { role, status });
+    return this.usersService.findAll(
+      paginationDto,
+      { role, status },
+      currentUserId,
+    );
   }
 
   @Get('stats')
@@ -96,7 +102,8 @@ export class UsersController {
     description: 'Forbidden - Admin access required',
   })
   async getUserStats() {
-    return this.usersService.getUserStats();
+    const stats = await this.usersService.getUserStats();
+    return new SuccessResponse(ResponseMessages.statsRetrieved('User'), stats);
   }
 
   @Post()
@@ -243,6 +250,43 @@ export class UsersController {
     return this.usersService.updateRole(id, updateRoleDto, currentUserId, req);
   }
 
+  @Patch(':id/permissions')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Update admin permissions (Super Admin only)' })
+  @ApiParam({ name: 'id', description: 'Admin User ID' })
+  @ApiBody({ type: UpdateAdminPermissionsDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Admin permissions updated successfully',
+    type: UserProfileDto,
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Super Admin access required',
+  })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  @ApiResponse({ status: 400, description: 'Invalid permissions data' })
+  @AuditLog({
+    action: 'UPDATE_ADMIN_PERMISSIONS',
+    resource: 'ADMIN_PROFILE',
+    includeRequestBody: true,
+  })
+  async updateAdminPermissions(
+    @Param('id') id: string,
+    @Body() updatePermissionsDto: UpdateAdminPermissionsDto,
+    @CurrentUserId() currentUserId: string,
+    @Request() req: any,
+  ): Promise<UserProfileDto> {
+    return this.usersService.updateAdminPermissions(
+      id,
+      updatePermissionsDto,
+      currentUserId,
+      req,
+    );
+  }
+
   @Delete(':id')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN) // Only Super Admin can delete users
@@ -334,5 +378,43 @@ export class UsersController {
       userId,
       req,
     );
+  }
+
+  // ================================
+  // USER ACTIVITY LOGS (ADMIN ONLY)
+  // ================================
+
+  @Get(':id/activity')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Get user activity log',
+    description: 'Retrieve activity logs for a specific user (Admin only)',
+  })
+  @ApiParam({ name: 'id', description: 'User ID' })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    type: Number,
+    description: 'Page number',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    description: 'Items per page',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'User activity log retrieved successfully',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Admin only' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  async getUserActivity(
+    @Param('id') userId: string,
+    @Query() paginationDto: PaginationDto,
+  ) {
+    return this.usersService.getUserActivity(userId, paginationDto);
   }
 }

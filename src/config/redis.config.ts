@@ -3,10 +3,12 @@ import * as Joi from 'joi';
 
 export const redisConfig = registerAs('redis', () => {
   // Support for Upstash Redis (REST API) or traditional Redis
+  const nodeEnv = process.env.NODE_ENV || 'development';
   const upstashUrl = process.env.UPSTASH_REDIS_REST_URL;
   const upstashToken = process.env.UPSTASH_REDIS_REST_TOKEN;
 
-  if (upstashUrl && upstashToken) {
+  // Use Upstash in production if credentials are available
+  if (nodeEnv === 'production' && upstashUrl && upstashToken) {
     return {
       // Upstash Redis configuration
       upstash: {
@@ -19,6 +21,7 @@ export const redisConfig = registerAs('redis', () => {
     };
   }
 
+  // Use traditional Redis for development or fallback
   return {
     // Traditional Redis configuration
     url: process.env.REDIS_URL,

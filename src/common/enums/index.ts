@@ -1,7 +1,7 @@
 export enum UserRole {
   SUPER_ADMIN = 'SUPER_ADMIN',
   ADMIN = 'ADMIN',
-  SUB_ADMIN = 'SUB_ADMIN',
+  PROCUREMENT_OFFICER = 'PROCUREMENT_OFFICER',
   SME_USER = 'SME_USER',
 }
 
@@ -60,4 +60,21 @@ export enum TaskStatus {
   REVIEW = 'review',
   COMPLETED = 'completed',
   CANCELLED = 'cancelled',
+}
+
+export enum ProductStatus {
+  DRAFT = 'DRAFT',
+  QUEUE = 'QUEUE',
+  LIVE = 'LIVE',
+  ARCHIVED = 'ARCHIVED',
+}
+
+export enum PackSizeStatus {
+  ACTIVE = 'ACTIVE',
+  ARCHIVED = 'ARCHIVED',
+}
+
+export enum PackTypeStatus {
+  ACTIVE = 'ACTIVE',
+  ARCHIVED = 'ARCHIVED',
 }

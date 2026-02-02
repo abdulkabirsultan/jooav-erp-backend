@@ -8,6 +8,7 @@ import {
   MaxLength,
   IsPhoneNumber,
   IsDateString,
+  IsBoolean,
 } from 'class-validator';
 import { UserRole, UserStatus } from '@prisma/client';
 
@@ -151,15 +152,6 @@ export class UpdateUserRoleDto {
 
 export class UpdateUserProfileDto {
   @ApiProperty({
-    description: 'Date of birth',
-    example: '1990-01-01',
-    required: false,
-  })
-  @IsOptional()
-  @IsDateString()
-  dateOfBirth?: string;
-
-  @ApiProperty({
     description: 'Address',
     example: '123 Main Street',
     required: false,
@@ -194,24 +186,50 @@ export class UpdateUserProfileDto {
   @IsOptional()
   @IsString()
   country?: string;
+}
 
+export class UpdateAdminPermissionsDto {
   @ApiProperty({
-    description: 'ZIP/Postal code',
-    example: '100001',
+    description: 'Can modify system configuration',
+    example: false,
     required: false,
   })
   @IsOptional()
-  @IsString()
-  zipCode?: string;
+  @IsBoolean()
+  canModifySystemConfig?: boolean;
 
   @ApiProperty({
-    description: 'Bio/Description',
-    example:
-      'Software developer passionate about creating amazing applications.',
+    description: 'Can suspend other admins',
+    example: false,
     required: false,
   })
   @IsOptional()
-  @IsString()
-  @MaxLength(500, { message: 'Bio cannot exceed 500 characters' })
-  bio?: string;
+  @IsBoolean()
+  canSuspendAdmins?: boolean;
+
+  @ApiProperty({
+    description: 'Can change user roles',
+    example: true,
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  canChangeUserRoles?: boolean;
+
+  @ApiProperty({
+    description: 'Can change user emails',
+    example: true,
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  canChangeUserEmails?: boolean;
+
+  @ApiProperty({
+    description: 'Assigned regions for management',
+    example: ['NG-LA', 'NG-AB'],
+    required: false,
+  })
+  @IsOptional()
+  assignedRegions?: string[];
 }

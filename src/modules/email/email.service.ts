@@ -137,6 +137,30 @@ export class EmailService {
         text: `Hello ${vars.name || 'User'}, you requested to reset your password. Visit: ${vars.resetUrl}`,
       }),
 
+      passwordSetup: (vars) => ({
+        subject: `Welcome to ${vars.platformName || 'JOOAV ERP'} - Set Your Password`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h1>Welcome to ${vars.platformName || 'JOOAV ERP'}!</h1>
+            <p>Hello ${vars.firstName || 'User'},</p>
+            <p>Your account has been created by an administrator. To get started, you need to set up your password.</p>
+            <p>Click the link below to set your password:</p>
+            <a href="${vars.resetUrl}" style="display: inline-block; padding: 12px 24px; background-color: #28a745; color: white; text-decoration: none; border-radius: 4px;">Set Your Password</a>
+            <p>This link will expire in 24 hours for security purposes.</p>
+            <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
+              <strong>Next Steps:</strong>
+              <ol>
+                <li>Click the "Set Your Password" button above</li>
+                <li>Create a secure password</li>
+                <li>Log in to your account and complete your profile</li>
+              </ol>
+            </div>
+            <p>If you have any questions, please contact your administrator.</p>
+          </div>
+        `,
+        text: `Welcome to ${vars.platformName || 'JOOAV ERP'}! Your account has been created. Set your password at: ${vars.resetUrl}`,
+      }),
+
       loginNotification: (vars) => ({
         subject: 'New Login to Your Account',
         html: `

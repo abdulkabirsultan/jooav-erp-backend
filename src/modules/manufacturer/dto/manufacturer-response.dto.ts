@@ -21,6 +21,39 @@ export class UserInfoDto {
   name: string;
 }
 
+export class ManufacturerBrandDto {
+  @ApiProperty({
+    description: 'Brand ID',
+    example: 'clp98765432',
+  })
+  id: string;
+
+  @ApiProperty({
+    description: 'Brand name',
+    example: 'KitKat',
+  })
+  name: string;
+
+  @ApiPropertyOptional({
+    description: 'Brand description',
+    example: 'Premium chocolate wafer bar for break moments',
+  })
+  description?: string;
+
+  @ApiPropertyOptional({
+    description: 'Brand logo URL',
+    example:
+      'https://res.cloudinary.com/jooav/image/upload/v1234567890/brands/kitkat-logo.png',
+  })
+  logo?: string;
+
+  @ApiProperty({
+    description: 'Brand status',
+    example: 'ACTIVE',
+  })
+  status: string;
+}
+
 export class ManufacturerProductDto {
   @ApiProperty({
     description: 'Product ID',
@@ -71,60 +104,6 @@ export class ManufacturerResponseDto {
     example: 'Leading manufacturer of beverages',
   })
   description?: string;
-
-  @ApiProperty({
-    description: 'Contact email address',
-    example: 'contact@nestle.com',
-  })
-  email: string;
-
-  @ApiProperty({
-    description: 'Contact phone number',
-    example: '+1-555-123-4567',
-  })
-  phone: string;
-
-  @ApiPropertyOptional({
-    description: 'Company website URL',
-    example: 'https://www.nestle.com',
-  })
-  website?: string;
-
-  @ApiProperty({
-    description: 'Street address',
-    example: '1-7-1 Konan, Minato-ku',
-  })
-  address: string;
-
-  @ApiProperty({
-    description: 'City',
-    example: 'Lagos',
-  })
-  city: string;
-
-  @ApiProperty({
-    description: 'State or province',
-    example: 'Lagos',
-  })
-  state: string;
-
-  @ApiProperty({
-    description: 'Country',
-    example: 'Nigeria',
-  })
-  country: string;
-
-  @ApiPropertyOptional({
-    description: 'Postal/ZIP code',
-    example: '108-0075',
-  })
-  postalCode?: string;
-
-  @ApiPropertyOptional({
-    description: 'Business registration number',
-    example: 'TK-123456789',
-  })
-  registrationNumber?: string;
 
   @ApiProperty({
     description: 'Manufacturer status',
@@ -182,6 +161,12 @@ export class ManufacturerResponseDto {
   ordersCount: number;
 
   @ApiPropertyOptional({
+    description: 'Brands under this manufacturer',
+    type: [ManufacturerBrandDto],
+  })
+  brands?: ManufacturerBrandDto[];
+
+  @ApiPropertyOptional({
     description: 'Recent products (limited to 10)',
     type: [ManufacturerProductDto],
   })
@@ -214,18 +199,20 @@ export class ManufacturerStatsDto {
   suspended: number;
 
   @ApiProperty({
+    description: 'Total number of products by all manufacturers',
+    example: 450,
+  })
+  totalProducts: number;
+
+  @ApiProperty({
+    description: 'Total number of orders processed',
+    example: 789,
+  })
+  totalOrders: number;
+
+  @ApiProperty({
     description: 'Number of manufacturers created this month',
     example: 5,
   })
   createdThisMonth: number;
-
-  @ApiProperty({
-    description: 'Top countries by manufacturer count',
-    example: [
-      { country: 'Nigeria', count: 15 },
-      { country: 'USA', count: 12 },
-      { country: 'Germany', count: 8 },
-    ],
-  })
-  topCountries: Array<{ country: string; count: number }>;
 }

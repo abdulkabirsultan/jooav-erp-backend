@@ -12,7 +12,8 @@ import { UserRole, UserStatus, User } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { v4 as uuidv4 } from 'uuid';
 
-import { PrismaService } from '../../database/prisma.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { generatePasswordResetToken } from '../../common/utils/token.util';
 import { AuditService } from '../audit/audit.service';
 import { EmailService } from '../email/email.service';
 import { JwtPayload } from './strategies/jwt.strategy';
@@ -160,7 +161,6 @@ export class AuthService {
 
     // Hash password
     const hashedPassword = await this.hashPassword(registerDto.password);
-
     // Create user
     const user = await this.prisma.user.create({
       data: {
@@ -496,9 +496,7 @@ export class AuthService {
     }
 
     // Generate reset token
-    const resetToken = uuidv4();
-    const expiresAt = new Date();
-    expiresAt.setHours(expiresAt.getHours() + 1); // 1 hour expiry
+    const { token: resetToken, expiresAt } = generatePasswordResetToken(1); // 1 hour expiry
 
     // Invalidate any existing reset tokens for this email
     await this.prisma.passwordReset.updateMany({

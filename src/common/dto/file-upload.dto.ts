@@ -25,10 +25,14 @@ export class FileUploadResponseDto {
   @ApiProperty({ example: 'jooav-erp/sample_file_abc123' })
   publicId: string;
 
-  @ApiProperty({ example: 'http://res.cloudinary.com/demo/image/upload/sample.jpg' })
+  @ApiProperty({
+    example: 'http://res.cloudinary.com/demo/image/upload/sample.jpg',
+  })
   url: string;
 
-  @ApiProperty({ example: 'https://res.cloudinary.com/demo/image/upload/sample.jpg' })
+  @ApiProperty({
+    example: 'https://res.cloudinary.com/demo/image/upload/sample.jpg',
+  })
   secureUrl: string;
 
   @ApiProperty({ example: 'jpg' })
@@ -51,9 +55,9 @@ export class FileUploadResponseDto {
 }
 
 export class DeleteFileDto {
-  @ApiProperty({ 
+  @ApiProperty({
     example: 'jooav-erp/sample_file_abc123',
-    description: 'Public ID of the file to delete'
+    description: 'Public ID of the file to delete',
   })
   publicId: string;
 }

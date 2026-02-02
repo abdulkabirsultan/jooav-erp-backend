@@ -28,7 +28,7 @@ export class AdminProfileDto {
 
   @ApiProperty({
     description:
-      'Admin role in the platform (SUPER_ADMIN, ADMIN, SUB_ADMIN, SME_USER)',
+      'Admin role in the platform (SUPER_ADMIN, ADMIN, PROCUREMENT_OFFICER, SME_USER)',
     enum: UserRole,
     example: UserRole.SUPER_ADMIN,
   })
@@ -62,19 +62,17 @@ export class AdminProfileDto {
   @ApiProperty({
     description: 'Platform permissions',
     example: {
-      canManageManufacturers: true,
-      canApproveSMEs: true,
-      canManageSubAdmins: true,
-      canAccessAnalytics: true,
       canModifySystemConfig: false,
+      canSuspendAdmins: true,
+      canChangeUserRoles: true,
+      canChangeUserEmails: true,
     },
   })
   permissions: {
-    canManageManufacturers: boolean;
-    canApproveSMEs: boolean;
-    canManageSubAdmins: boolean;
-    canAccessAnalytics: boolean;
     canModifySystemConfig: boolean;
+    canSuspendAdmins: boolean;
+    canChangeUserRoles: boolean;
+    canChangeUserEmails: boolean;
   };
 
   @ApiProperty({

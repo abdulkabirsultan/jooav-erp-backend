@@ -10,7 +10,7 @@ import { JwtService } from '@nestjs/jwt';
 import { UserRole, UserStatus, AdminAction } from '@prisma/client';
 import * as argon2 from 'argon2';
 
-import { PrismaService } from '../../database/prisma.service';
+import { PrismaService } from '../../modules/prisma/prisma.service';
 import { AuditService } from '../../modules/audit/audit.service';
 import {
   AdminLoginDto,
@@ -65,7 +65,7 @@ export class AdminAuthService {
         status: UserStatus.ACTIVE,
       },
       include: {
-        superAdminProfile: true,
+        adminProfile: true,
       },
     });
 
@@ -101,8 +101,8 @@ export class AdminAuthService {
 
     // Check if account is temporarily locked
     if (
-      admin.superAdminProfile?.accountLockUntil &&
-      new Date() < admin.superAdminProfile.accountLockUntil
+      admin.adminProfile?.accountLockUntil &&
+      new Date() < admin.adminProfile.accountLockUntil
     ) {
       await this.logAdminAuditEvent(
         admin.id,
@@ -150,8 +150,8 @@ export class AdminAuthService {
     });
 
     // Update admin profile activity
-    if (admin.superAdminProfile) {
-      await this.prisma.superAdminProfile.update({
+    if (admin.adminProfile) {
+      await this.prisma.adminProfile.update({
         where: { userId: admin.id },
         data: { lastActivity: new Date() },
       });
@@ -181,7 +181,7 @@ export class AdminAuthService {
     const { refreshToken } = refreshTokenDto;
 
     try {
-      const payload = this.jwtService.verify(refreshToken) as any;
+      const payload = this.jwtService.verify(refreshToken);
 
       if (payload.type !== 'admin-refresh') {
         throw new UnauthorizedException('Invalid admin refresh token');
@@ -244,7 +244,7 @@ export class AdminAuthService {
     const admin = await this.prisma.user.findUnique({
       where: { id: adminId },
       include: {
-        superAdminProfile: true,
+        adminProfile: true,
       },
     });
 
@@ -262,7 +262,7 @@ export class AdminAuthService {
     const admin = await this.prisma.user.findUnique({
       where: { id: adminId },
       include: {
-        superAdminProfile: true,
+        adminProfile: true,
       },
     });
 
@@ -270,13 +270,52 @@ export class AdminAuthService {
       throw new NotFoundException('Admin not found');
     }
 
+    const isSuperAdmin = admin.role === UserRole.SUPER_ADMIN;
+    const isAdmin = admin.role === UserRole.ADMIN;
+
+    // Simplified permissions based on actual usage
     return {
       role: admin.role,
-      assignedRegions: admin.superAdminProfile?.assignedRegions || [],
-      permissions: this.generatePermissions(
-        admin.role,
-        admin.superAdminProfile,
-      ),
+      assignedRegions: admin.adminProfile?.assignedRegions || [],
+      permissions: {
+        manufacturers: {
+          create: true, // All admins can manage manufacturers
+          read: true,
+          update: true,
+          delete: isSuperAdmin, // Only super admin can delete
+          approve: true,
+        },
+        smeUsers: {
+          create: false, // SMEs register themselves
+          read: true,
+          update: true,
+          delete: isSuperAdmin,
+          approve: true,
+        },
+        subAdmins: {
+          create: isSuperAdmin, // Only super admin can create other admins
+          read: true,
+          update: isSuperAdmin,
+          delete: isSuperAdmin,
+          assign: isSuperAdmin,
+        },
+        orders: {
+          read: true,
+          update: true,
+          cancel: true,
+          override: isSuperAdmin,
+        },
+        analytics: {
+          access: true, // All admins have analytics access
+          export: true,
+        },
+        systemConfig: {
+          read: true,
+          update:
+            isSuperAdmin &&
+            (admin.adminProfile?.canModifySystemConfig ?? false),
+        },
+      },
     };
   }
 
@@ -310,20 +349,19 @@ export class AdminAuthService {
         role: UserRole.SUPER_ADMIN,
         status: UserStatus.ACTIVE,
         emailVerified: true,
-        superAdminProfile: {
+        adminProfile: {
           create: {
             // Super Admin is platform owner - no regional restrictions
             permissions: undefined,
-            canManageManufacturers: true,
-            canApproveSMEs: true,
-            canManageSubAdmins: true,
-            canAccessAnalytics: true,
             canModifySystemConfig: true,
+            canSuspendAdmins: true,
+            canChangeUserRoles: true,
+            canChangeUserEmails: true,
           },
         },
       },
       include: {
-        superAdminProfile: true,
+        adminProfile: true,
       },
     });
 
@@ -341,7 +379,7 @@ export class AdminAuthService {
         status: UserStatus.ACTIVE,
       },
       include: {
-        superAdminProfile: true,
+        adminProfile: true,
       },
     });
 
@@ -380,7 +418,7 @@ export class AdminAuthService {
    * Handle failed login attempt
    */
   private async handleFailedLogin(adminId: string): Promise<void> {
-    const profile = await this.prisma.superAdminProfile.findUnique({
+    const profile = await this.prisma.adminProfile.findUnique({
       where: { userId: adminId },
     });
 
@@ -396,7 +434,7 @@ export class AdminAuthService {
       updateData.accountLockUntil = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
     }
 
-    await this.prisma.superAdminProfile.update({
+    await this.prisma.adminProfile.update({
       where: { userId: adminId },
       data: updateData,
     });
@@ -406,7 +444,7 @@ export class AdminAuthService {
    * Reset failed login attempts
    */
   private async resetFailedLoginAttempts(adminId: string): Promise<void> {
-    await this.prisma.superAdminProfile.updateMany({
+    await this.prisma.adminProfile.updateMany({
       where: { userId: adminId },
       data: {
         loginAttempts: 0,
@@ -449,67 +487,14 @@ export class AdminAuthService {
       lastLogin: admin.lastLogin,
       assignedRegions: [], // Admins don't have regional assignments
       permissions: {
-        canManageManufacturers:
-          admin.superAdminProfile?.canManageManufacturers ?? false,
-        canApproveSMEs: admin.superAdminProfile?.canApproveSMEs ?? false,
-        canManageSubAdmins:
-          admin.superAdminProfile?.canManageSubAdmins ?? false,
-        canAccessAnalytics:
-          admin.superAdminProfile?.canAccessAnalytics ?? false,
         canModifySystemConfig:
-          admin.superAdminProfile?.canModifySystemConfig ?? false,
+          admin.adminProfile?.canModifySystemConfig ?? false,
+        canSuspendAdmins: admin.adminProfile?.canSuspendAdmins ?? false,
+        canChangeUserRoles: admin.adminProfile?.canChangeUserRoles ?? false,
+        canChangeUserEmails: admin.adminProfile?.canChangeUserEmails ?? false,
       },
       createdAt: admin.createdAt,
       updatedAt: admin.updatedAt,
-    };
-  }
-
-  /**
-   * Generate permissions based on role
-   */
-  private generatePermissions(
-    role: UserRole,
-    profile: any,
-  ): AdminPermissionsDto['permissions'] {
-    const isSuperAdmin = role === UserRole.SUPER_ADMIN;
-    const isAdmin = role === UserRole.ADMIN;
-
-    return {
-      manufacturers: {
-        create: isSuperAdmin || (isAdmin && profile?.canManageManufacturers),
-        read: true,
-        update: isSuperAdmin || (isAdmin && profile?.canManageManufacturers),
-        delete: isSuperAdmin,
-        approve: isSuperAdmin || (isAdmin && profile?.canManageManufacturers),
-      },
-      smeUsers: {
-        create: false, // SMEs register themselves
-        read: true,
-        update: isSuperAdmin || isAdmin,
-        delete: isSuperAdmin,
-        approve: isSuperAdmin || (isAdmin && profile?.canApproveSMEs),
-      },
-      subAdmins: {
-        create: isSuperAdmin || (isAdmin && profile?.canManageSubAdmins),
-        read: true,
-        update: isSuperAdmin || (isAdmin && profile?.canManageSubAdmins),
-        delete: isSuperAdmin,
-        assign: isSuperAdmin || (isAdmin && profile?.canManageSubAdmins),
-      },
-      orders: {
-        read: true,
-        update: true,
-        cancel: true,
-        override: isSuperAdmin,
-      },
-      analytics: {
-        access: isSuperAdmin || (isAdmin && profile?.canAccessAnalytics),
-        export: isSuperAdmin || (isAdmin && profile?.canAccessAnalytics),
-      },
-      systemConfig: {
-        read: true,
-        update: isSuperAdmin && profile?.canModifySystemConfig,
-      },
     };
   }
 

@@ -19,7 +19,43 @@ export class ResponseInterceptor<T> implements NestInterceptor<
   ): Observable<BaseResponse<T>> {
     return next.handle().pipe(
       map((data) => {
+        // Check if the response is already formatted with our custom SuccessResponse
+        if (
+          data &&
+          typeof data === 'object' &&
+          'success' in data &&
+          'message' in data &&
+          'data' in data
+        ) {
+          // If it's already our custom format, convert it to BaseResponse
+          // Use the meta from SuccessResponse if available
+          return new BaseResponse(
+            data.message,
+            data.data,
+            ResponseStatus.SUCCESS,
+            data.meta,
+          );
+        }
+
         const message = this.getSuccessMessage(context);
+
+        // Check if the data already has pagination structure (data + meta)
+        if (
+          data &&
+          typeof data === 'object' &&
+          'data' in data &&
+          'meta' in data
+        ) {
+          // For paginated responses, use the updated constructor
+          return new BaseResponse(
+            message,
+            data.data,
+            ResponseStatus.SUCCESS,
+            data.meta,
+          );
+        }
+
+        // For non-paginated responses, use normal structure
         return new BaseResponse(message, data, ResponseStatus.SUCCESS);
       }),
     );

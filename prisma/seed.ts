@@ -33,18 +33,16 @@ async function main() {
       emailVerified: true,
       profile: {
         create: {
-          bio: 'Platform Super Administrator',
           country: 'Nigeria',
         },
       },
-      superAdminProfile: {
+      adminProfile: {
         create: {
-          // Super Admin is platform owner - no regional restrictions
-          canManageManufacturers: true,
-          canApproveSMEs: true,
-          canManageSubAdmins: true,
-          canAccessAnalytics: true,
+          // Super Admin has full platform control
           canModifySystemConfig: true,
+          canSuspendAdmins: true,
+          canChangeUserRoles: true,
+          canChangeUserEmails: true,
         },
       },
     },
@@ -64,18 +62,16 @@ async function main() {
       emailVerified: true,
       profile: {
         create: {
-          bio: 'System Administrator',
           country: 'Nigeria',
         },
       },
-      superAdminProfile: {
+      adminProfile: {
         create: {
-          assignedRegions: ['Lagos', 'Abuja'], // Example regional assignment
-          canManageManufacturers: true,
-          canApproveSMEs: true,
-          canManageSubAdmins: false, // Limited permissions for regular admin
-          canAccessAnalytics: true,
-          canModifySystemConfig: false,
+          assignedRegions: ['Lagos', 'Abuja'], // Regional assignment
+          canModifySystemConfig: false, // Limited - cannot modify system config
+          canSuspendAdmins: false, // Limited - cannot suspend other admins
+          canChangeUserRoles: false, // Limited - cannot change user roles
+          canChangeUserEmails: false, // Limited - cannot change user emails
         },
       },
     },
@@ -87,19 +83,18 @@ async function main() {
     update: {},
     create: {
       email: 'subadmin@jooav.com',
-      firstName: 'Regional',
+      firstName: 'Procurement',
       lastName: 'Officer',
       password: await hashPassword('password123'), // Argon2 hashed
-      role: UserRole.SUB_ADMIN,
+      role: UserRole.PROCUREMENT_OFFICER,
       status: UserStatus.ACTIVE,
       emailVerified: true,
       profile: {
         create: {
-          bio: 'Regional Procurement Officer',
           country: 'Nigeria',
         },
       },
-      subAdminProfile: {
+      procurementOfficerProfile: {
         create: {
           employeeId: 'SUB001',
           // regionId: undefined, // Optional - can be assigned later for scalability
@@ -124,112 +119,524 @@ async function main() {
       emailVerified: true,
       profile: {
         create: {
-          bio: 'Small Business Owner',
           country: 'Nigeria',
         },
       },
     },
   });
 
-  // Create sample customers
-  const customers = await Promise.all([
-    prisma.customer.create({
+  // Collect users for easy reference
+  const users = [superAdmin, admin, subAdmin, smeUser];
+
+  // Create sample manufacturers
+  const manufacturers = await Promise.all([
+    prisma.manufacturer.create({
       data: {
-        companyName: 'Tech Solutions Ltd',
-        contactName: 'Alice Johnson',
-        email: 'alice@techsolutions.com',
-        phone: '+234-801-234-5678',
-        address: '123 Business District',
-        city: 'Lagos',
-        country: 'Nigeria',
+        name: 'Nestle Nigeria Plc',
+        description: 'Leading food and beverage company',
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
       },
     }),
-    prisma.customer.create({
+    prisma.manufacturer.create({
       data: {
-        companyName: 'Global Enterprises',
-        contactName: 'Bob Smith',
-        email: 'bob@globalenterprises.com',
-        phone: '+234-802-345-6789',
-        address: '456 Corporate Avenue',
-        city: 'Abuja',
-        country: 'Nigeria',
+        name: 'Coca-Cola Nigeria Limited',
+        description: 'The Coca-Cola System in Nigeria',
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
       },
     }),
   ]);
 
-  // Create sample products
+  // Create sample categories
+  const categories = await Promise.all([
+    prisma.category.create({
+      data: {
+        name: 'Food & Beverages',
+        description: 'Food and beverage products',
+        slug: 'food-beverages',
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+    prisma.category.create({
+      data: {
+        name: 'Personal Care',
+        description: 'Personal care and hygiene products',
+        slug: 'personal-care',
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+    prisma.category.create({
+      data: {
+        name: 'Household Items',
+        description: 'Household and cleaning products',
+        slug: 'household-items',
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+  ]);
+
+  // Create subcategories
+  const subcategories = await Promise.all([
+    prisma.subcategory.create({
+      data: {
+        name: 'Instant Noodles',
+        description: 'Quick cooking noodles',
+        slug: 'instant-noodles',
+        categoryId: categories[0].id, // Food & Beverages
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+    prisma.subcategory.create({
+      data: {
+        name: 'Soft Drinks',
+        description: 'Carbonated and non-carbonated drinks',
+        slug: 'soft-drinks',
+        categoryId: categories[0].id, // Food & Beverages
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+    prisma.subcategory.create({
+      data: {
+        name: 'Dairy Products',
+        description: 'Milk and dairy products',
+        slug: 'dairy-products',
+        categoryId: categories[0].id, // Food & Beverages
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+  ]);
+
+  // Create sample brands
+  const brands = await Promise.all([
+    prisma.brand.create({
+      data: {
+        name: 'Indomie',
+        description: 'Popular instant noodles brand',
+        manufacturerId: manufacturers[0].id,
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+    prisma.brand.create({
+      data: {
+        name: 'Coca-Cola',
+        description: 'World famous cola brand',
+        manufacturerId: manufacturers[1].id,
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+    prisma.brand.create({
+      data: {
+        name: 'Peak',
+        description: 'Premium milk brand',
+        manufacturerId: manufacturers[0].id,
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+  ]);
+
+  // Create sample variants
+  const variants = await Promise.all([
+    prisma.variant.create({
+      data: {
+        name: 'Chicken Curry',
+        description: 'Delicious chicken curry flavor',
+        brandId: brands[0].id, // Indomie
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+    prisma.variant.create({
+      data: {
+        name: 'Classic',
+        description: 'Classic cola flavor',
+        brandId: brands[1].id, // Coca-Cola
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+    prisma.variant.create({
+      data: {
+        name: 'Milk Powder',
+        description: 'Premium milk powder',
+        brandId: brands[2].id, // Peak
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+  ]);
+
+  // Create sample pack sizes - multiple per variant to showcase new functionality
+  const packSizes = await Promise.all([
+    // Indomie Chicken Curry pack sizes
+    prisma.packSize.create({
+      data: {
+        name: '70g',
+        variantId: variants[0].id, // Indomie Chicken Curry
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+    prisma.packSize.create({
+      data: {
+        name: '120g',
+        variantId: variants[0].id, // Indomie Chicken Curry
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+    prisma.packSize.create({
+      data: {
+        name: '200g',
+        variantId: variants[0].id, // Indomie Chicken Curry
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+
+    // Coca-Cola Classic pack sizes
+    prisma.packSize.create({
+      data: {
+        name: '350ml',
+        variantId: variants[1].id, // Coca-Cola Classic
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+    prisma.packSize.create({
+      data: {
+        name: '500ml',
+        variantId: variants[1].id, // Coca-Cola Classic
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+    prisma.packSize.create({
+      data: {
+        name: '1.5L',
+        variantId: variants[1].id, // Coca-Cola Classic
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+
+    // Peak Milk Powder pack sizes
+    prisma.packSize.create({
+      data: {
+        name: '400g',
+        variantId: variants[2].id, // Peak Milk Powder
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+    prisma.packSize.create({
+      data: {
+        name: '900g',
+        variantId: variants[2].id, // Peak Milk Powder
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+    prisma.packSize.create({
+      data: {
+        name: '1.8kg',
+        variantId: variants[2].id, // Peak Milk Powder
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+  ]);
+
+  // Create sample pack types - multiple per variant to showcase new functionality
+  const packTypes = await Promise.all([
+    // Indomie Chicken Curry pack types
+    prisma.packType.create({
+      data: {
+        name: 'Single Pack',
+        variantId: variants[0].id, // Indomie Chicken Curry
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+    prisma.packType.create({
+      data: {
+        name: 'Twin Pack',
+        variantId: variants[0].id, // Indomie Chicken Curry
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+    prisma.packType.create({
+      data: {
+        name: 'Family Pack',
+        variantId: variants[0].id, // Indomie Chicken Curry
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+
+    // Coca-Cola Classic pack types
+    prisma.packType.create({
+      data: {
+        name: 'Glass Bottle',
+        variantId: variants[1].id, // Coca-Cola Classic
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+    prisma.packType.create({
+      data: {
+        name: 'PET Bottle',
+        variantId: variants[1].id, // Coca-Cola Classic
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+    prisma.packType.create({
+      data: {
+        name: 'Can',
+        variantId: variants[1].id, // Coca-Cola Classic
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+
+    // Peak Milk Powder pack types
+    prisma.packType.create({
+      data: {
+        name: 'Tin',
+        variantId: variants[2].id, // Peak Milk Powder
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+    prisma.packType.create({
+      data: {
+        name: 'Pouch',
+        variantId: variants[2].id, // Peak Milk Powder
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+    prisma.packType.create({
+      data: {
+        name: 'Carton',
+        variantId: variants[2].id, // Peak Milk Powder
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+      },
+    }),
+  ]);
+
+  // Create sample products with diverse pack combinations
   const products = await Promise.all([
+    // Indomie Products - Multiple combinations
     prisma.product.create({
       data: {
-        name: 'Laptop Computer',
-        description: 'High-performance business laptop',
-        sku: 'LAP-001',
-        barcode: '1234567890123',
-        category: 'Electronics',
-        price: 150000.0,
-        costPrice: 120000.0,
-        stock: 50,
-        minStock: 10,
-        images: ['laptop1.jpg', 'laptop2.jpg'],
+        name: 'Indomie Chicken Curry 70g (Single Pack)',
+        description: 'Delicious instant noodles with chicken curry flavor',
+        sku: 'INDOMIE-CHICKEN-CURRY-70G-SINGLE-PACK',
+        brandId: brands[0].id,
+        variantId: variants[0].id,
+        manufacturerId: manufacturers[0].id,
+        subcategoryId:
+          subcategories.find((c) => c.name === 'Instant Noodles')?.id ||
+          subcategories[0].id,
+        packSizeId: packSizes[0].id, // 70g
+        packTypeId: packTypes[0].id, // Single Pack
+        price: 120.0,
+        discount: 5.0,
+        thumbnail: 'indomie-chicken-70g-single-thumb.jpg',
+        images: ['indomie-chicken-70g-single.jpg'],
+        createdBy: users[0].id,
+        updatedBy: users[0].id,
       },
     }),
     prisma.product.create({
       data: {
-        name: 'Office Chair',
-        description: 'Ergonomic office chair with lumbar support',
-        sku: 'CHR-001',
-        barcode: '2345678901234',
-        category: 'Furniture',
-        price: 45000.0,
-        costPrice: 35000.0,
-        stock: 25,
-        minStock: 5,
-        images: ['chair1.jpg', 'chair2.jpg'],
+        name: 'Indomie Chicken Curry 120g (Twin Pack)',
+        description:
+          'Convenient twin pack of instant noodles with chicken curry flavor',
+        sku: 'INDOMIE-CHICKEN-CURRY-120G-TWIN-PACK',
+        brandId: brands[0].id,
+        variantId: variants[0].id,
+        manufacturerId: manufacturers[0].id,
+        subcategoryId:
+          subcategories.find((c) => c.name === 'Instant Noodles')?.id ||
+          subcategories[0].id,
+        packSizeId: packSizes[1].id, // 120g
+        packTypeId: packTypes[1].id, // Twin Pack
+        price: 220.0,
+        discount: 8.0,
+        thumbnail: 'indomie-chicken-120g-twin-thumb.jpg',
+        images: ['indomie-chicken-120g-twin.jpg'],
+        createdBy: users[0].id,
+        updatedBy: users[0].id,
       },
     }),
     prisma.product.create({
       data: {
-        name: 'Wireless Mouse',
-        description: 'Bluetooth wireless mouse',
-        sku: 'MSE-001',
-        barcode: '3456789012345',
-        category: 'Electronics',
-        price: 8000.0,
-        costPrice: 6000.0,
-        stock: 100,
-        minStock: 20,
-        images: ['mouse1.jpg'],
+        name: 'Indomie Chicken Curry 200g (Family Pack)',
+        description:
+          'Large family pack of instant noodles with chicken curry flavor',
+        sku: 'INDOMIE-CHICKEN-CURRY-200G-FAMILY-PACK',
+        brandId: brands[0].id,
+        variantId: variants[0].id,
+        manufacturerId: manufacturers[0].id,
+        subcategoryId:
+          subcategories.find((c) => c.name === 'Instant Noodles')?.id ||
+          subcategories[0].id,
+        packSizeId: packSizes[2].id, // 200g
+        packTypeId: packTypes[2].id, // Family Pack
+        price: 350.0,
+        discount: 12.0,
+        thumbnail: 'indomie-chicken-200g-family-thumb.jpg',
+        images: ['indomie-chicken-200g-family.jpg'],
+        createdBy: users[0].id,
+        updatedBy: users[0].id,
+      },
+    }),
+
+    // Coca-Cola Products - Multiple combinations
+    prisma.product.create({
+      data: {
+        name: 'Coca Cola Classic 350ml (Glass Bottle)',
+        description: 'Refreshing cola soft drink in classic glass bottle',
+        sku: 'COCA-COLA-CLASSIC-350ML-GLASS-BOTTLE',
+        brandId: brands[1].id,
+        variantId: variants[1].id,
+        manufacturerId: manufacturers[1].id,
+        subcategoryId:
+          subcategories.find((c) => c.name === 'Soft Drinks')?.id ||
+          subcategories[1].id,
+        packSizeId: packSizes[3].id, // 350ml
+        packTypeId: packTypes[3].id, // Glass Bottle
+        price: 180.0,
+        discount: 5.0,
+        thumbnail: 'coca-cola-350ml-glass-thumb.jpg',
+        images: ['coca-cola-350ml-glass.jpg'],
+        createdBy: users[0].id,
+        updatedBy: users[0].id,
+      },
+    }),
+    prisma.product.create({
+      data: {
+        name: 'Coca Cola Classic 500ml (PET Bottle)',
+        description: 'Refreshing cola soft drink in convenient PET bottle',
+        sku: 'COCA-COLA-CLASSIC-500ML-PET-BOTTLE',
+        brandId: brands[1].id,
+        variantId: variants[1].id,
+        manufacturerId: manufacturers[1].id,
+        subcategoryId:
+          subcategories.find((c) => c.name === 'Soft Drinks')?.id ||
+          subcategories[0].id,
+        packSizeId: packSizes[4].id, // 500ml
+        packTypeId: packTypes[4].id, // PET Bottle
+        price: 200.0,
+        discount: 10.0,
+        thumbnail: 'coca-cola-500ml-pet-thumb.jpg',
+        images: ['coca-cola-500ml-pet.jpg'],
+        createdBy: users[0].id,
+        updatedBy: users[0].id,
+      },
+    }),
+    prisma.product.create({
+      data: {
+        name: 'Coca Cola Classic 1.5L (PET Bottle)',
+        description: 'Large family size cola soft drink in PET bottle',
+        sku: 'COCA-COLA-CLASSIC-1-5L-PET-BOTTLE',
+        brandId: brands[1].id,
+        variantId: variants[1].id,
+        manufacturerId: manufacturers[1].id,
+        subcategoryId:
+          subcategories.find((c) => c.name === 'Soft Drinks')?.id ||
+          subcategories[0].id,
+        packSizeId: packSizes[5].id, // 1.5L
+        packTypeId: packTypes[4].id, // PET Bottle
+        price: 450.0,
+        discount: 15.0,
+        thumbnail: 'coca-cola-1-5l-pet-thumb.jpg',
+        images: ['coca-cola-1-5l-pet.jpg'],
+        createdBy: users[0].id,
+        updatedBy: users[0].id,
+      },
+    }),
+
+    // Peak Milk Products - Multiple combinations
+    prisma.product.create({
+      data: {
+        name: 'Peak Milk Powder 400g (Tin)',
+        description: 'Premium quality milk powder in classic tin packaging',
+        sku: 'PEAK-MILK-POWDER-400G-TIN',
+        brandId: brands[2].id,
+        variantId: variants[2].id,
+        manufacturerId: manufacturers[0].id,
+        subcategoryId:
+          subcategories.find((c) => c.name === 'Dairy Products')?.id ||
+          subcategories[2].id,
+        packSizeId: packSizes[6].id, // 400g
+        packTypeId: packTypes[6].id, // Tin
+        price: 1500.0,
+        discount: 10.0,
+        thumbnail: 'peak-milk-400g-tin-thumb.jpg',
+        images: ['peak-milk-400g-tin.jpg'],
+        createdBy: users[0].id,
+        updatedBy: users[0].id,
+      },
+    }),
+    prisma.product.create({
+      data: {
+        name: 'Peak Milk Powder 900g (Pouch)',
+        description:
+          'Premium quality milk powder in convenient resealable pouch',
+        sku: 'PEAK-MILK-POWDER-900G-POUCH',
+        brandId: brands[2].id,
+        variantId: variants[2].id,
+        manufacturerId: manufacturers[0].id,
+        subcategoryId:
+          subcategories.find((c) => c.name === 'Dairy Products')?.id ||
+          subcategories[2].id,
+        packSizeId: packSizes[7].id, // 900g
+        packTypeId: packTypes[7].id, // Pouch
+        price: 3200.0,
+        discount: 12.0,
+        thumbnail: 'peak-milk-900g-pouch-thumb.jpg',
+        images: ['peak-milk-900g-pouch.jpg'],
+        createdBy: users[0].id,
+        updatedBy: users[0].id,
+      },
+    }),
+    prisma.product.create({
+      data: {
+        name: 'Peak Milk Powder 1.8kg (Carton)',
+        description: 'Premium quality milk powder in large family size carton',
+        sku: 'PEAK-MILK-POWDER-1-8KG-CARTON',
+        brandId: brands[2].id,
+        variantId: variants[2].id,
+        manufacturerId: manufacturers[0].id,
+        subcategoryId:
+          subcategories.find((c) => c.name === 'Dairy Products')?.id ||
+          subcategories[2].id,
+        packSizeId: packSizes[8].id, // 1.8kg
+        packTypeId: packTypes[8].id, // Carton
+        price: 6000.0,
+        discount: 20.0,
+        thumbnail: 'peak-milk-1-8kg-carton-thumb.jpg',
+        images: ['peak-milk-1-8kg-carton.jpg'],
+        createdBy: users[0].id,
+        updatedBy: users[0].id,
       },
     }),
   ]);
-
-  // Create sample projects
-  const project = await prisma.project.create({
-    data: {
-      name: 'ERP System Implementation',
-      description:
-        'Implementation of the new ERP system for business operations',
-      startDate: new Date(),
-      endDate: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000), // 90 days from now
-      budget: 500000.0,
-      tasks: {
-        create: [
-          {
-            title: 'Setup Database',
-            description: 'Configure and setup the production database',
-            assignedId: subAdmin.id,
-            dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
-          },
-          {
-            title: 'Develop User Interface',
-            description: 'Create responsive user interface for the application',
-            assignedId: subAdmin.id,
-            dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days from now
-          },
-        ],
-      },
-    },
-  });
 
   // Create system configurations
   await prisma.systemConfig.createMany({
@@ -262,10 +669,14 @@ async function main() {
   console.log(
     `   - ${4} Users (1 Super Admin, 1 Admin, 1 Sub-Admin, 1 SME User)`,
   );
-  console.log(`   - ${customers.length} Customers`);
+  console.log(`   - ${manufacturers.length} Manufacturers`);
+  console.log(`   - ${brands.length} Brands`);
+  console.log(`   - ${variants.length} Variants`);
+  console.log(`   - ${packSizes.length} Pack Sizes`);
+  console.log(`   - ${packTypes.length} Pack Types`);
   console.log(`   - ${products.length} Products`);
-  console.log(`   - ${1} Project with ${2} Tasks`);
   console.log(`   - ${5} System Configurations`);
+  console.log('🎯 Enhanced pack entity combinations created!');
 }
 
 main()

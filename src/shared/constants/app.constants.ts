@@ -52,3 +52,14 @@ export const SUCCESS_MESSAGES = {
   FILE_UPLOADED: 'File uploaded successfully',
   FILE_DELETED: 'File deleted successfully',
 } as const;
+
+export enum SortByOptions {
+  NAME = 'name',
+  CREATED_AT = 'createdAt',
+  UPDATED_AT = 'updatedAt',
+}
+
+export enum SortOrderOptions {
+  ASC = 'asc',
+  DESC = 'desc',
+}

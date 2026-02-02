@@ -27,12 +27,15 @@ import { ManufacturerService } from './manufacturer.service';
 import { UnifiedAuthGuard } from '../../common/guards/unified-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { AuditLog } from '../../common/decorators/audit-log.decorator';
 import {
   CurrentUser,
   CurrentUserId,
 } from '../../common/decorators/current-user.decorator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResponse } from '../../common/dto/paginated-response.dto';
+import { SuccessResponse } from '../../common/dto/api-response.dto';
+import { ResponseMessages } from '../../common/utils/response-messages.util';
 import {
   CreateManufacturerDto,
   UpdateManufacturerDto,
@@ -43,11 +46,14 @@ import {
   ManufacturerResponseDto,
   ManufacturerStatsDto,
 } from './dto/manufacturer-response.dto';
+import {
+  BulkManufacturerOperationDto,
+  BulkOperationResultDto,
+} from './dto/bulk-manufacturer-operation.dto';
 
 @ApiTags('Manufacturers')
 @Controller('manufacturers')
 @UseGuards(UnifiedAuthGuard, RolesGuard)
-@ApiBearerAuth('access-token')
 @ApiBearerAuth('admin-access-token')
 export class ManufacturerController {
   constructor(private readonly manufacturerService: ManufacturerService) {}
@@ -83,8 +89,16 @@ export class ManufacturerController {
     @Body() createManufacturerDto: CreateManufacturerDto,
     @CurrentUserId() adminId: string,
     @Request() req: any,
-  ): Promise<ManufacturerResponseDto> {
-    return this.manufacturerService.create(createManufacturerDto, adminId, req);
+  ): Promise<SuccessResponse<ManufacturerResponseDto>> {
+    const manufacturer = await this.manufacturerService.create(
+      createManufacturerDto,
+      adminId,
+      req,
+    );
+    return new SuccessResponse(
+      ResponseMessages.created('Manufacturer', manufacturer.name),
+      manufacturer,
+    );
   }
 
   @Get()
@@ -110,7 +124,7 @@ export class ManufacturerController {
     name: 'search',
     required: false,
     type: String,
-    description: 'Search in name, email, or description',
+    description: 'Search in name or description',
   })
   @ApiQuery({
     name: 'status',
@@ -119,16 +133,22 @@ export class ManufacturerController {
     description: 'Filter by status',
   })
   @ApiQuery({
-    name: 'country',
+    name: 'includeBrands',
     required: false,
-    type: String,
-    description: 'Filter by country',
+    type: Boolean,
+    description: 'Include brands in response',
   })
   @ApiQuery({
-    name: 'state',
+    name: 'includeProducts',
     required: false,
-    type: String,
-    description: 'Filter by state',
+    type: Boolean,
+    description: 'Include products in response',
+  })
+  @ApiQuery({
+    name: 'includeAuditInfo',
+    required: false,
+    type: Boolean,
+    description: 'Include audit information (createdBy, updatedBy, etc.)',
   })
   @ApiResponse({
     status: 200,
@@ -141,7 +161,7 @@ export class ManufacturerController {
   })
   async findAll(
     @Query() queryDto: ManufacturerQueryDto,
-  ): Promise<PaginatedResponse<ManufacturerResponseDto>> {
+  ): Promise<SuccessResponse<PaginatedResponse<ManufacturerResponseDto>>> {
     // Create proper pagination DTO
     const paginationDto = new PaginationDto();
     paginationDto.page = queryDto.page ? parseInt(queryDto.page, 10) : 1;
@@ -151,11 +171,28 @@ export class ManufacturerController {
     const filtersDto = {
       search: queryDto.search,
       status: queryDto.status,
-      country: queryDto.country,
-      state: queryDto.state,
     };
 
-    return this.manufacturerService.findAll(paginationDto, filtersDto);
+    const includesDto = {
+      includeBrands: queryDto.includeBrands,
+      includeProducts: queryDto.includeProducts,
+      includeAuditInfo: queryDto.includeAuditInfo,
+    };
+
+    const result = await this.manufacturerService.findAll(
+      paginationDto,
+      filtersDto,
+      includesDto,
+    );
+
+    return new SuccessResponse(
+      ResponseMessages.foundItems(
+        result.data.length,
+        'manufacturer',
+        result.meta.totalItems,
+      ),
+      result,
+    );
   }
 
   @Get('stats')
@@ -174,8 +211,12 @@ export class ManufacturerController {
     status: 403,
     description: 'Forbidden - Admin access required',
   })
-  async getStats(): Promise<ManufacturerStatsDto> {
-    return this.manufacturerService.getStats();
+  async getStats(): Promise<SuccessResponse<ManufacturerStatsDto>> {
+    const stats = await this.manufacturerService.getStats();
+    return new SuccessResponse(
+      ResponseMessages.statsRetrieved('Manufacturer'),
+      stats,
+    );
   }
 
   @Get(':id')
@@ -185,6 +226,24 @@ export class ManufacturerController {
     description: 'Retrieve detailed information about a specific manufacturer',
   })
   @ApiParam({ name: 'id', description: 'Manufacturer ID' })
+  @ApiQuery({
+    name: 'includeBrands',
+    required: false,
+    type: Boolean,
+    description: 'Include brands in response (default: true)',
+  })
+  @ApiQuery({
+    name: 'includeProducts',
+    required: false,
+    type: Boolean,
+    description: 'Include products in response (default: true)',
+  })
+  @ApiQuery({
+    name: 'includeAuditInfo',
+    required: false,
+    type: Boolean,
+    description: 'Include audit information (default: true)',
+  })
   @ApiResponse({
     status: 200,
     description: 'Manufacturer details retrieved successfully',
@@ -198,8 +257,26 @@ export class ManufacturerController {
     status: 403,
     description: 'Forbidden - Admin access required',
   })
-  async findOne(@Param('id') id: string): Promise<ManufacturerResponseDto> {
-    return this.manufacturerService.findOne(id);
+  async findOne(
+    @Param('id') id: string,
+    @Query('includeBrands') includeBrands?: boolean,
+    @Query('includeProducts') includeProducts?: boolean,
+    @Query('includeAuditInfo') includeAuditInfo?: boolean,
+  ): Promise<SuccessResponse<ManufacturerResponseDto>> {
+    const includesDto = {
+      includeBrands,
+      includeProducts,
+      includeAuditInfo,
+    };
+
+    const manufacturer = await this.manufacturerService.findOne(
+      id,
+      includesDto,
+    );
+    return new SuccessResponse(
+      ResponseMessages.retrieved('Manufacturer', manufacturer.name),
+      manufacturer,
+    );
   }
 
   @Patch(':id')
@@ -233,12 +310,16 @@ export class ManufacturerController {
     @Body() updateManufacturerDto: UpdateManufacturerDto,
     @CurrentUserId() adminId: string,
     @Request() req: any,
-  ): Promise<ManufacturerResponseDto> {
-    return this.manufacturerService.update(
+  ): Promise<SuccessResponse<ManufacturerResponseDto>> {
+    const manufacturer = await this.manufacturerService.update(
       id,
       updateManufacturerDto,
       adminId,
       req,
+    );
+    return new SuccessResponse(
+      ResponseMessages.updated('Manufacturer', manufacturer.name),
+      manufacturer,
     );
   }
 
@@ -278,65 +359,35 @@ export class ManufacturerController {
     @Param('id') id: string,
     @CurrentUserId() adminId: string,
     @Request() req: any,
-  ): Promise<{ message: string }> {
-    return this.manufacturerService.remove(id, adminId, req);
-  }
-
-  // ================================
-  // STATUS MANAGEMENT
-  // ================================
-
-  @Patch(':id/status')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
-  @ApiOperation({
-    summary: 'Update manufacturer status (Admin only)',
-    description: 'Activate, deactivate, or suspend a manufacturer',
-  })
-  @ApiParam({ name: 'id', description: 'Manufacturer ID' })
-  @ApiBody({ type: UpdateManufacturerStatusDto })
-  @ApiResponse({
-    status: 200,
-    description: 'Manufacturer status updated successfully',
-    type: ManufacturerResponseDto,
-  })
-  @ApiResponse({
-    status: 404,
-    description: 'Manufacturer not found',
-  })
-  @ApiResponse({
-    status: 403,
-    description: 'Forbidden - Admin access required',
-  })
-  async updateStatus(
-    @Param('id') id: string,
-    @Body() statusDto: UpdateManufacturerStatusDto,
-    @CurrentUserId() adminId: string,
-    @Request() req: any,
-  ): Promise<ManufacturerResponseDto> {
-    return this.manufacturerService.updateStatus(
-      id,
-      statusDto.status,
-      adminId,
-      req,
+  ): Promise<SuccessResponse<null>> {
+    const result = await this.manufacturerService.remove(id, adminId, req);
+    // Extract manufacturer name from the service response if available
+    const manufacturerName = result.manufacturerName || 'Manufacturer';
+    return new SuccessResponse(
+      ResponseMessages.deleted('Manufacturer', manufacturerName),
+      null,
     );
   }
 
-  @Post(':id/activate')
+  @Patch(':id/activate')
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
-  @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Activate manufacturer (Admin only)',
-    description: 'Set manufacturer status to ACTIVE',
+    summary: 'Reactivate manufacturer (Admin only)',
+    description: 'Reactivate a manufacturer from soft delete state',
   })
   @ApiParam({ name: 'id', description: 'Manufacturer ID' })
   @ApiResponse({
     status: 200,
-    description: 'Manufacturer activated successfully',
+    description: 'Manufacturer reactivated successfully',
     type: ManufacturerResponseDto,
   })
   @ApiResponse({
     status: 404,
-    description: 'Manufacturer not found',
+    description: 'Manufacturer not found or not in deleted state',
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'Conflict - Manufacturer with same name already exists',
   })
   @ApiResponse({
     status: 403,
@@ -346,46 +397,15 @@ export class ManufacturerController {
     @Param('id') id: string,
     @CurrentUserId() adminId: string,
     @Request() req: any,
-  ): Promise<ManufacturerResponseDto> {
-    return this.manufacturerService.updateStatus(
+  ): Promise<SuccessResponse<ManufacturerResponseDto>> {
+    const manufacturer = await this.manufacturerService.activate(
       id,
-      ManufacturerStatus.ACTIVE,
       adminId,
       req,
     );
-  }
-
-  @Post(':id/suspend')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Suspend manufacturer (Admin only)',
-    description: 'Set manufacturer status to SUSPENDED',
-  })
-  @ApiParam({ name: 'id', description: 'Manufacturer ID' })
-  @ApiResponse({
-    status: 200,
-    description: 'Manufacturer suspended successfully',
-    type: ManufacturerResponseDto,
-  })
-  @ApiResponse({
-    status: 404,
-    description: 'Manufacturer not found',
-  })
-  @ApiResponse({
-    status: 403,
-    description: 'Forbidden - Admin access required',
-  })
-  async suspend(
-    @Param('id') id: string,
-    @CurrentUserId() adminId: string,
-    @Request() req: any,
-  ): Promise<ManufacturerResponseDto> {
-    return this.manufacturerService.updateStatus(
-      id,
-      ManufacturerStatus.SUSPENDED,
-      adminId,
-      req,
+    return new SuccessResponse(
+      ResponseMessages.activated('Manufacturer', manufacturer.name),
+      manufacturer,
     );
   }
 
@@ -427,8 +447,20 @@ export class ManufacturerController {
   async getManufacturerProducts(
     @Param('id') id: string,
     @Query() paginationDto: PaginationDto,
-  ): Promise<any> {
-    return this.manufacturerService.getManufacturerProducts(id, paginationDto);
+  ): Promise<SuccessResponse<any>> {
+    const result = await this.manufacturerService.getManufacturerProducts(
+      id,
+      paginationDto,
+    );
+    const { manufacturerName, ...paginatedData } = result;
+    return new SuccessResponse(
+      ResponseMessages.foundItems(
+        paginatedData.data.length,
+        `${manufacturerName} product`,
+        paginatedData.meta?.totalItems,
+      ),
+      paginatedData,
+    );
   }
 
   @Get(':id/orders')
@@ -465,8 +497,20 @@ export class ManufacturerController {
   async getManufacturerOrders(
     @Param('id') id: string,
     @Query() paginationDto: PaginationDto,
-  ): Promise<any> {
-    return this.manufacturerService.getManufacturerOrders(id, paginationDto);
+  ): Promise<SuccessResponse<any>> {
+    const result = await this.manufacturerService.getManufacturerOrders(
+      id,
+      paginationDto,
+    );
+    const { manufacturerName, ...paginatedData } = result;
+    return new SuccessResponse(
+      ResponseMessages.foundItems(
+        paginatedData.data.length,
+        `${manufacturerName} order`,
+        paginatedData.meta?.totalItems,
+      ),
+      paginatedData,
+    );
   }
 
   // ================================
@@ -496,19 +540,7 @@ export class ManufacturerController {
     name: 'search',
     required: false,
     type: String,
-    description: 'Search in name, email, or description',
-  })
-  @ApiQuery({
-    name: 'country',
-    required: false,
-    type: String,
-    description: 'Filter by country',
-  })
-  @ApiQuery({
-    name: 'state',
-    required: false,
-    type: String,
-    description: 'Filter by state',
+    description: 'Search in name or description',
   })
   @ApiResponse({
     status: 200,
@@ -551,10 +583,12 @@ export class ManufacturerController {
   async getDeletedManufacturers(
     @Query() queryDto: ManufacturerQueryDto,
   ): Promise<
-    PaginatedResponse<
-      ManufacturerResponseDto & {
-        deletedBy: { id: string; email: string; name: string };
-      }
+    SuccessResponse<
+      PaginatedResponse<
+        ManufacturerResponseDto & {
+          deletedBy: { id: string; email: string; name: string };
+        }
+      >
     >
   > {
     const paginationDto = new PaginationDto();
@@ -563,13 +597,20 @@ export class ManufacturerController {
 
     const filtersDto = {
       search: queryDto.search,
-      country: queryDto.country,
-      state: queryDto.state,
     };
 
-    return this.manufacturerService.getDeletedManufacturers(
+    const result = await this.manufacturerService.getDeletedManufacturers(
       paginationDto,
       filtersDto,
+    );
+
+    return new SuccessResponse(
+      ResponseMessages.foundItems(
+        result.data.length,
+        'deleted manufacturer',
+        result.meta.totalItems,
+      ),
+      result,
     );
   }
 }

@@ -46,15 +46,33 @@ model User {
   assignedTasks Task[]         @relation("AssignedTo")
 
   // JooavERP specific relations
-  superAdminProfile    SuperAdminProfile?
-  smeProfile           SMEUser?
-  subAdminProfile      SubAdminProfile?
-  createdManufacturers Manufacturer[]     @relation("CreatedManufacturers")
+  adminProfile              AdminProfile?
+  smeProfile                SMEUser?
+  procurementOfficerProfile ProcurementOfficerProfile?
+  createdManufacturers      Manufacturer[]             @relation("CreatedManufacturers")
   updatedManufacturers Manufacturer[]     @relation("UpdatedManufacturers")
   deletedManufacturers Manufacturer[]     @relation("DeletedManufacturers")
   createdBrands        Brand[]            @relation("CreatedBrands")
   updatedBrands        Brand[]            @relation("UpdatedBrands")
   deletedBrands        Brand[]            @relation("DeletedBrands")
+  createdVariants      Variant[]          @relation("CreatedVariants")
+  updatedVariants      Variant[]          @relation("UpdatedVariants")
+  deletedVariants      Variant[]          @relation("DeletedVariants")
+  createdCategories    Category[]         @relation("CreatedCategories")
+  updatedCategories    Category[]         @relation("UpdatedCategories")
+  deletedCategories    Category[]         @relation("DeletedCategories")
+  createdSubcategories Subcategory[]      @relation("CreatedSubcategories")
+  updatedSubcategories Subcategory[]      @relation("UpdatedSubcategories")
+  deletedSubcategories Subcategory[]      @relation("DeletedSubcategories")
+  createdProducts      Product[]          @relation("CreatedProducts")
+  updatedProducts      Product[]          @relation("UpdatedProducts")
+  deletedProducts      Product[]          @relation("DeletedProducts")
+  createdPackSizes     PackSize[]         @relation("CreatedPackSizes")
+  updatedPackSizes     PackSize[]         @relation("UpdatedPackSizes")
+  deletedPackSizes     PackSize[]         @relation("DeletedPackSizes")
+  createdPackTypes     PackType[]         @relation("CreatedPackTypes")
+  updatedPackTypes     PackType[]         @relation("UpdatedPackTypes")
+  deletedPackTypes     PackType[]         @relation("DeletedPackTypes")
 
   @@map("users")
 }
@@ -62,13 +80,10 @@ model User {
 model UserProfile {
   id          String    @id @default(cuid())
   userId      String    @unique
-  dateOfBirth DateTime?
   address     String?
   city        String?
   state       String?
   country     String?
-  zipCode     String?
-  bio         String?
 
   // Timestamps
   createdAt DateTime @default(now())
@@ -133,66 +148,196 @@ model UserActivity {
 // BUSINESS MODELS
 // ================================
 
-model Customer {
+model Category {
   id          String         @id @default(cuid())
-  companyName String?
-  contactName String
-  email       String         @unique
-  phone       String?
-  address     String?
-  city        String?
-  state       String?
-  country     String?
-  zipCode     String?
-  status      CustomerStatus @default(ACTIVE)
+  name        String         @unique
+  slug        String         @unique // URL-friendly name
+  description String?
+  status      CategoryStatus @default(ACTIVE)
+  
+  // Audit fields
+  createdBy   String
+  updatedBy   String
+  deletedBy   String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  deletedAt   DateTime?
+  
+  // Relations
+  subcategories   Subcategory[] @relation("CategorySubcategories")
+  createdByUser   User          @relation("CreatedCategories", fields: [createdBy], references: [id])
+  updatedByUser   User          @relation("UpdatedCategories", fields: [updatedBy], references: [id])
+  deletedByUser   User?         @relation("DeletedCategories", fields: [deletedBy], references: [id])
+  
+  @@map("categories")
+}
 
-  // Timestamps
+model Subcategory {
+  id          String             @id @default(cuid())
+  name        String             
+  slug        String             @unique // URL-friendly name
+  description String?
+  categoryId  String
+  status      SubcategoryStatus  @default(ACTIVE)
+  
+  // Audit fields  
+  createdBy   String
+  updatedBy   String
+  deletedBy   String?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  deletedAt   DateTime?
+  
+  // Relations
+  category      Category  @relation("CategorySubcategories", fields: [categoryId], references: [id])
+  products      Product[] @relation("SubcategoryProducts")
+  createdByUser User      @relation("CreatedSubcategories", fields: [createdBy], references: [id])
+  updatedByUser User      @relation("UpdatedSubcategories", fields: [updatedBy], references: [id])
+  deletedByUser User?     @relation("DeletedSubcategories", fields: [deletedBy], references: [id])
+
+  // Prevent duplicate subcategory names within same category
+  @@unique([categoryId, name])
+  @@map("subcategories")
+}
+
+model Variant {
+  id          String  @id @default(cuid())
+  name        String  // e.g., "Chicken", "Pepper Soup", "Classic Vanilla"
+  description String? // Optional description for the variant
+  brandId     String
+
+  // Audit fields
+  createdBy String
+  updatedBy String
+  deletedBy String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  deletedAt DateTime?
 
   // Relations
-  orders Order[]
+  brand         Brand      @relation("BrandVariants", fields: [brandId], references: [id])
+  products      Product[]  @relation("VariantProducts")
+  packSizes     PackSize[] @relation("VariantPackSizes")
+  packTypes     PackType[] @relation("VariantPackTypes")
+  createdByUser User       @relation("CreatedVariants", fields: [createdBy], references: [id])
+  updatedByUser User       @relation("UpdatedVariants", fields: [updatedBy], references: [id])
+  deletedByUser User?      @relation("DeletedVariants", fields: [deletedBy], references: [id])
 
-  @@map("customers")
+  @@map("variants")
+}
+
+model PackSize {
+  id        String         @id @default(cuid())
+  name      String         // e.g., "70g", "500ml", "1kg", "150g Family Pack"
+  variantId String
+  status    PackSizeStatus @default(ACTIVE)
+
+  // Audit fields
+  createdBy String
+  updatedBy String
+  deletedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  // Relations
+  variant       Variant   @relation("VariantPackSizes", fields: [variantId], references: [id])
+  products      Product[] @relation("PackSizeProducts")
+  createdByUser User      @relation("CreatedPackSizes", fields: [createdBy], references: [id])
+  updatedByUser User      @relation("UpdatedPackSizes", fields: [updatedBy], references: [id])
+  deletedByUser User?     @relation("DeletedPackSizes", fields: [deletedBy], references: [id])
+
+  // Prevent duplicate names per variant
+  @@unique([variantId, name])
+  @@map("pack_sizes")
+}
+
+model PackType {
+  id        String         @id @default(cuid())
+  name      String         // e.g., "Single Pack", "5-Pack", "Box", "PET Bottle", "Tin"
+  variantId String
+  status    PackTypeStatus @default(ACTIVE)
+
+  // Audit fields
+  createdBy String
+  updatedBy String
+  deletedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  // Relations
+  variant       Variant   @relation("VariantPackTypes", fields: [variantId], references: [id])
+  products      Product[] @relation("PackTypeProducts")
+  createdByUser User      @relation("CreatedPackTypes", fields: [createdBy], references: [id])
+  updatedByUser User      @relation("UpdatedPackTypes", fields: [updatedBy], references: [id])
+  deletedByUser User?     @relation("DeletedPackTypes", fields: [deletedBy], references: [id])
+
+  // Prevent duplicate names per variant
+  @@unique([variantId, name])
+  @@map("pack_types")
 }
 
 model Product {
-  id             String        @id @default(cuid())
-  name           String
-  description    String?
-  sku            String        @unique
-  barcode        String?       @unique
-  category       String
-  price          Decimal       @db.Decimal(10, 2)
-  costPrice      Decimal?      @db.Decimal(10, 2)
-  stock          Int           @default(0)
-  minStock       Int           @default(0)
-  maxStock       Int?
-  status         ProductStatus @default(ACTIVE)
-  images         String[]
-  manufacturerId String? // Manufacturer who produces this product
-  brandId        String? // Brand this product belongs to
-
-  // Timestamps
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
+  id              String        @id @default(cuid())
+  
+  // Basic Product Information
+  name            String        // Generated: Brand Variant PackSize (PackType)
+  description     String?
+  sku             String        @unique // Auto-generated: Brand Variant PackSize (PackType)
+  
+  // Product Classification & Relations
+  brandId         String
+  variantId       String        // Links to Variant entity
+  subcategoryId   String?       // Links to Subcategory (optional)
+  manufacturerId  String        // Links to Manufacturer
+  packSizeId      String        // Links to PackSize entity
+  packTypeId      String        // Links to PackType entity
+  
+  // Pricing (Wholesale price)
+  price           Decimal?      @db.Decimal(10,2)
+  discount        Decimal?      @db.Decimal(5,2) // Discount percentage (0-100)
+  
+  // Media
+  images          Json[]        // Array of image URLs (first one is primary)
+  thumbnail       String?       // Primary thumbnail image URL
+  
+  // Status
+  status          ProductStatus @default(QUEUE)
+  
+  // Audit fields
+  createdBy       String
+  updatedBy       String
+  deletedBy       String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  deletedAt       DateTime?
+  
   // Relations
-  manufacturer   Manufacturer?   @relation("ManufacturerProducts", fields: [manufacturerId], references: [id])
-  brand          Brand?          @relation("BrandProducts", fields: [brandId], references: [id])
-  orderItems     OrderItem[]
-  stockMovements StockMovement[]
-
+  brand           Brand         @relation("BrandProducts", fields: [brandId], references: [id])
+  variant         Variant       @relation("VariantProducts", fields: [variantId], references: [id])
+  subcategory     Subcategory?  @relation("SubcategoryProducts", fields: [subcategoryId], references: [id])
+  manufacturer    Manufacturer  @relation("ManufacturerProducts", fields: [manufacturerId], references: [id])
+  packSize        PackSize      @relation("PackSizeProducts", fields: [packSizeId], references: [id])
+  packType        PackType      @relation("PackTypeProducts", fields: [packTypeId], references: [id])
+  
+  createdByUser   User          @relation("CreatedProducts", fields: [createdBy], references: [id])
+  updatedByUser   User          @relation("UpdatedProducts", fields: [updatedBy], references: [id])
+  deletedByUser   User?         @relation("DeletedProducts", fields: [deletedBy], references: [id])
+  
+  // Relations to other models
+  orderItems      OrderItem[]
+  stockMovements  StockMovement[]
+  
   @@map("products")
 }
 
 model Order {
   id                 String         @id @default(cuid())
   orderNumber        String         @unique
-  customerId         String? // Made optional for SME orders
   smeUserId          String? // SME who placed the order
   manufacturerId     String? // Manufacturer fulfilling the order
-  assignedSubAdminId String? // Sub-admin handling procurement
+  assignedProcurementOfficerId String? // Procurement officer handling procurement
   createdById        String
   status             OrderStatus    @default(PLACED)
   paymentStatus      PaymentStatus  @default(PENDING)
@@ -222,10 +367,9 @@ model Order {
   updatedAt DateTime @updatedAt
 
   // Relations
-  customer           Customer?           @relation(fields: [customerId], references: [id])
   smeUser            SMEUser?            @relation(fields: [smeUserId], references: [id])
   manufacturer       Manufacturer?       @relation("ManufacturerOrders", fields: [manufacturerId], references: [id])
-  assignedSubAdmin   SubAdminProfile?    @relation("AssignedSubAdmin", fields: [assignedSubAdminId], references: [id])
+  assignedProcurementOfficer   ProcurementOfficerProfile? @relation("AssignedProcurementOfficer", fields: [assignedProcurementOfficerId], references: [id])
   createdBy          User                @relation("CreatedBy", fields: [createdById], references: [id])
   items              OrderItem[]
   payments           Payment[]
@@ -373,7 +517,7 @@ model AuditLog {
 // JOOAV ERP PLATFORM MODELS
 // ================================
 
-model SuperAdminProfile {
+model AdminProfile {
   id               String    @id @default(cuid())
   userId           String    @unique
   permissions      Json? // Granular permissions for platform operations
@@ -382,12 +526,11 @@ model SuperAdminProfile {
   loginAttempts    Int       @default(0)
   accountLockUntil DateTime?
 
-  // Platform management settings
-  canManageManufacturers Boolean @default(true)
-  canApproveSMEs         Boolean @default(true)
-  canManageSubAdmins     Boolean @default(true)
-  canAccessAnalytics     Boolean @default(true)
-  canModifySystemConfig  Boolean @default(false)
+  // Permission flags - Only permissions that differentiate SUPER_ADMIN from ADMIN
+  canModifySystemConfig  Boolean @default(false) // Only SUPER_ADMIN can modify system config
+  canSuspendAdmins       Boolean @default(false) // Only SUPER_ADMIN can suspend other admins
+  canChangeUserRoles     Boolean @default(false) // Only SUPER_ADMIN can change user roles
+  canChangeUserEmails    Boolean @default(false) // Only SUPER_ADMIN can change user emails
 
   // Timestamps
   createdAt DateTime @default(now())
@@ -396,7 +539,7 @@ model SuperAdminProfile {
   // Relations
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@map("super_admin_profiles")
+  @@map("admin_profiles")
 }
 
 model Region {
@@ -414,30 +557,15 @@ model Region {
   // Relations
   manufacturers Manufacturer[]
   smeUsers      SMEUser[]
-  subAdmins     SubAdminProfile[]
+  procurementOfficers ProcurementOfficerProfile[]
 
   @@map("regions")
 }
 
 model Manufacturer {
   id          String  @id @default(cuid())
-  name        String  @unique
+  name        String
   description String?
-
-  // Contact Information
-  email   String
-  phone   String
-  website String?
-
-  // Address
-  address    String
-  city       String
-  state      String
-  country    String
-  postalCode String?
-
-  // Business Details
-  registrationNumber String? @unique
 
   // ERP Management
   status ManufacturerStatus @default(ACTIVE)
@@ -481,12 +609,12 @@ model Brand {
 
   // Relations
   manufacturer  Manufacturer @relation("ManufacturerBrands", fields: [manufacturerId], references: [id])
+  variants      Variant[]    @relation("BrandVariants")
   products      Product[]    @relation("BrandProducts")
   createdByUser User         @relation("CreatedBrands", fields: [createdBy], references: [id])
   updatedByUser User         @relation("UpdatedBrands", fields: [updatedBy], references: [id])
   deletedByUser User?        @relation("DeletedBrands", fields: [deletedBy], references: [id])
 
-  @@unique([name, manufacturerId]) // Brand name unique per manufacturer
   @@map("brands")
 }
 
@@ -520,7 +648,7 @@ model SMEUser {
   @@map("sme_users")
 }
 
-model SubAdminProfile {
+model ProcurementOfficerProfile {
   id         String  @id @default(cuid())
   userId     String  @unique
   regionId   String? // Optional - can be assigned by region or order-based
@@ -541,9 +669,9 @@ model SubAdminProfile {
   // Relations
   user           User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   region         Region? @relation(fields: [regionId], references: [id])
-  assignedOrders Order[] @relation("AssignedSubAdmin")
+  assignedOrders Order[] @relation("AssignedProcurementOfficer")
 
-  @@map("sub_admin_profiles")
+  @@map("procurement_officer_profiles")
 }
 
 model Inventory {
@@ -620,7 +748,7 @@ model AdminAuditLog {
 enum UserRole {
   SUPER_ADMIN // Platform owner (Jooav management) - highest level
   ADMIN // Regional/operational admin
-  SUB_ADMIN // Procurement officers (can be regional or order-based)
+  PROCUREMENT_OFFICER // Procurement officers (can be regional or order-based)
   SME_USER // Small business owners
 }
 
@@ -632,16 +760,21 @@ enum UserStatus {
   BLOCKED
 }
 
-enum CustomerStatus {
-  ACTIVE
-  INACTIVE
-  SUSPENDED
+enum ProductStatus {
+  DRAFT
+  QUEUE
+  LIVE
+  ARCHIVED
 }
 
-enum ProductStatus {
+enum PackSizeStatus {
   ACTIVE
-  INACTIVE
-  DISCONTINUED
+  ARCHIVED
+}
+
+enum PackTypeStatus {
+  ACTIVE
+  ARCHIVED
 }
 
 enum OrderStatus {
@@ -710,6 +843,18 @@ enum BrandStatus {
   ACTIVE
   INACTIVE
   DISCONTINUED
+}
+
+enum CategoryStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum SubcategoryStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
 }
 
 enum SMEVerificationStatus {

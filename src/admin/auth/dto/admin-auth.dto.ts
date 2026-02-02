@@ -11,7 +11,7 @@ import {
 export class AdminLoginDto {
   @ApiProperty({
     description: 'Admin email address',
-    example: 'admin@jooav.com',
+    example: 'superadmin@jooav.com',
   })
   @IsEmail({}, { message: 'Please provide a valid email address' })
   @IsNotEmpty({ message: 'Email is required' })
@@ -19,7 +19,7 @@ export class AdminLoginDto {
 
   @ApiProperty({
     description: 'Admin password',
-    example: 'SecureAdminPassword123!',
+    example: 'password123',
     minLength: 8,
   })
   @IsString()

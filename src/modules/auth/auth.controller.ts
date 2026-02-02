@@ -45,6 +45,7 @@ import {
   SessionDto,
 } from './dto/auth-response.dto';
 import { UserRole } from '@prisma/client';
+import { SuccessResponse } from '../../common/dto/api-response.dto';
 import type { User } from '@prisma/client';
 
 @ApiTags('Authentication')
@@ -68,11 +69,9 @@ export class AuthController {
     resource: 'AUTH',
     includeRequestBody: true,
   })
-  async login(
-    @Body() loginDto: LoginDto,
-    @Request() req: any,
-  ): Promise<AuthResponseDto> {
-    return this.authService.login(loginDto, req);
+  async login(@Body() loginDto: LoginDto): Promise<SuccessResponse<any>> {
+    const result = await this.authService.login(loginDto);
+    return new SuccessResponse('User logged in successfully', result);
   }
 
   @Post('register')
@@ -94,8 +93,9 @@ export class AuthController {
   async register(
     @Body() registerDto: RegisterDto,
     @Request() req: any,
-  ): Promise<AuthResponseDto> {
-    return this.authService.register(registerDto, req);
+  ): Promise<SuccessResponse<AuthResponseDto>> {
+    const result = await this.authService.register(registerDto, req);
+    return new SuccessResponse('User registered successfully', result);
   }
 
   @Post('refresh')
@@ -111,8 +111,12 @@ export class AuthController {
   async refreshToken(
     @Body() refreshTokenDto: RefreshTokenDto,
     @Request() req: any,
-  ): Promise<AuthResponseDto> {
-    return this.authService.refreshToken(refreshTokenDto.refreshToken, req);
+  ): Promise<SuccessResponse<AuthResponseDto>> {
+    const result = await this.authService.refreshToken(
+      refreshTokenDto.refreshToken,
+      req,
+    );
+    return new SuccessResponse('Token refreshed successfully', result);
   }
 
   @Post('logout')
@@ -123,26 +127,11 @@ export class AuthController {
   @ApiResponse({ status: 200, description: 'Logout successful' })
   @AuditLog({ action: 'LOGOUT', resource: 'AUTH' })
   async logout(
+    @Body() body: { refreshToken: string },
     @CurrentUserId() userId: string,
-    @Request() req: any,
-  ): Promise<{ message: string }> {
-    // Extract JWT ID from token if available
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    let tokenId: string | undefined;
-
-    if (token) {
-      try {
-        const decoded = JSON.parse(
-          Buffer.from(token.split('.')[1], 'base64').toString(),
-        );
-        tokenId = decoded.jti;
-      } catch (error) {
-        // Token parsing failed, continue without tokenId
-      }
-    }
-
-    await this.authService.logout(userId, tokenId, req);
-    return { message: 'Logout successful' };
+  ): Promise<SuccessResponse<any>> {
+    const result = await this.authService.logout(body.refreshToken, userId);
+    return new SuccessResponse('User logged out successfully', result);
   }
 
   @Get('profile')
@@ -195,8 +184,12 @@ export class AuthController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async getUserSessions(
     @CurrentUserId() userId: string,
-  ): Promise<SessionDto[]> {
-    return this.authService.getUserSessions(userId);
+  ): Promise<SuccessResponse<SessionDto[]>> {
+    const sessions = await this.authService.getUserSessions(userId);
+    return new SuccessResponse(
+      'User sessions retrieved successfully',
+      sessions,
+    );
   }
 
   @Delete('sessions/:sessionId')
@@ -225,8 +218,9 @@ export class AuthController {
   })
   async validateToken(
     @Body('token') token: string,
-  ): Promise<TokenValidationDto> {
-    return this.authService.validateToken(token);
+  ): Promise<SuccessResponse<TokenValidationDto>> {
+    const result = await this.authService.validateToken(token);
+    return new SuccessResponse('Token validation completed', result);
   }
 
   // ================================
@@ -306,8 +300,15 @@ export class AuthController {
   async forgotPassword(
     @Body() forgotPasswordDto: ForgotPasswordDto,
     @Request() req: any,
-  ) {
-    return this.authService.forgotPassword(forgotPasswordDto, req);
+  ): Promise<SuccessResponse<any>> {
+    const result = await this.authService.forgotPassword(
+      forgotPasswordDto,
+      req,
+    );
+    return new SuccessResponse(
+      'Password reset instructions sent successfully',
+      result,
+    );
   }
 
   @Post('reset-password')
@@ -331,7 +332,8 @@ export class AuthController {
   async resetPassword(
     @Body() resetPasswordDto: ResetPasswordDto,
     @Request() req: any,
-  ) {
-    return this.authService.resetPassword(resetPasswordDto, req);
+  ): Promise<SuccessResponse<any>> {
+    const result = await this.authService.resetPassword(resetPasswordDto, req);
+    return new SuccessResponse('Password reset successfully', result);
   }
 }
