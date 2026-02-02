@@ -545,7 +545,7 @@ export class ManufacturerService {
     deletedManufacturers: string[];
     failedDeletions: Array<{ name: string; reason: string }>;
   }> {
-    const manufacturers = await this.prisma.manufacturer.findMany({
+    const manufacturers = (await this.prisma.manufacturer.findMany({
       where: {
         id: { in: manufacturerIds },
         deletedAt: null,
@@ -553,16 +553,29 @@ export class ManufacturerService {
       include: {
         products: {
           where: {
-            isActive: true,
             deletedAt: null,
+            // Products don't have isActive field, they have status
           },
           select: {
             id: true,
-            isActive: true,
+            status: true,
           },
         },
       },
-    });
+    })) as Array<{
+      id: string;
+      name: string;
+      description: string | null;
+      status: any;
+      createdBy: string;
+      updatedBy: string;
+      deletedBy: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+      deletedAt: Date | null;
+      regionId: string | null;
+      products: Array<{ id: string; status: any }>;
+    }>;
 
     const deletedManufacturers: string[] = [];
     const failedDeletions: Array<{ name: string; reason: string }> = [];
@@ -574,7 +587,7 @@ export class ManufacturerService {
         if (manufacturer.products.length > 0) {
           failedDeletions.push({
             name: manufacturer.name,
-            reason: `Cannot delete manufacturer with ${manufacturer.products.length} active product(s). Please deactivate all products first.`,
+            reason: `Cannot delete manufacturer with ${manufacturer.products.length} product(s). Please deactivate or delete all products first.`,
           });
           continue;
         }
