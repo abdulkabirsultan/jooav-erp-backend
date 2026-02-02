@@ -41,14 +41,14 @@ export class CreateProductDto {
   brandId: string;
 
   @ApiProperty({
-    description: 'Category ID (can be a subcategory)',
+    description: 'Subcategory ID that this product belongs to',
     example: '',
   })
   @IsNotEmpty()
   @Matches(/^c[a-z0-9]{24}$/, {
-    message: 'categoryId must be a valid ObjectId',
+    message: 'subcategoryId must be a valid ObjectId',
   })
-  categoryId: string;
+  subcategoryId: string;
 
   @ApiProperty({
     description: 'Variant ID that this product belongs to',
@@ -61,26 +61,20 @@ export class CreateProductDto {
   variantId: string;
 
   @ApiProperty({
-    description: 'Pack size with unit',
-    example: '70g',
-    maxLength: 50,
+    description: 'Pack size ID',
+    example: 'cuid_example_pack_size_id',
   })
   @IsNotEmpty()
   @IsString()
-  @MinLength(1)
-  @MaxLength(50)
-  packSize: string;
+  packSizeId: string;
 
   @ApiProperty({
-    description: 'Packaging type',
-    example: 'Single Pack',
-    maxLength: 50,
+    description: 'Pack type ID',
+    example: 'cuid_example_pack_type_id',
   })
   @IsNotEmpty()
   @IsString()
-  @MinLength(1)
-  @MaxLength(50)
-  packagingType: string;
+  packTypeId: string;
 
   @ApiPropertyOptional({
     description: 'Wholesale price in Naira',

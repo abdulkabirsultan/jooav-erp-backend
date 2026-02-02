@@ -1,5 +1,57 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
+export class VariantPackSizeDto {
+  @ApiProperty({
+    description: 'Pack size ID',
+    example: 'cmj123456789',
+  })
+  id: string;
+
+  @ApiProperty({
+    description: 'Pack size name',
+    example: '70g',
+  })
+  name: string;
+
+  @ApiProperty({
+    description: 'Pack size status',
+    example: 'ACTIVE',
+  })
+  status: string;
+
+  @ApiProperty({
+    description: 'Creation timestamp',
+    example: '2025-12-26T14:24:58.795Z',
+  })
+  createdAt: Date;
+}
+
+export class VariantPackTypeDto {
+  @ApiProperty({
+    description: 'Pack type ID',
+    example: 'cmj123456789',
+  })
+  id: string;
+
+  @ApiProperty({
+    description: 'Pack type name',
+    example: 'Single Pack',
+  })
+  name: string;
+
+  @ApiProperty({
+    description: 'Pack type status',
+    example: 'ACTIVE',
+  })
+  status: string;
+
+  @ApiProperty({
+    description: 'Creation timestamp',
+    example: '2025-12-26T14:24:58.795Z',
+  })
+  createdAt: Date;
+}
+
 export class VariantBrandDto {
   @ApiProperty({
     description: 'Brand ID',
@@ -106,6 +158,18 @@ export class VariantResponseDto {
     type: VariantBrandDto,
   })
   brand?: VariantBrandDto;
+
+  @ApiPropertyOptional({
+    description: 'Pack sizes for this variant',
+    type: [VariantPackSizeDto],
+  })
+  packSizes?: VariantPackSizeDto[];
+
+  @ApiPropertyOptional({
+    description: 'Pack types for this variant',
+    type: [VariantPackTypeDto],
+  })
+  packTypes?: VariantPackTypeDto[];
 
   @ApiPropertyOptional({
     description: 'Products count',

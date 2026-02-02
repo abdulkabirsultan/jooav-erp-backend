@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
-import { CategoryController } from './category.controller';
 import { CategoryService } from './category.service';
+import { CategoryController } from './category.controller';
 import { PrismaModule } from '../prisma/prisma.module';
+import { CacheModule } from '../cache/cache.module';
 import { AuditModule } from '../audit/audit.module';
 
 @Module({
-  imports: [PrismaModule, AuditModule],
+  imports: [PrismaModule, CacheModule, AuditModule],
   controllers: [CategoryController],
   providers: [CategoryService],
   exports: [CategoryService],

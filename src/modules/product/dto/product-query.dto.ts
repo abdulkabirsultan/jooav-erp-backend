@@ -2,7 +2,7 @@ import {
   IsOptional,
   IsString,
   IsBoolean,
-  IsUUID,
+  IsEnum,
   Matches,
 } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
@@ -39,19 +39,15 @@ export class ProductQueryDto extends PaginationDto {
   variant?: string;
 
   @ApiPropertyOptional({
-    description: 'Filter by active status',
-    example: true,
-    type: 'boolean',
+    description: 'Filter by product status',
+    example: 'LIVE',
+    enum: ['DRAFT', 'QUEUE', 'LIVE', 'ARCHIVED'],
   })
   @IsOptional()
-  @IsBoolean()
-  @Transform(({ value }) => {
-    if (typeof value === 'string') {
-      return value.toLowerCase() === 'true';
-    }
-    return value;
+  @IsEnum(['DRAFT', 'QUEUE', 'LIVE', 'ARCHIVED'], {
+    message: 'status must be one of: DRAFT, QUEUE, LIVE, ARCHIVED',
   })
-  isActive?: boolean;
+  status?: 'DRAFT' | 'QUEUE' | 'LIVE' | 'ARCHIVED';
 
   @ApiPropertyOptional({
     description: 'Include related data (brand, category, manufacturer)',

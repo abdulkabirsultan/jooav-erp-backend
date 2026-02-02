@@ -139,13 +139,10 @@ export class BrandController {
     @Query('includeProducts') includeProducts?: boolean,
     @Query('includeAuditInfo') includeAuditInfo?: boolean,
   ): Promise<SuccessResponse<PaginatedResponse<BrandResponseDto>>> {
-    const includesDto = {
-      includeManufacturer: includeManufacturer !== false, // Default to true
-      includeProducts,
-      includeAuditInfo,
-    };
-
-    const result = await this.brandService.findAll(query, includesDto);
+    const result = await this.brandService.findAll(query, {
+      includeManufacturer: true,
+      includeVariants: true,
+    });
     return new SuccessResponse(
       ResponseMessages.foundItems(
         result.data.length,
@@ -242,11 +239,13 @@ export class BrandController {
     @Param('id') id: string,
     @Query('includeManufacturer') includeManufacturer?: boolean,
     @Query('includeProducts') includeProducts?: boolean,
+    @Query('includeVariants') includeVariants?: boolean,
     @Query('includeAuditInfo') includeAuditInfo?: boolean,
   ): Promise<SuccessResponse<BrandResponseDto>> {
     const includesDto = {
       includeManufacturer,
       includeProducts,
+      includeVariants,
       includeAuditInfo,
     };
 
@@ -466,37 +465,26 @@ export class BrandController {
     );
   }
 
-  @Post('bulk-delete')
+  @Patch(':id/activate')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
-  @ApiOperation({
-    summary: 'Bulk delete brands (Admin only)',
-    description: 'Soft delete multiple brands by setting deletedAt timestamp.',
-  })
-  @ApiBody({ type: BulkBrandOperationDto })
+  @ApiOperation({ summary: 'Reactivate brand (restore from soft delete)' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  @ApiForbiddenResponse({ description: 'Admin or Super Admin role required' })
+  @ApiParam({ name: 'id', description: 'Brand ID' })
   @ApiResponse({
-    status: 200,
-    description: 'Bulk delete operation completed',
-    type: BulkBrandOperationResultDto,
+    status: HttpStatus.OK,
+    description: 'Brand reactivated successfully',
+    type: BrandResponseDto,
   })
-  @ApiResponse({
-    status: 403,
-    description: 'Forbidden - Admin access required',
-  })
-  @AuditLog({ action: 'BULK_DELETE', resource: 'Brand' })
-  async bulkDelete(
-    @Body() bulkOperationDto: BulkBrandOperationDto,
+  @AuditLog({ action: 'ACTIVATE', resource: 'Brand' })
+  async activate(
+    @Param('id') id: string,
     @CurrentUserId() userId: string,
-  ): Promise<SuccessResponse<BulkBrandOperationResultDto>> {
-    const result = await this.brandService.bulkDelete(
-      bulkOperationDto.brandIds,
-      userId,
+  ): Promise<SuccessResponse<BrandResponseDto>> {
+    const brand = await this.brandService.activate(id, userId);
+    return new SuccessResponse(
+      ResponseMessages.activated('Brand', brand.name),
+      brand,
     );
-
-    const message =
-      result.deletedCount > 0
-        ? ResponseMessages.bulkDeleted(result.deletedCount, 'brand')
-        : 'No brands were deleted';
-
-    return new SuccessResponse(message, result);
   }
 }

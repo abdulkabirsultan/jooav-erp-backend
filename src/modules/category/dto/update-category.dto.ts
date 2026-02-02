@@ -1,70 +1,129 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
   IsString,
   IsOptional,
+  IsEnum,
+  IsArray,
+  ValidateNested,
   MaxLength,
-  MinLength,
-  IsUUID,
-  IsBoolean,
   Matches,
 } from 'class-validator';
+import { CategoryStatus } from '@prisma/client';
 
-export class UpdateCategoryDto {
-  @ApiProperty({
-    description: 'Category name',
-    example: 'Electronics',
-    minLength: 2,
+export class CreateSubcategoryInput {
+  @ApiPropertyOptional({
+    description: 'Subcategory name',
+    example: 'Soft Drinks',
     maxLength: 100,
-    required: false,
   })
-  @IsOptional()
   @IsString()
-  @MinLength(2)
   @MaxLength(100)
-  @Transform(({ value }) => value?.trim())
-  name?: string;
+  name: string;
 
-  @ApiProperty({
-    description: 'Category description',
-    example: 'Electronic devices and accessories',
-    required: false,
+  @ApiPropertyOptional({
+    description: 'Subcategory description',
+    example: 'Carbonated and non-carbonated beverages',
     maxLength: 500,
   })
   @IsOptional()
   @IsString()
   @MaxLength(500)
-  @Transform(({ value }) => value?.trim())
+  description?: string;
+}
+
+export class UpdateSubcategoryInput {
+  @ApiPropertyOptional({
+    description: 'Subcategory ID to update',
+    example: 'sc1234567890abcdef12345678',
+  })
+  @Matches(/^c[a-z0-9]{24}$/, {
+    message: 'subcategoryId must be a valid ObjectId',
+  })
+  id: string;
+
+  @ApiPropertyOptional({
+    description: 'Updated subcategory data',
+    type: CreateSubcategoryInput,
+  })
+  @ValidateNested()
+  @Type(() => CreateSubcategoryInput)
+  data: Partial<CreateSubcategoryInput>;
+}
+
+export class UpdateCategoryDto {
+  @ApiPropertyOptional({
+    description: 'Category name',
+    example: 'Food & Beverages',
+  })
+  @IsString()
+  @IsOptional()
+  name?: string;
+
+  @ApiPropertyOptional({
+    description: 'Category description',
+    example: 'All food and beverage products',
+  })
+  @IsString()
+  @IsOptional()
   description?: string;
 
-  @ApiProperty({
-    description: 'Parent category ID for subcategories',
-    example: 'b8e6cc4d-9e52-4a3b-9c6d-1f2a3b4c5d6e',
-    required: false,
+  @IsEnum(CategoryStatus)
+  @IsOptional()
+  status?: CategoryStatus;
+
+  @ApiPropertyOptional({
+    description: 'New subcategories to create',
+    type: [CreateSubcategoryInput],
+    example: [
+      {
+        name: 'Organic Drinks',
+        description: 'Natural and organic beverages',
+      },
+    ],
   })
   @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateSubcategoryInput)
+  createSubcategories?: CreateSubcategoryInput[];
+
+  @ApiPropertyOptional({
+    description: 'Subcategories to update',
+    type: [UpdateSubcategoryInput],
+    example: [
+      {
+        id: 'sc1234567890abcdef12345678',
+        data: { name: 'Premium Soft Drinks' },
+      },
+    ],
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => UpdateSubcategoryInput)
+  updateSubcategories?: UpdateSubcategoryInput[];
+
+  @ApiPropertyOptional({
+    description:
+      'Subcategory IDs to delete (will check for products and handle cascading)',
+    type: [String],
+    example: ['sc1234567890abcdef12345678', 'sc9876543210fedcba87654321'],
+  })
+  @IsOptional()
+  @IsArray()
   @Matches(/^c[a-z0-9]{24}$/, {
-    message: 'ParentId must be a valid ObjectId',
+    message: 'manufacturerId must be a valid ObjectId',
+    each: true,
   })
-  parentId?: string;
+  deleteSubcategoryIds?: string[];
 
-  @ApiProperty({
-    description: 'Sort order for display',
-    example: 1,
-    required: false,
+  @ApiPropertyOptional({
+    description:
+      'Force delete subcategories even if they have products (cascade delete products)',
+    example: false,
+    default: false,
   })
   @IsOptional()
-  @Transform(({ value }) =>
-    value !== undefined ? parseInt(value, 10) : undefined,
-  )
-  sortOrder?: number;
-
-  @ApiProperty({
-    description: 'Whether the category is active',
-    example: true,
-    required: false,
-  })
-  @IsOptional()
-  @IsBoolean()
-  isActive?: boolean;
+  forceDeleteSubcategories?: boolean;
 }

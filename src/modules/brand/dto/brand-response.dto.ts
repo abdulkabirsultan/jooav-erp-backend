@@ -22,25 +22,77 @@ export class BrandProductDto {
   @ApiProperty({ example: 'KITKAT-BAR-45G' })
   sku: string;
 
-  @ApiProperty({ example: true })
-  isActive: boolean;
+  @ApiProperty({ example: 'ACTIVE' })
+  status: string;
 
   @ApiProperty({ example: '150.00' })
   price: string;
 }
 
 export class BrandUserDto {
-  @ApiProperty({ example: 'u8e6cc4d-9e52-4a3b-9c6d-1f2a3b4c5d6e' })
+  @ApiProperty({
+    description: 'User ID',
+    example: 'cmj123456789',
+  })
   id: string;
 
-  @ApiProperty({ example: 'admin@jooav.com' })
+  @ApiProperty({
+    description: 'User email',
+    example: 'admin@jooav.com',
+  })
   email: string;
 
-  @ApiProperty({ example: 'John' })
-  firstName: string;
+  @ApiPropertyOptional({
+    description: 'User first name',
+    example: 'John',
+  })
+  firstName?: string;
 
-  @ApiProperty({ example: 'Doe' })
-  lastName: string;
+  @ApiPropertyOptional({
+    description: 'User last name',
+    example: 'Doe',
+  })
+  lastName?: string;
+}
+
+export class BrandVariantDto {
+  @ApiProperty({
+    description: 'Variant ID',
+    example: 'cmj123456789',
+  })
+  id: string;
+
+  @ApiProperty({
+    description: 'Variant name',
+    example: 'Chicken',
+  })
+  name: string;
+
+  @ApiPropertyOptional({
+    description: 'Variant description',
+    example: 'Delicious chicken flavored variant',
+  })
+  description?: string;
+
+  @ApiProperty({
+    description: 'Creation timestamp',
+    example: '2025-12-26T14:24:58.795Z',
+  })
+  createdAt: Date;
+
+  @ApiProperty({
+    description: 'Last update timestamp',
+    example: '2025-12-26T14:24:58.795Z',
+  })
+  updatedAt: Date;
+
+  @ApiPropertyOptional({
+    description: 'Products count for this variant',
+    example: 5,
+  })
+  _count?: {
+    products: number;
+  };
 }
 
 export class BrandResponseDto {
@@ -97,6 +149,12 @@ export class BrandResponseDto {
   products?: BrandProductDto[];
 
   @ApiPropertyOptional({
+    description: 'Variants under this brand',
+    type: [BrandVariantDto],
+  })
+  variants?: BrandVariantDto[];
+
+  @ApiPropertyOptional({
     description: 'User who created this brand',
     type: BrandUserDto,
   })
@@ -115,7 +173,17 @@ export class BrandResponseDto {
   deletedByUser?: BrandUserDto;
 
   @ApiPropertyOptional({
-    description: 'Count of products under this brand',
+    description: 'Count aggregations for this brand',
+    example: { products: 15, variants: 3 },
+  })
+  _count?: {
+    products: number;
+    variants: number;
+  };
+
+  @ApiPropertyOptional({
+    description:
+      'Count of products under this brand (deprecated - use _count.products)',
     example: 15,
   })
   productsCount?: number;

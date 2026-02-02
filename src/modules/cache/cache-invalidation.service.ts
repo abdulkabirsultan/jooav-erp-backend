@@ -83,6 +83,28 @@ export class CacheInvalidationService {
   }
 
   /**
+   * Invalidate caches for a specific subcategory and related products
+   */
+  async invalidateSubcategory(subcategoryId: string): Promise<void> {
+    try {
+      const patterns = [
+        'get:/subcategories*',
+        'get:/categories*', // Also invalidate categories as they include subcategory data
+        // Also invalidate products since they might be filtered by this subcategory
+        'get:/api/v1/products*',
+      ];
+
+      await this.invalidateByPatterns(patterns);
+      this.logger.log(`Invalidated caches for subcategory: ${subcategoryId}`);
+    } catch (error) {
+      this.logger.error(
+        `Failed to invalidate caches for subcategory: ${subcategoryId}`,
+        error,
+      );
+    }
+  }
+
+  /**
    * Invalidate caches related to a brand
    */
   async invalidateBrand(brandId: string): Promise<void> {

@@ -1,58 +1,70 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
   IsString,
   IsNotEmpty,
   IsOptional,
+  IsArray,
+  ValidateNested,
   MaxLength,
-  MinLength,
-  Matches,
 } from 'class-validator';
 
-export class CreateCategoryDto {
+export class CreateSubcategoryInput {
   @ApiProperty({
-    description: 'Category name',
-    example: 'Beverages',
-    minLength: 2,
+    description: 'Subcategory name',
+    example: 'Soft Drinks',
     maxLength: 100,
   })
-  @IsString()
   @IsNotEmpty()
-  @MinLength(2)
+  @IsString()
   @MaxLength(100)
-  @Transform(({ value }) => value?.trim())
   name: string;
 
-  @ApiProperty({
-    description: 'Category description',
-    example: 'Soft drinks, juices, energy drinks and water',
-    required: false,
+  @ApiPropertyOptional({
+    description: 'Subcategory description',
+    example: 'Carbonated and non-carbonated soft drinks',
     maxLength: 500,
   })
   @IsOptional()
   @IsString()
   @MaxLength(500)
-  @Transform(({ value }) => value?.trim())
+  description?: string;
+}
+
+export class CreateCategoryDto {
+  @ApiProperty({
+    description: 'Category name',
+    example: 'Food and Beverages',
+  })
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @ApiPropertyOptional({
+    description: 'Category description',
+    example: 'All food and beverage products',
+  })
+  @IsString()
+  @IsOptional()
   description?: string;
 
-  @ApiProperty({
-    description: 'Parent category ID for subcategories',
-    example: 'b8e6cc4d-9e52-4a3b-9c6d-1f2a3b4c5d6e',
-    required: false,
+  @ApiPropertyOptional({
+    description: 'Array of subcategories to create along with the category',
+    type: [CreateSubcategoryInput],
+    example: [
+      {
+        name: 'Soft Drinks',
+        description: 'Carbonated and non-carbonated beverages',
+      },
+      {
+        name: 'Energy Drinks',
+        description: 'High-energy beverages and sports drinks',
+      },
+    ],
   })
   @IsOptional()
-  @Matches(/^c[a-z0-9]{24}$/, {
-    message: 'ParentId must be a valid ObjectId',
-  })
-  parentId?: string;
-
-  @ApiProperty({
-    description: 'Sort order for display',
-    example: 1,
-    required: false,
-    default: 0,
-  })
-  @IsOptional()
-  @Transform(({ value }) => (value !== undefined ? parseInt(value, 10) : 0))
-  sortOrder?: number = 0;
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateSubcategoryInput)
+  subcategories?: CreateSubcategoryInput[];
 }

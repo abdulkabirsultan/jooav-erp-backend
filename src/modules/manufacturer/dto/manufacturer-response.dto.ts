@@ -49,9 +49,9 @@ export class ManufacturerBrandDto {
 
   @ApiProperty({
     description: 'Brand status',
-    example: true,
+    example: 'ACTIVE',
   })
-  isActive: boolean;
+  status: string;
 }
 
 export class ManufacturerProductDto {

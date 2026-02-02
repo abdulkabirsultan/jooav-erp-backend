@@ -46,7 +46,7 @@ export class VariantQueryDto {
 
   @ApiPropertyOptional({
     description: 'Filter by brand ID',
-    example: 'cmj123456789',
+    example: '',
     required: false,
   })
   @IsOptional()

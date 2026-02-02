@@ -1,63 +1,64 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { IsString, IsOptional, IsEnum, IsBoolean } from 'class-validator';
 import { Transform } from 'class-transformer';
-import { IsOptional, IsBoolean, Matches } from 'class-validator';
+import { CategoryStatus } from '@prisma/client';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 
 export class CategoryQueryDto extends PaginationDto {
-  @ApiProperty({
-    description: 'Filter by parent category ID (null for major categories)',
-    required: false,
-    example: '',
+  @ApiPropertyOptional({
+    description: 'Filter by category status',
+    enum: CategoryStatus,
+    example: CategoryStatus.ACTIVE,
   })
+  @IsEnum(CategoryStatus)
   @IsOptional()
-  @Matches(/^c[a-z0-9]{24}$/, {
-    message: 'ParentId must be a valid ObjectId',
-  })
-  parentId?: string;
+  status?: CategoryStatus;
 
-  @ApiProperty({
-    description: 'Filter by active status',
-    required: false,
+  @ApiPropertyOptional({
+    description: 'Include subcategory details with product counts',
     example: true,
+    type: 'boolean',
   })
   @IsOptional()
   @IsBoolean()
   @Transform(({ value }) => {
-    if (value === 'true') return true;
-    if (value === 'false') return false;
-    return undefined;
+    if (typeof value === 'string') {
+      return value.toLowerCase() === 'true';
+    }
+    return Boolean(value);
   })
-  isActive?: boolean;
+  includeSubcategories?: boolean = true;
 
-  @ApiProperty({
-    description: 'Include product count in response',
-    required: false,
-    example: true,
-    default: false,
+  @ApiPropertyOptional({
+    description: 'Include audit information (createdBy, updatedBy)',
+    example: false,
+    type: 'boolean',
   })
   @IsOptional()
   @IsBoolean()
   @Transform(({ value }) => {
-    if (value === 'true' || value === true) return true;
-    if (value === 'false' || value === false) return false;
-    if (value === undefined || value === null) return false;
-    return false;
+    if (typeof value === 'string') {
+      return value.toLowerCase() === 'true';
+    }
+    return Boolean(value);
   })
-  includeProductCount?: boolean = false;
+  includeAuditInfo?: boolean = false;
 
-  @ApiProperty({
-    description: 'Include children (subcategories) in response',
-    required: false,
-    example: true,
-    default: false,
+  @ApiPropertyOptional({
+    description: 'Sort field',
+    example: 'name',
+    default: 'createdAt',
   })
+  @IsString()
   @IsOptional()
-  @IsBoolean()
-  @Transform(({ value }) => {
-    if (value === 'true' || value === true) return true;
-    if (value === 'false' || value === false) return false;
-    if (value === undefined || value === null) return false;
-    return false;
+  sortBy?: string = 'createdAt';
+
+  @ApiPropertyOptional({
+    description: 'Sort order',
+    example: 'asc',
+    default: 'desc',
   })
-  includeChildren?: boolean = false;
+  @IsString()
+  @IsOptional()
+  sortOrder?: 'asc' | 'desc' = 'desc';
 }

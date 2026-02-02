@@ -480,7 +480,7 @@ export class BulkProductCreationService {
         discount: data.discount || null,
         thumbnail: data.thumbnail,
         images: data.images || [],
-        isActive: true,
+        status: 'QUEUE',
         createdBy: userId,
         updatedBy: userId,
       },

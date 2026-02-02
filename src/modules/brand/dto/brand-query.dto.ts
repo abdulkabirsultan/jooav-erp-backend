@@ -69,6 +69,20 @@ export class BrandQueryDto extends PaginationDto {
   includeProducts?: boolean;
 
   @ApiPropertyOptional({
+    description: 'Include variants in response',
+    example: true,
+    type: Boolean,
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    return Boolean(value);
+  })
+  @IsBoolean()
+  includeVariants?: boolean;
+
+  @ApiPropertyOptional({
     description: 'Include audit information (createdBy, updatedBy, etc.)',
     example: false,
     type: Boolean,

@@ -193,4 +193,29 @@ export class VariantController {
       null,
     );
   }
+
+  @Patch(':id/activate')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Reactivate variant (restore from soft delete)' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  @ApiForbiddenResponse({ description: 'Admin or Super Admin role required' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Variant reactivated successfully',
+    type: VariantResponseDto,
+  })
+  @AuditLog({
+    action: 'ACTIVATE',
+    resource: 'VARIANT',
+  })
+  async activate(
+    @Param('id') id: string,
+    @CurrentUserId() userId: string,
+  ): Promise<SuccessResponse<VariantResponseDto>> {
+    const variant = await this.variantService.activate(id, userId);
+    return new SuccessResponse(
+      ResponseMessages.activated('Variant', variant.name),
+      variant,
+    );
+  }
 }

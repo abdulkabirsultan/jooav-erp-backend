@@ -164,6 +164,7 @@ export class BrandService {
     includes?: {
       includeManufacturer?: boolean;
       includeProducts?: boolean;
+      includeVariants?: boolean;
       includeAuditInfo?: boolean;
     },
   ): Promise<PaginatedResponse<BrandResponseDto>> {
@@ -201,6 +202,7 @@ export class BrandService {
       _count: {
         select: {
           products: true,
+          variants: true,
         },
       },
     };
@@ -223,10 +225,29 @@ export class BrandService {
           id: true,
           name: true,
           sku: true,
-          isActive: true,
+          status: true,
           price: true,
         },
         take: 10, // Limit to first 10 products
+      };
+    }
+
+    // Include variants if requested
+    if (includes?.includeVariants === true) {
+      includeObject.variants = {
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          createdAt: true,
+          updatedAt: true,
+          _count: {
+            select: {
+              products: true,
+            },
+          },
+        },
+        take: 10, // Limit to first 10 variants
       };
     }
 
@@ -265,6 +286,7 @@ export class BrandService {
     includes?: {
       includeManufacturer?: boolean;
       includeProducts?: boolean;
+      includeVariants?: boolean;
       includeAuditInfo?: boolean;
     },
   ): Promise<BrandResponseDto> {
@@ -273,6 +295,7 @@ export class BrandService {
       _count: {
         select: {
           products: true,
+          variants: true,
         },
       },
     };
@@ -295,10 +318,29 @@ export class BrandService {
           id: true,
           name: true,
           sku: true,
-          isActive: true,
+          status: true,
           price: true,
         },
         take: 10, // Limit to first 10 products
+      };
+    }
+
+    // Include variants if requested (default to false)
+    if (includes?.includeVariants === true) {
+      includeObject.variants = {
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          createdAt: true,
+          updatedAt: true,
+          _count: {
+            select: {
+              products: true,
+            },
+          },
+        },
+        take: 10, // Limit to first 10 variants
       };
     }
 
@@ -447,37 +489,85 @@ export class BrandService {
       updateData.name = this.sanitizeBrandName(updateBrandDto.name);
     }
 
+    // Check if brand name will change (affects product names and SKUs)
+    const willAffectProducts =
+      updateBrandDto.name && updateBrandDto.name !== existingBrand.name;
+
     try {
-      const brand = await this.prisma.brand.update({
-        where: { id },
-        data: updateData,
-        include: {
-          manufacturer: {
-            select: {
-              id: true,
-              name: true,
-              status: true,
+      // Use transaction if brand name changes to update products
+      const result = await this.prisma.$transaction(async (tx) => {
+        const brand = await tx.brand.update({
+          where: { id },
+          data: updateData,
+          include: {
+            manufacturer: {
+              select: {
+                id: true,
+                name: true,
+                status: true,
+              },
             },
           },
-        },
+        });
+
+        // If brand name changed, update all linked product names and SKUs
+        if (willAffectProducts) {
+          const linkedProducts = await tx.product.findMany({
+            where: {
+              brandId: id,
+              deletedAt: null,
+            },
+            select: {
+              id: true,
+              variant: { select: { name: true } },
+              packSize: { select: { name: true } },
+              packType: { select: { name: true } },
+            },
+          });
+
+          // Update each product's name and SKU
+          for (const product of linkedProducts) {
+            const newName = `${brand.name} ${product.variant.name} ${product.packSize.name} (${product.packType.name})`;
+            const newSku = `${brand.name.toUpperCase().replace(/[^A-Z0-9]/g, '-')}-${product.variant.name.toUpperCase().replace(/[^A-Z0-9]/g, '-')}-${product.packSize.name.toUpperCase().replace(/[^A-Z0-9]/g, '-')}-${product.packType.name.toUpperCase().replace(/[^A-Z0-9]/g, '-')}`;
+
+            await tx.product.update({
+              where: { id: product.id },
+              data: {
+                name: newName,
+                sku: newSku,
+                updatedBy: userId,
+              },
+            });
+          }
+        }
+
+        return brand;
       });
 
       // Log audit trail
       await this.auditService.createAuditLog({
         action: 'UPDATE',
         resource: 'Brand',
-        resourceId: brand.id,
+        resourceId: result.id,
         userId,
         metadata: {
-          brandName: brand.name,
+          brandName: result.name,
           changes: Object.keys(updateBrandDto),
+          ...(willAffectProducts && {
+            updatedProductCount: 'Cascaded name/SKU updates',
+          }),
         },
       });
 
       // Invalidate brand-related caches
       await this.cacheInvalidationService.invalidateBrand(id);
 
-      return brand;
+      // Invalidate product caches if products were updated
+      if (willAffectProducts) {
+        await this.cacheInvalidationService.invalidateProducts();
+      }
+
+      return result;
     } catch (error) {
       // Handle Prisma unique constraint error
       if (error.code === 'P2002') {
@@ -536,7 +626,18 @@ export class BrandService {
   ): Promise<{ message: string; brandName: string }> {
     const existingBrand = await this.findOne(id);
 
-    // Soft delete the brand
+    // Check if brand has associated active products
+    const productCount = await this.prisma.product.count({
+      where: { brandId: id, deletedAt: null },
+    });
+
+    if (productCount > 0) {
+      throw new BadRequestException(
+        `Cannot delete brand with ${productCount} active product(s). Please remove or archive all products first.`,
+      );
+    }
+
+    // Soft delete the brand - variants and pack entities can remain for historical purposes
     await this.prisma.brand.update({
       where: { id },
       data: {
@@ -563,91 +664,100 @@ export class BrandService {
     };
   }
 
-  /**
-   * Bulk soft delete brands
-   */
-  async bulkDelete(
-    brandIds: string[],
-    userId: string,
-  ): Promise<{
-    deletedCount: number;
-    deletedBrands: Array<{ brandName: string; manufacturerName: string }>;
-    failedDeletions: Array<{ name: string; reason: string }>;
-  }> {
-    const brands = await this.prisma.brand.findMany({
+  async activate(id: string, userId: string): Promise<BrandResponseDto> {
+    // Check if brand exists in deleted state
+    const deletedBrand = await this.prisma.brand.findFirst({
+      where: { id, deletedAt: { not: null } },
+    });
+
+    if (!deletedBrand) {
+      throw new NotFoundException('Brand not found or is not in deleted state');
+    }
+
+    // Check for name conflicts with active brands
+    const conflictBrand = await this.prisma.brand.findFirst({
       where: {
-        id: { in: brandIds },
+        name: { equals: deletedBrand.name, mode: 'insensitive' },
         deletedAt: null,
+        NOT: { id },
+      },
+    });
+
+    if (conflictBrand) {
+      throw new ConflictException(
+        `A brand with name "${deletedBrand.name}" already exists`,
+      );
+    }
+
+    // Reactivate the brand
+    const brand = await this.prisma.brand.update({
+      where: { id },
+      data: {
+        deletedAt: null,
+        deletedBy: null,
+        updatedBy: userId,
       },
       include: {
         manufacturer: {
+          select: { id: true, name: true, status: true },
+        },
+        variants: {
+          where: { deletedAt: null },
           select: {
+            id: true,
             name: true,
+            description: true,
+            createdAt: true,
+            updatedAt: true,
+            _count: {
+              select: { products: { where: { deletedAt: null } } },
+            },
           },
+        },
+        _count: {
+          select: { products: { where: { deletedAt: null } } },
         },
       },
     });
 
-    const deletedBrands: Array<{
-      brandName: string;
-      manufacturerName: string;
-    }> = [];
-    const failedDeletions: Array<{ name: string; reason: string }> = [];
+    // Invalidate brand-related caches
+    await this.cacheInvalidationService.invalidateBrand(id);
 
-    // Process each brand
-    for (const brand of brands) {
-      try {
-        // Soft delete the brand
-        await this.prisma.brand.update({
-          where: { id: brand.id },
-          data: {
-            deletedAt: new Date(),
-            deletedBy: userId,
-          },
-        });
-
-        // Log audit trail for each deletion
-        await this.auditService.createAuditLog({
-          action: 'DELETE',
-          resource: 'Brand',
-          resourceId: brand.id,
-          userId,
-          metadata: {
-            brandName: brand.name,
-            bulkOperation: true,
-          },
-        });
-
-        // Invalidate brand cache
-        await this.cacheInvalidationService.invalidateBrand(brand.id);
-
-        deletedBrands.push({
-          brandName: brand.name,
-          manufacturerName: brand.manufacturer.name,
-        });
-      } catch (error) {
-        failedDeletions.push({
-          name: brand.name,
-          reason: `Failed to delete brand: ${error.message}`,
-        });
-      }
-    }
-
-    // Handle case where some IDs don't exist
-    const foundIds = brands.map((b) => b.id);
-    const notFoundIds = brandIds.filter((id) => !foundIds.includes(id));
-
-    for (const id of notFoundIds) {
-      failedDeletions.push({
-        name: `Brand ID: ${id}`,
-        reason: 'Brand not found or already deleted',
-      });
-    }
+    // Log audit trail
+    await this.auditService.createAuditLog({
+      action: 'ACTIVATE',
+      resource: 'Brand',
+      resourceId: id,
+      userId,
+      metadata: { brandName: brand.name },
+    });
 
     return {
-      deletedCount: deletedBrands.length,
-      deletedBrands,
-      failedDeletions,
+      id: brand.id,
+      name: brand.name,
+      description: brand.description,
+      logo: brand.logo,
+      status: brand.status as BrandStatus,
+      manufacturerId: brand.manufacturerId || '',
+      createdAt: brand.createdAt,
+      updatedAt: brand.updatedAt,
+      createdBy: brand.createdBy,
+      updatedBy: brand.updatedBy,
+      manufacturer: brand.manufacturer
+        ? {
+            id: brand.manufacturer.id,
+            name: brand.manufacturer.name,
+            status: brand.manufacturer.status,
+          }
+        : undefined,
+      variants: brand.variants.map((variant) => ({
+        id: variant.id,
+        name: variant.name,
+        description: variant.description || undefined,
+        createdAt: variant.createdAt,
+        updatedAt: variant.updatedAt,
+        _count: { products: variant._count.products },
+      })),
     };
   }
 

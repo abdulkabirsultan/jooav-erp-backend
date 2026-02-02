@@ -1,6 +1,8 @@
-export { CreateCategoryDto } from './create-category.dto';
+export { CreateCategoryDto, CreateSubcategoryInput } from './create-category.dto';
 export { UpdateCategoryDto } from './update-category.dto';
-export { CategoryResponseDto } from './category-response.dto';
 export { CategoryQueryDto } from './category-query.dto';
-export { BulkCategoryOperationDto } from './bulk-category-operation.dto';
+export {
+  CategoryResponseDto,
+  CategorySubcategoryDto,
+} from './category-response.dto';
 export { CategoryStatsDto } from './category-stats.dto';

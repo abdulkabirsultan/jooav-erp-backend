@@ -61,9 +61,18 @@ model User {
   createdCategories    Category[]         @relation("CreatedCategories")
   updatedCategories    Category[]         @relation("UpdatedCategories")
   deletedCategories    Category[]         @relation("DeletedCategories")
+  createdSubcategories Subcategory[]      @relation("CreatedSubcategories")
+  updatedSubcategories Subcategory[]      @relation("UpdatedSubcategories")
+  deletedSubcategories Subcategory[]      @relation("DeletedSubcategories")
   createdProducts      Product[]          @relation("CreatedProducts")
   updatedProducts      Product[]          @relation("UpdatedProducts")
   deletedProducts      Product[]          @relation("DeletedProducts")
+  createdPackSizes     PackSize[]         @relation("CreatedPackSizes")
+  updatedPackSizes     PackSize[]         @relation("UpdatedPackSizes")
+  deletedPackSizes     PackSize[]         @relation("DeletedPackSizes")
+  createdPackTypes     PackType[]         @relation("CreatedPackTypes")
+  updatedPackTypes     PackType[]         @relation("UpdatedPackTypes")
+  deletedPackTypes     PackType[]         @relation("DeletedPackTypes")
 
   @@map("users")
 }
@@ -140,32 +149,55 @@ model UserActivity {
 // ================================
 
 model Category {
-  id          String        @id @default(cuid())
-  name        String
-  slug        String        @unique // URL-friendly name
+  id          String         @id @default(cuid())
+  name        String         @unique
+  slug        String         @unique // URL-friendly name
   description String?
-  
-  parentId    String?       // For subcategories
-  isActive    Boolean       @default(true)
-  sortOrder   Int           @default(0) // Display order
+  status      CategoryStatus @default(ACTIVE)
   
   // Audit fields
   createdBy   String
   updatedBy   String
   deletedBy   String?
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
   deletedAt   DateTime?
   
   // Relations
-  parent          Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
-  children        Category[] @relation("CategoryHierarchy")
-  products        Product[]  // Products under this category
-  createdByUser   User       @relation("CreatedCategories", fields: [createdBy], references: [id])
-  updatedByUser   User       @relation("UpdatedCategories", fields: [updatedBy], references: [id])
-  deletedByUser   User?      @relation("DeletedCategories", fields: [deletedBy], references: [id])
+  subcategories   Subcategory[] @relation("CategorySubcategories")
+  createdByUser   User          @relation("CreatedCategories", fields: [createdBy], references: [id])
+  updatedByUser   User          @relation("UpdatedCategories", fields: [updatedBy], references: [id])
+  deletedByUser   User?         @relation("DeletedCategories", fields: [deletedBy], references: [id])
   
   @@map("categories")
+}
+
+model Subcategory {
+  id          String             @id @default(cuid())
+  name        String             
+  slug        String             @unique // URL-friendly name
+  description String?
+  categoryId  String
+  status      SubcategoryStatus  @default(ACTIVE)
+  
+  // Audit fields  
+  createdBy   String
+  updatedBy   String
+  deletedBy   String?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  deletedAt   DateTime?
+  
+  // Relations
+  category      Category  @relation("CategorySubcategories", fields: [categoryId], references: [id])
+  products      Product[] @relation("SubcategoryProducts")
+  createdByUser User      @relation("CreatedSubcategories", fields: [createdBy], references: [id])
+  updatedByUser User      @relation("UpdatedSubcategories", fields: [updatedBy], references: [id])
+  deletedByUser User?     @relation("DeletedSubcategories", fields: [deletedBy], references: [id])
+
+  // Prevent duplicate subcategory names within same category
+  @@unique([categoryId, name])
+  @@map("subcategories")
 }
 
 model Variant {
@@ -183,13 +215,67 @@ model Variant {
   deletedAt DateTime?
 
   // Relations
-  brand         Brand     @relation("BrandVariants", fields: [brandId], references: [id])
-  products      Product[] @relation("VariantProducts")
-  createdByUser User      @relation("CreatedVariants", fields: [createdBy], references: [id])
-  updatedByUser User      @relation("UpdatedVariants", fields: [updatedBy], references: [id])
-  deletedByUser User?     @relation("DeletedVariants", fields: [deletedBy], references: [id])
+  brand         Brand      @relation("BrandVariants", fields: [brandId], references: [id])
+  products      Product[]  @relation("VariantProducts")
+  packSizes     PackSize[] @relation("VariantPackSizes")
+  packTypes     PackType[] @relation("VariantPackTypes")
+  createdByUser User       @relation("CreatedVariants", fields: [createdBy], references: [id])
+  updatedByUser User       @relation("UpdatedVariants", fields: [updatedBy], references: [id])
+  deletedByUser User?      @relation("DeletedVariants", fields: [deletedBy], references: [id])
 
   @@map("variants")
+}
+
+model PackSize {
+  id        String         @id @default(cuid())
+  name      String         // e.g., "70g", "500ml", "1kg", "150g Family Pack"
+  variantId String
+  status    PackSizeStatus @default(ACTIVE)
+
+  // Audit fields
+  createdBy String
+  updatedBy String
+  deletedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  // Relations
+  variant       Variant   @relation("VariantPackSizes", fields: [variantId], references: [id])
+  products      Product[] @relation("PackSizeProducts")
+  createdByUser User      @relation("CreatedPackSizes", fields: [createdBy], references: [id])
+  updatedByUser User      @relation("UpdatedPackSizes", fields: [updatedBy], references: [id])
+  deletedByUser User?     @relation("DeletedPackSizes", fields: [deletedBy], references: [id])
+
+  // Prevent duplicate names per variant
+  @@unique([variantId, name])
+  @@map("pack_sizes")
+}
+
+model PackType {
+  id        String         @id @default(cuid())
+  name      String         // e.g., "Single Pack", "5-Pack", "Box", "PET Bottle", "Tin"
+  variantId String
+  status    PackTypeStatus @default(ACTIVE)
+
+  // Audit fields
+  createdBy String
+  updatedBy String
+  deletedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  // Relations
+  variant       Variant   @relation("VariantPackTypes", fields: [variantId], references: [id])
+  products      Product[] @relation("PackTypeProducts")
+  createdByUser User      @relation("CreatedPackTypes", fields: [createdBy], references: [id])
+  updatedByUser User      @relation("UpdatedPackTypes", fields: [updatedBy], references: [id])
+  deletedByUser User?     @relation("DeletedPackTypes", fields: [deletedBy], references: [id])
+
+  // Prevent duplicate names per variant
+  @@unique([variantId, name])
+  @@map("pack_types")
 }
 
 model Product {
@@ -203,12 +289,10 @@ model Product {
   // Product Classification & Relations
   brandId         String
   variantId       String        // Links to Variant entity
-  categoryId      String        // Links to Category (can be subcategory)
+  subcategoryId   String?       // Links to Subcategory (optional)
   manufacturerId  String        // Links to Manufacturer
-  
-  // Product Specifications
-  packSize        String        // e.g., "70g", "500ml", "1kg", "150g Family Pack"
-  packagingType   String        // e.g., "Single Pack", "5-Pack", "Box", "PET Bottle", "Tin"
+  packSizeId      String        // Links to PackSize entity
+  packTypeId      String        // Links to PackType entity
   
   // Pricing (Wholesale price)
   price           Decimal?      @db.Decimal(10,2)
@@ -219,7 +303,7 @@ model Product {
   thumbnail       String?       // Primary thumbnail image URL
   
   // Status
-  isActive        Boolean       @default(true)
+  status          ProductStatus @default(QUEUE)
   
   // Audit fields
   createdBy       String
@@ -232,8 +316,10 @@ model Product {
   // Relations
   brand           Brand         @relation("BrandProducts", fields: [brandId], references: [id])
   variant         Variant       @relation("VariantProducts", fields: [variantId], references: [id])
-  category        Category      @relation(fields: [categoryId], references: [id])
+  subcategory     Subcategory?  @relation("SubcategoryProducts", fields: [subcategoryId], references: [id])
   manufacturer    Manufacturer  @relation("ManufacturerProducts", fields: [manufacturerId], references: [id])
+  packSize        PackSize      @relation("PackSizeProducts", fields: [packSizeId], references: [id])
+  packType        PackType      @relation("PackTypeProducts", fields: [packTypeId], references: [id])
   
   createdByUser   User          @relation("CreatedProducts", fields: [createdBy], references: [id])
   updatedByUser   User          @relation("UpdatedProducts", fields: [updatedBy], references: [id])
@@ -675,9 +761,20 @@ enum UserStatus {
 }
 
 enum ProductStatus {
+  DRAFT
+  QUEUE
+  LIVE
+  ARCHIVED
+}
+
+enum PackSizeStatus {
   ACTIVE
-  INACTIVE
-  DISCONTINUED
+  ARCHIVED
+}
+
+enum PackTypeStatus {
+  ACTIVE
+  ARCHIVED
 }
 
 enum OrderStatus {
@@ -746,6 +843,18 @@ enum BrandStatus {
   ACTIVE
   INACTIVE
   DISCONTINUED
+}
+
+enum CategoryStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum SubcategoryStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
 }
 
 enum SMEVerificationStatus {

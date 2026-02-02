@@ -2,50 +2,50 @@ import { ApiProperty } from '@nestjs/swagger';
 
 export class CategoryStatsDto {
   @ApiProperty({
-    description: 'Total number of categories',
-    example: 150,
+    description: 'Total categories',
+    example: 12,
   })
-  total: number;
+  totalCategories: number;
 
   @ApiProperty({
-    description: 'Number of active categories',
-    example: 120,
+    description: 'Active categories',
+    example: 10,
   })
-  active: number;
+  activeCategories: number;
 
   @ApiProperty({
-    description: 'Number of parent (major) categories',
-    example: 25,
+    description: 'Inactive categories',
+    example: 2,
   })
-  parents: number;
+  inactiveCategories: number;
 
   @ApiProperty({
-    description: 'Number of subcategories',
-    example: 95,
+    description: 'Total subcategories',
+    example: 45,
   })
-  subcategories: number;
+  totalSubcategories: number;
 
   @ApiProperty({
-    description: 'Number of archived (soft deleted) categories',
-    example: 30,
+    description: 'Categories with most subcategories',
+    example: [
+      { name: 'Food & Beverages', subcategoryCount: 8 },
+      { name: 'Personal Care', subcategoryCount: 6 },
+    ],
   })
-  archived: number;
+  topCategoriesBySubcategories: Array<{
+    name: string;
+    subcategoryCount: number;
+  }>;
 
   @ApiProperty({
-    description: 'Categories created this month',
-    example: 5,
+    description: 'Categories with most products',
+    example: [
+      { name: 'Food & Beverages', productCount: 150 },
+      { name: 'Personal Care', productCount: 89 },
+    ],
   })
-  createdThisMonth: number;
-
-  @ApiProperty({
-    description: 'Average number of subcategories per parent category',
-    example: 3.8,
-  })
-  avgSubcategoriesPerParent: number;
-
-  @ApiProperty({
-    description: 'Number of categories with products',
-    example: 85,
-  })
-  categoriesWithProducts: number;
+  topCategoriesByProducts: Array<{
+    name: string;
+    productCount: number;
+  }>;
 }

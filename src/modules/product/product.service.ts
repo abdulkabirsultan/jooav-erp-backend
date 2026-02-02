@@ -32,17 +32,25 @@ export class ProductService {
   private async generateProductIdentifiers(
     brandId: string,
     variantId: string,
-    packSize: string,
-    packagingType: string,
+    packSizeId: string,
+    packTypeId: string,
   ): Promise<{ name: string; sku: string; barcode: string }> {
-    // Get brand and variant names
-    const [brand, variant] = await Promise.all([
+    // Get brand, variant, pack size, and pack type names
+    const [brand, variant, packSize, packType] = await Promise.all([
       this.prisma.brand.findUnique({
         where: { id: brandId },
         select: { name: true },
       }),
       this.prisma.variant.findUnique({
         where: { id: variantId },
+        select: { name: true },
+      }),
+      this.prisma.packSize.findUnique({
+        where: { id: packSizeId },
+        select: { name: true },
+      }),
+      this.prisma.packType.findUnique({
+        where: { id: packTypeId },
         select: { name: true },
       }),
     ]);
@@ -55,20 +63,28 @@ export class ProductService {
       throw new BadRequestException('Variant not found');
     }
 
+    if (!packSize) {
+      throw new BadRequestException('Pack size not found');
+    }
+
+    if (!packType) {
+      throw new BadRequestException('Pack type not found');
+    }
+
     // Generate name: "Brand Variant PackSize (PackType)"
-    const name = `${brand.name} ${variant.name} ${packSize} (${packagingType})`;
+    const name = `${brand.name} ${variant.name} ${packSize.name} (${packType.name})`;
 
     // Generate SKU: "BRAND-VARIANT-PACKSIZE-PACKTYPE"
     const sku = StringUtils.generateSlug(
-      `${brand.name}-${variant.name}-${packSize}-${packagingType}`,
+      `${brand.name}-${variant.name}-${packSize.name}-${packType.name}`,
     ).toUpperCase();
 
     // Generate EAN-13 barcode
     const barcode = BarcodeGenerator.generateEAN13(
       brand.name,
       variant.name,
-      packSize,
-      packagingType,
+      packSize.name,
+      packType.name,
     );
 
     return { name, sku, barcode };
@@ -79,21 +95,21 @@ export class ProductService {
    */
   private async validateReferences(
     brandId: string,
-    categoryId: string,
+    subcategoryId: string,
   ): Promise<{ manufacturerId: string }> {
-    const [brand, category] = await Promise.all([
+    const [brand, subcategory] = await Promise.all([
       this.prisma.brand.findUnique({
         where: { id: brandId },
         select: { id: true, manufacturerId: true },
       }),
-      this.prisma.category.findUnique({ where: { id: categoryId } }),
+      this.prisma.subcategory.findUnique({ where: { id: subcategoryId } }),
     ]);
 
     if (!brand) {
       throw new BadRequestException('Brand not found');
     }
-    if (!category) {
-      throw new BadRequestException('Category not found');
+    if (!subcategory) {
+      throw new BadRequestException('Subcategory not found');
     }
 
     return { manufacturerId: brand.manufacturerId };
@@ -122,26 +138,70 @@ export class ProductService {
     }
   }
 
+  /**
+   * Validate that pack size and pack type exist, are active, and belong to the specified variant
+   */
+  private async validatePackEntities(
+    packSizeId: string,
+    packTypeId: string,
+    variantId: string,
+  ): Promise<void> {
+    // Validate pack size
+    const packSize = await this.prisma.packSize.findFirst({
+      where: {
+        id: packSizeId,
+        variantId: variantId,
+        status: 'ACTIVE',
+        deletedAt: null,
+      },
+    });
+
+    if (!packSize) {
+      throw new BadRequestException(
+        'Pack size not found, is not active, or does not belong to the specified variant',
+      );
+    }
+
+    // Validate pack type
+    const packType = await this.prisma.packType.findFirst({
+      where: {
+        id: packTypeId,
+        variantId: variantId,
+        status: 'ACTIVE',
+        deletedAt: null,
+      },
+    });
+
+    if (!packType) {
+      throw new BadRequestException(
+        'Pack type not found, is not active, or does not belong to the specified variant',
+      );
+    }
+  }
+
   async create(
     createProductDto: CreateProductDto,
     userId: string,
   ): Promise<ProductResponseDto> {
     const {
       brandId,
-      categoryId,
+      subcategoryId,
       variantId,
-      packSize,
-      packagingType,
+      packSizeId,
+      packTypeId,
       barcode: providedBarcode,
       ...rest
     } = createProductDto;
 
     // Validate references and get manufacturerId from brand
-    const validation = await this.validateReferences(brandId, categoryId);
+    const validation = await this.validateReferences(brandId, subcategoryId);
     const manufacturerId = validation.manufacturerId;
 
     // Validate that variant exists and belongs to the specified brand
     await this.validateVariant(variantId, brandId);
+
+    // Validate pack entities
+    await this.validatePackEntities(packSizeId, packTypeId, variantId);
 
     // Generate name, SKU, and barcode (if not provided)
     const {
@@ -151,8 +211,8 @@ export class ProductService {
     } = await this.generateProductIdentifiers(
       brandId,
       variantId,
-      packSize,
-      packagingType,
+      packSizeId,
+      packTypeId,
     );
 
     // Use provided barcode or generated one (but barcode is currently not used in schema)
@@ -184,11 +244,11 @@ export class ProductService {
           sku,
           // barcode field removed from schema but generation kept for future
           brandId,
-          categoryId,
+          subcategoryId,
           manufacturerId,
           variantId,
-          packSize,
-          packagingType,
+          packSizeId,
+          packTypeId,
           ...rest,
           createdBy: userId,
           updatedBy: userId,
@@ -205,18 +265,23 @@ export class ProductService {
           variant: {
             select: { id: true, name: true, description: true },
           },
-          category: {
+          subcategory: {
             select: {
               id: true,
               name: true,
               slug: true,
-
-              parent: {
+              category: {
                 select: { id: true, name: true, slug: true },
               },
             },
           },
           manufacturer: {
+            select: { id: true, name: true },
+          },
+          packSize: {
+            select: { id: true, name: true },
+          },
+          packType: {
             select: { id: true, name: true },
           },
         },
@@ -232,14 +297,18 @@ export class ProductService {
           productName: name,
           sku,
           brand: product.brand.name,
-          category: product.category.name,
+          subcategory: product.subcategory?.name,
+          category: product.subcategory?.category.name,
         },
       });
 
       // Invalidate product caches
       await this.cacheInvalidationService.invalidateProducts();
 
-      return product;
+      return {
+        ...product,
+        subcategoryId: product.subcategoryId || undefined,
+      };
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         if (error.code === 'P2002') {
@@ -263,7 +332,7 @@ export class ProductService {
       brandId,
       categoryId,
       variant,
-      isActive,
+      status,
       includeRelations = true,
     } = query;
 
@@ -272,7 +341,7 @@ export class ProductService {
     // Build where conditions
     const where: Prisma.ProductWhereInput = {
       deletedAt: null,
-      ...(isActive !== undefined && { isActive }),
+      ...(status && { status }),
       ...(brandId && { brandId }),
       ...(categoryId && { categoryId }),
       ...(variant && {
@@ -302,13 +371,12 @@ export class ProductService {
           variant: {
             select: { id: true, name: true, description: true },
           },
-          category: {
+          subcategory: {
             select: {
               id: true,
               name: true,
               slug: true,
-
-              parent: {
+              category: {
                 select: { id: true, name: true, slug: true },
               },
             },
@@ -316,19 +384,31 @@ export class ProductService {
           manufacturer: {
             select: { id: true, name: true },
           },
+          packSize: {
+            select: { id: true, name: true },
+          },
+          packType: {
+            select: { id: true, name: true },
+          },
         }
       : undefined;
 
-    const [products, total] = await Promise.all([
+    const [rawProducts, total] = await Promise.all([
       this.prisma.product.findMany({
         where,
         include,
-        orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }],
+        orderBy: [{ status: 'desc' }, { createdAt: 'desc' }],
         skip,
         take: limit,
       }),
       this.prisma.product.count({ where }),
     ]);
+
+    // Transform products to handle null to undefined conversion for optional fields
+    const products = rawProducts.map((product) => ({
+      ...product,
+      subcategoryId: product.subcategoryId || undefined,
+    }));
 
     return new PaginatedResponse(products, page, limit, total);
   }
@@ -347,18 +427,23 @@ export class ProductService {
         variant: {
           select: { id: true, name: true, description: true },
         },
-        category: {
+        subcategory: {
           select: {
             id: true,
             name: true,
             slug: true,
-
-            parent: {
+            category: {
               select: { id: true, name: true, slug: true },
             },
           },
         },
         manufacturer: {
+          select: { id: true, name: true },
+        },
+        packSize: {
+          select: { id: true, name: true },
+        },
+        packType: {
           select: { id: true, name: true },
         },
       },
@@ -368,7 +453,10 @@ export class ProductService {
       throw new NotFoundException(`Product with ID ${id} not found`);
     }
 
-    return product;
+    return {
+      ...product,
+      subcategoryId: product.subcategoryId || undefined,
+    };
   }
 
   async update(
@@ -385,28 +473,38 @@ export class ProductService {
       throw new NotFoundException(`Product with ID ${id} not found`);
     }
 
-    const { brandId, categoryId, variantId, packSize, packagingType, ...rest } =
-      updateProductDto;
+    const {
+      brandId,
+      subcategoryId,
+      variantId,
+      packSizeId,
+      packTypeId,
+      ...rest
+    } = updateProductDto;
 
     let name: string | undefined;
     let sku: string | undefined;
     let manufacturerId: string | undefined;
 
     // If any identifier fields are being updated, regenerate name, SKU
-    if (brandId || variantId || packSize || packagingType) {
+    if (brandId || variantId || packSizeId || packTypeId) {
       const finalBrandId = brandId || existingProduct.brandId;
       const finalVariantId = variantId || existingProduct.variantId;
-      const finalPackSize = packSize || existingProduct.packSize;
-      const finalPackagingType = packagingType || existingProduct.packagingType;
+      const finalPackSizeId = packSizeId || existingProduct.packSizeId;
+      const finalPackTypeId = packTypeId || existingProduct.packTypeId;
 
       // Validate references if changed and get manufacturerId from brand if brandId is provided
-      if (brandId || categoryId) {
-        const validation = await this.validateReferences(
-          brandId || existingProduct.brandId,
-          categoryId || existingProduct.categoryId,
-        );
-        if (brandId) {
-          manufacturerId = validation.manufacturerId;
+      if (brandId || subcategoryId) {
+        const finalSubcategoryId =
+          subcategoryId || existingProduct.subcategoryId;
+        if (finalSubcategoryId) {
+          const validation = await this.validateReferences(
+            finalBrandId,
+            finalSubcategoryId,
+          );
+          if (brandId) {
+            manufacturerId = validation.manufacturerId;
+          }
         }
       }
 
@@ -415,11 +513,20 @@ export class ProductService {
         await this.validateVariant(variantId, finalBrandId);
       }
 
+      // Validate pack entities if changed
+      if (packSizeId || packTypeId) {
+        await this.validatePackEntities(
+          finalPackSizeId,
+          finalPackTypeId,
+          finalVariantId,
+        );
+      }
+
       const identifiers = await this.generateProductIdentifiers(
         finalBrandId,
         finalVariantId,
-        finalPackSize,
-        finalPackagingType,
+        finalPackSizeId,
+        finalPackTypeId,
       );
 
       name = identifiers.name;
@@ -460,17 +567,23 @@ export class ProductService {
           variant: {
             select: { id: true, name: true, description: true },
           },
-          category: {
+          subcategory: {
             select: {
               id: true,
               name: true,
               slug: true,
-              parent: {
+              category: {
                 select: { id: true, name: true, slug: true },
               },
             },
           },
           manufacturer: {
+            select: { id: true, name: true },
+          },
+          packSize: {
+            select: { id: true, name: true },
+          },
+          packType: {
             select: { id: true, name: true },
           },
         },
@@ -492,7 +605,10 @@ export class ProductService {
       // Invalidate product caches
       await this.cacheInvalidationService.invalidateProduct(id);
 
-      return product;
+      return {
+        ...product,
+        subcategoryId: product.subcategoryId || undefined,
+      };
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         if (error.code === 'P2002') {
@@ -520,6 +636,7 @@ export class ProductService {
     await this.prisma.product.update({
       where: { id },
       data: {
+        status: 'ARCHIVED',
         deletedAt: new Date(),
         deletedBy: userId,
       },
@@ -542,12 +659,93 @@ export class ProductService {
   }
 
   async activate(id: string, userId: string): Promise<ProductResponseDto> {
-    const product = await this.findOne(id);
+    // Check if product exists (including soft deleted ones)
+    const product = await this.prisma.product.findUnique({
+      where: { id },
+      include: {
+        brand: { select: { id: true, name: true, deletedAt: true } },
+        variant: { select: { id: true, name: true, deletedAt: true } },
+        subcategory: { select: { id: true, name: true, deletedAt: true } },
+        manufacturer: { select: { id: true, name: true, deletedAt: true } },
+        packSize: { select: { id: true, name: true, status: true } },
+        packType: { select: { id: true, name: true, status: true } },
+      },
+    });
+
+    if (!product) {
+      throw new NotFoundException(`Product with ID ${id} not found`);
+    }
+
+    // Check if this is a reactivation from soft delete or status change
+    const isDeleted = product.deletedAt !== null;
+    const isInactive =
+      product.status === 'ARCHIVED' || product.status === 'DRAFT';
+
+    if (!isDeleted && !isInactive) {
+      throw new BadRequestException('Product is already active');
+    }
+
+    // If reactivating from soft delete, validate relationships
+    if (isDeleted) {
+      // Check if related entities are active
+      if (product.brand.deletedAt) {
+        throw new BadRequestException(
+          'Cannot reactivate product because its brand is deleted. Reactivate the brand first.',
+        );
+      }
+
+      if (product.variant.deletedAt) {
+        throw new BadRequestException(
+          'Cannot reactivate product because its variant is deleted. Reactivate the variant first.',
+        );
+      }
+
+      if (product.subcategory && product.subcategory.deletedAt) {
+        throw new BadRequestException(
+          'Cannot reactivate product because its subcategory is deleted. Reactivate the subcategory first.',
+        );
+      }
+
+      if (product.manufacturer && product.manufacturer.deletedAt) {
+        throw new BadRequestException(
+          'Cannot reactivate product because its manufacturer is deleted. Reactivate the manufacturer first.',
+        );
+      }
+
+      if (product.packSize && product.packSize.status !== 'ACTIVE') {
+        throw new BadRequestException(
+          'Cannot reactivate product because its pack size is not active. Reactivate the pack size first.',
+        );
+      }
+
+      if (product.packType && product.packType.status !== 'ACTIVE') {
+        throw new BadRequestException(
+          'Cannot reactivate product because its pack type is not active. Reactivate the pack type first.',
+        );
+      }
+
+      // Check for SKU conflicts if reactivating from deleted state
+      const conflictProduct = await this.prisma.product.findFirst({
+        where: {
+          sku: { equals: product.sku, mode: 'insensitive' },
+          deletedAt: null,
+          NOT: { id },
+        },
+      });
+
+      if (conflictProduct) {
+        throw new ConflictException(
+          `A product with SKU "${product.sku}" already exists`,
+        );
+      }
+    }
 
     const updatedProduct = await this.prisma.product.update({
       where: { id },
       data: {
-        isActive: true,
+        status: 'LIVE',
+        deletedAt: null,
+        deletedBy: null,
         updatedBy: userId,
       },
       include: {
@@ -561,17 +759,23 @@ export class ProductService {
         variant: {
           select: { id: true, name: true, description: true },
         },
-        category: {
+        subcategory: {
           select: {
             id: true,
             name: true,
             slug: true,
-            parent: {
+            category: {
               select: { id: true, name: true, slug: true },
             },
           },
         },
         manufacturer: {
+          select: { id: true, name: true },
+        },
+        packSize: {
+          select: { id: true, name: true },
+        },
+        packType: {
           select: { id: true, name: true },
         },
       },
@@ -586,13 +790,17 @@ export class ProductService {
       metadata: {
         productName: product.name,
         sku: product.sku,
+        wasDeleted: isDeleted,
       },
     });
 
     // Invalidate product caches
     await this.cacheInvalidationService.invalidateProduct(id);
 
-    return updatedProduct;
+    return {
+      ...updatedProduct,
+      subcategoryId: updatedProduct.subcategoryId || undefined,
+    };
   }
 
   async deactivate(id: string, userId: string): Promise<ProductResponseDto> {
@@ -601,7 +809,7 @@ export class ProductService {
     const updatedProduct = await this.prisma.product.update({
       where: { id },
       data: {
-        isActive: false,
+        status: 'ARCHIVED',
         updatedBy: userId,
       },
       include: {
@@ -615,17 +823,23 @@ export class ProductService {
         variant: {
           select: { id: true, name: true, description: true },
         },
-        category: {
+        subcategory: {
           select: {
             id: true,
             name: true,
             slug: true,
-            parent: {
+            category: {
               select: { id: true, name: true, slug: true },
             },
           },
         },
         manufacturer: {
+          select: { id: true, name: true },
+        },
+        packSize: {
+          select: { id: true, name: true },
+        },
+        packType: {
           select: { id: true, name: true },
         },
       },
@@ -646,6 +860,9 @@ export class ProductService {
     // Invalidate product caches
     await this.cacheInvalidationService.invalidateProduct(id);
 
-    return updatedProduct;
+    return {
+      ...updatedProduct,
+      subcategoryId: updatedProduct.subcategoryId || undefined,
+    };
   }
 }

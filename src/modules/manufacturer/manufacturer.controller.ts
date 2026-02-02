@@ -369,106 +369,25 @@ export class ManufacturerController {
     );
   }
 
-  @Post('bulk-delete')
+  @Patch(':id/activate')
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   @ApiOperation({
-    summary: 'Bulk delete manufacturers (Admin only)',
-    description:
-      'Soft delete multiple manufacturers by setting their status to SUSPENDED. Will skip manufacturers with active products.',
-  })
-  @ApiBody({ type: BulkManufacturerOperationDto })
-  @ApiResponse({
-    status: 200,
-    description: 'Bulk delete operation completed',
-    type: BulkOperationResultDto,
-  })
-  @ApiResponse({
-    status: 403,
-    description: 'Forbidden - Admin access required',
-  })
-  @AuditLog({ action: 'BULK_DELETE', resource: 'Manufacturer' })
-  async bulkDelete(
-    @Body() bulkOperationDto: BulkManufacturerOperationDto,
-    @CurrentUserId() adminId: string,
-    @Request() req: any,
-  ): Promise<SuccessResponse<BulkOperationResultDto>> {
-    const result = await this.manufacturerService.bulkDelete(
-      bulkOperationDto.manufacturerIds,
-      adminId,
-      req,
-    );
-
-    const message =
-      result.deletedCount > 0
-        ? ResponseMessages.bulkDeleted(result.deletedCount, 'manufacturer')
-        : 'No manufacturers were deleted';
-
-    return new SuccessResponse(message, result);
-  }
-
-  // ================================
-  // STATUS MANAGEMENT
-  // ================================
-
-  @Patch(':id/status')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
-  @ApiOperation({
-    summary: 'Update manufacturer status (Admin only)',
-    description: 'Activate, deactivate, or suspend a manufacturer',
-  })
-  @ApiParam({ name: 'id', description: 'Manufacturer ID' })
-  @ApiBody({ type: UpdateManufacturerStatusDto })
-  @ApiResponse({
-    status: 200,
-    description: 'Manufacturer status updated successfully',
-    type: ManufacturerResponseDto,
-  })
-  @ApiResponse({
-    status: 404,
-    description: 'Manufacturer not found',
-  })
-  @ApiResponse({
-    status: 403,
-    description: 'Forbidden - Admin access required',
-  })
-  async updateStatus(
-    @Param('id') id: string,
-    @Body() statusDto: UpdateManufacturerStatusDto,
-    @CurrentUserId() adminId: string,
-    @Request() req: any,
-  ): Promise<SuccessResponse<ManufacturerResponseDto>> {
-    const manufacturer = await this.manufacturerService.updateStatus(
-      id,
-      statusDto.status,
-      adminId,
-      req,
-    );
-    return new SuccessResponse(
-      ResponseMessages.statusChanged(
-        'Manufacturer',
-        manufacturer.name,
-        statusDto.status,
-      ),
-      manufacturer,
-    );
-  }
-
-  @Post(':id/activate')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Activate manufacturer (Admin only)',
-    description: 'Set manufacturer status to ACTIVE',
+    summary: 'Reactivate manufacturer (Admin only)',
+    description: 'Reactivate a manufacturer from soft delete state',
   })
   @ApiParam({ name: 'id', description: 'Manufacturer ID' })
   @ApiResponse({
     status: 200,
-    description: 'Manufacturer activated successfully',
+    description: 'Manufacturer reactivated successfully',
     type: ManufacturerResponseDto,
   })
   @ApiResponse({
     status: 404,
-    description: 'Manufacturer not found',
+    description: 'Manufacturer not found or not in deleted state',
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'Conflict - Manufacturer with same name already exists',
   })
   @ApiResponse({
     status: 403,
@@ -479,52 +398,13 @@ export class ManufacturerController {
     @CurrentUserId() adminId: string,
     @Request() req: any,
   ): Promise<SuccessResponse<ManufacturerResponseDto>> {
-    const manufacturer = await this.manufacturerService.updateStatus(
+    const manufacturer = await this.manufacturerService.activate(
       id,
-      ManufacturerStatus.ACTIVE,
       adminId,
       req,
     );
     return new SuccessResponse(
       ResponseMessages.activated('Manufacturer', manufacturer.name),
-      manufacturer,
-    );
-  }
-
-  @Post(':id/suspend')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Suspend manufacturer (Admin only)',
-    description: 'Set manufacturer status to SUSPENDED',
-  })
-  @ApiParam({ name: 'id', description: 'Manufacturer ID' })
-  @ApiResponse({
-    status: 200,
-    description: 'Manufacturer suspended successfully',
-    type: ManufacturerResponseDto,
-  })
-  @ApiResponse({
-    status: 404,
-    description: 'Manufacturer not found',
-  })
-  @ApiResponse({
-    status: 403,
-    description: 'Forbidden - Admin access required',
-  })
-  async suspend(
-    @Param('id') id: string,
-    @CurrentUserId() adminId: string,
-    @Request() req: any,
-  ): Promise<SuccessResponse<ManufacturerResponseDto>> {
-    const manufacturer = await this.manufacturerService.updateStatus(
-      id,
-      ManufacturerStatus.SUSPENDED,
-      adminId,
-      req,
-    );
-    return new SuccessResponse(
-      ResponseMessages.suspended('Manufacturer', manufacturer.name),
       manufacturer,
     );
   }

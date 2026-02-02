@@ -1,62 +1,123 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { CategoryStatus } from '@prisma/client';
 
-export class CategoryResponseDto {
-  @ApiProperty({ example: 'b8e6cc4d-9e52-4a3b-9c6d-1f2a3b4c5d6e' })
+export class CategorySubcategoryDto {
+  @ApiProperty({
+    description: 'Subcategory ID',
+    example: 'ckl123456789',
+  })
   id: string;
 
-  @ApiProperty({ example: 'Beverages' })
+  @ApiProperty({
+    description: 'Subcategory name',
+    example: 'Soft Drinks',
+  })
   name: string;
 
-  @ApiProperty({ example: 'beverages' })
+  @ApiProperty({
+    description: 'Subcategory description',
+    example: 'Computer hardware including laptops, desktops, etc.',
+    required: false,
+  })
+  description?: string | null;
+
+  @ApiProperty({
+    description: 'Subcategory slug',
+    example: 'soft-drinks',
+  })
   slug: string;
 
   @ApiProperty({
-    example: 'Soft drinks, juices, energy drinks and water',
-    nullable: true,
+    description: 'Product count in this subcategory',
+    example: 15,
   })
-  description: string | null;
+  productCount: number;
 
   @ApiProperty({
-    example: 'a8e6cc4d-9e52-4a3b-9c6d-1f2a3b4c5d6f',
-    nullable: true,
+    description: 'Creation timestamp',
+    example: '2023-01-01T00:00:00.000Z',
   })
-  parentId: string | null;
-
-  @ApiProperty({ example: true })
-  isActive: boolean;
-
-  @ApiProperty({ example: 1 })
-  sortOrder: number;
-
-  @ApiProperty({ example: 'c9f7cc4d-9e52-4a3b-9c6d-1f2a3b4c5d6e' })
-  createdBy: string;
-
-  @ApiProperty({ example: 'c9f7cc4d-9e52-4a3b-9c6d-1f2a3b4c5d6e' })
-  updatedBy: string;
-
-  @ApiProperty({ example: '2023-12-08T10:30:00.000Z' })
   createdAt: Date;
 
-  @ApiProperty({ example: '2023-12-08T10:30:00.000Z' })
+  @ApiProperty({
+    description: 'Last update timestamp',
+    example: '2023-01-01T00:00:00.000Z',
+  })
+  updatedAt: Date;
+}
+
+export class CategoryResponseDto {
+  @ApiProperty({
+    description: 'Category ID',
+    example: 'ckl123456789',
+  })
+  id: string;
+
+  @ApiProperty({
+    description: 'Category name',
+    example: 'Food & Beverages',
+  })
+  name: string;
+
+  @ApiProperty({
+    description: 'Category description',
+    example: 'Electronic devices and accessories',
+    required: false,
+  })
+  description?: string | null;
+
+  @ApiProperty({
+    description: 'Category slug',
+    example: 'food-beverages',
+  })
+  slug: string;
+
+  @ApiProperty({
+    description: 'Category status',
+    enum: CategoryStatus,
+    example: CategoryStatus.ACTIVE,
+  })
+  status: CategoryStatus;
+
+  @ApiProperty({
+    description: 'Creation timestamp',
+    example: '2023-01-01T00:00:00.000Z',
+  })
+  createdAt: Date;
+
+  @ApiProperty({
+    description: 'Last update timestamp',
+    example: '2023-01-01T00:00:00.000Z',
+  })
   updatedAt: Date;
 
   @ApiProperty({
-    description: 'Product count in this category',
-    example: 25,
+    description: 'Created by user ID',
+    example: 'user123',
   })
-  productCount?: number;
+  createdBy: string;
 
   @ApiProperty({
-    description: 'Child categories (subcategories)',
-    type: [CategoryResponseDto],
-    required: false,
+    description: 'Updated by user ID',
+    example: 'user123',
   })
-  children?: CategoryResponseDto[];
+  updatedBy: string;
 
-  @ApiProperty({
-    description: 'Parent category information',
-    type: CategoryResponseDto,
-    required: false,
+  @ApiPropertyOptional({
+    description: 'Subcategories under this category',
+    type: [CategorySubcategoryDto],
   })
-  parent?: CategoryResponseDto;
+  subcategories?: CategorySubcategoryDto[];
+
+  @ApiPropertyOptional({
+    description: 'Total subcategory count',
+    example: 5,
+  })
+  subcategoryCount?: number;
+
+  @ApiPropertyOptional({
+    description: 'Total product count across all subcategories',
+    example: 150,
+  })
+  totalProductCount?: number;
 }
