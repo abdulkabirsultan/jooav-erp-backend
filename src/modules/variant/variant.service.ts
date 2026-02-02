@@ -48,16 +48,16 @@ export class VariantService {
       throw new BadRequestException('Brand not found');
     }
 
-    // Check if variant name already exists for this brand among active records
-    const existingVariant = await this.prisma.variant.findFirst({
+    // Check for duplicate variant name within the brand
+    const duplicateVariant = await this.prisma.variant.findFirst({
       where: {
         name: { equals: name, mode: 'insensitive' },
         brandId,
-        deletedAt: null, // Only check active variants
+        deletedAt: null,
       },
     });
 
-    if (existingVariant) {
+    if (duplicateVariant) {
       throw new ConflictException(
         `Variant with name "${name}" already exists for this brand`,
       );
@@ -80,135 +80,65 @@ export class VariantService {
       }
     }
 
-    const variant = await this.prisma.variant.create({
-      data: {
-        name,
-        description,
-        brandId,
-        createdBy: userId,
-        updatedBy: userId,
-      },
-      include: {
-        brand: {
-          select: {
-            id: true,
-            name: true,
-          },
+    const result = await this.prisma.$transaction(async (tx) => {
+      // Create the variant
+      const variant = await tx.variant.create({
+        data: {
+          name,
+          description,
+          brandId,
+          createdBy: userId,
+          updatedBy: userId,
         },
-        packSizes: {
-          where: { status: 'ACTIVE' },
-          select: {
-            id: true,
-            name: true,
-          },
-          orderBy: { name: 'asc' },
-        },
-        packTypes: {
-          where: { status: 'ACTIVE' },
-          select: {
-            id: true,
-            name: true,
-          },
-          orderBy: { name: 'asc' },
-        },
-        _count: {
-          select: {
-            products: true,
-          },
-        },
-      },
+      });
+
+      // Create pack sizes if provided
+      if (packSizes && packSizes.length > 0) {
+        await tx.packSize.createMany({
+          data: packSizes.map((ps) => ({
+            name: ps.name,
+            variantId: variant.id,
+            createdBy: userId,
+            updatedBy: userId,
+          })),
+        });
+      }
+
+      // Create pack types if provided
+      if (packTypes && packTypes.length > 0) {
+        await tx.packType.createMany({
+          data: packTypes.map((pt) => ({
+            name: pt.name,
+            variantId: variant.id,
+            createdBy: userId,
+            updatedBy: userId,
+          })),
+        });
+      }
+
+      return variant;
     });
 
-    // Create pack sizes if provided
-    if (packSizes && packSizes.length > 0) {
-      await Promise.all(
-        packSizes.map((packSize) =>
-          this.packSizeService.create(
-            {
-              name: packSize.name,
-              variantId: variant.id,
-            },
-            userId,
-          ),
-        ),
-      );
-    }
+    // Invalidate cache
+    await this.cacheInvalidationService.invalidateVariant(result.id);
 
-    // Create pack types if provided
-    if (packTypes && packTypes.length > 0) {
-      await Promise.all(
-        packTypes.map((packType) =>
-          this.packTypeService.create(
-            {
-              name: packType.name,
-              variantId: variant.id,
-            },
-            userId,
-          ),
-        ),
-      );
-    }
-
-    // Fetch the complete variant with pack entities
-    const completeVariant = await this.prisma.variant.findUnique({
-      where: { id: variant.id },
-      include: {
-        brand: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        packSizes: {
-          where: { status: 'ACTIVE' },
-          select: {
-            id: true,
-            name: true,
-          },
-          orderBy: { name: 'asc' },
-        },
-        packTypes: {
-          where: { status: 'ACTIVE' },
-          select: {
-            id: true,
-            name: true,
-          },
-          orderBy: { name: 'asc' },
-        },
-        _count: {
-          select: {
-            products: true,
-          },
-        },
-      },
-    });
-
-    // Invalidate variant-related caches
-    await this.cacheInvalidationService.invalidateVariant(variant.id);
-
-    return completeVariant as VariantResponseDto;
+    return this.findOne(result.id);
   }
 
   async findAll(
     query: VariantQueryDto,
-    includes?: {
-      includeBrand?: boolean;
-      includeProductsCount?: boolean;
-      includeAuditInfo?: boolean;
-    },
   ): Promise<PaginatedResponse<VariantResponseDto>> {
     const {
-      page = 1,
-      limit = 10,
+      page = '1',
+      limit = '10',
       search,
       brandId,
       sortBy = 'createdAt',
       sortOrder = 'desc',
     } = query;
 
-    // Convert string params to numbers
-    const pageNum = typeof page === 'string' ? parseInt(page, 10) : page;
-    const limitNum = typeof limit === 'string' ? parseInt(limit, 10) : limit;
+    const pageNum = parseInt(page, 10) || 1;
+    const limitNum = parseInt(limit, 10) || 10;
     const skip = (pageNum - 1) * limitNum;
 
     const where: Prisma.VariantWhereInput = {
@@ -217,174 +147,75 @@ export class VariantService {
         OR: [
           { name: { contains: search, mode: 'insensitive' } },
           { description: { contains: search, mode: 'insensitive' } },
-          { brand: { name: { contains: search, mode: 'insensitive' } } },
         ],
       }),
       ...(brandId && { brandId }),
     };
 
-    const orderBy: Prisma.VariantOrderByWithRelationInput = {
-      [sortBy]: sortOrder,
-    };
-
-    // Build dynamic include object
-    const includeObject: any = {
-      // Always include pack entities
-      packSizes: {
-        where: { status: 'ACTIVE' },
-        select: {
-          id: true,
-          name: true,
-          status: true,
-          createdAt: true,
-        },
-        orderBy: { name: 'asc' },
-      },
-      packTypes: {
-        where: { status: 'ACTIVE' },
-        select: {
-          id: true,
-          name: true,
-          status: true,
-          createdAt: true,
-        },
-        orderBy: { name: 'asc' },
-      },
-    };
-
-    // Include brand if requested
-    if (includes?.includeBrand === true) {
-      includeObject.brand = {
-        select: {
-          id: true,
-          name: true,
-        },
-      };
-    }
-
-    // Include products count if requested
-    if (includes?.includeProductsCount === true) {
-      includeObject._count = {
-        select: {
-          products: true,
-        },
-      };
-    }
-
-    // Include audit info if requested
-    if (includes?.includeAuditInfo === true) {
-      includeObject.createdByUser = {
-        select: { id: true, email: true, firstName: true, lastName: true },
-      };
-      includeObject.updatedByUser = {
-        select: { id: true, email: true, firstName: true, lastName: true },
-      };
-      includeObject.deletedByUser = {
-        select: { id: true, email: true, firstName: true, lastName: true },
-      };
-    }
-
-    const [variants, totalCount] = await Promise.all([
+    const [variants, total] = await Promise.all([
       this.prisma.variant.findMany({
         where,
         skip,
         take: limitNum,
-        orderBy,
-        include: includeObject,
+        orderBy: { [sortBy]: sortOrder },
+        include: {
+          brand: {
+            select: { id: true, name: true },
+          },
+          packSizes: {
+            where: { status: 'ACTIVE' },
+            select: { id: true, name: true, status: true, createdAt: true },
+          },
+          packTypes: {
+            where: { status: 'ACTIVE' },
+            select: { id: true, name: true, status: true, createdAt: true },
+          },
+        },
       }),
       this.prisma.variant.count({ where }),
     ]);
 
-    const totalPages = Math.ceil(totalCount / limitNum);
-
-    return {
-      data: variants as VariantResponseDto[],
-      meta: {
-        page: pageNum,
-        limit: limitNum,
-        totalItems: totalCount,
-        totalPages,
-        hasNextPage: pageNum < totalPages,
-        hasPreviousPage: pageNum > 1,
-      },
-    };
+    return new PaginatedResponse(
+      variants.map((v) => ({
+        ...v,
+        description: v.description || undefined,
+        deletedBy: v.deletedBy || undefined,
+        deletedAt: v.deletedAt || undefined,
+      })),
+      pageNum,
+      limitNum,
+      total,
+    );
   }
 
-  async findOne(
-    id: string,
-    includes?: {
-      includeBrand?: boolean;
-      includeProductsCount?: boolean;
-      includeAuditInfo?: boolean;
-    },
-  ): Promise<VariantResponseDto> {
-    // Build dynamic include object
-    const includeObject: any = {
-      // Always include pack entities
-      packSizes: {
-        where: { status: 'ACTIVE' },
-        select: {
-          id: true,
-          name: true,
-          status: true,
-          createdAt: true,
-        },
-        orderBy: { name: 'asc' },
-      },
-      packTypes: {
-        where: { status: 'ACTIVE' },
-        select: {
-          id: true,
-          name: true,
-          status: true,
-          createdAt: true,
-        },
-        orderBy: { name: 'asc' },
-      },
-    };
-
-    // Include brand if requested
-    if (includes?.includeBrand === true) {
-      includeObject.brand = {
-        select: {
-          id: true,
-          name: true,
-        },
-      };
-    }
-
-    // Include products count if requested
-    if (includes?.includeProductsCount === true) {
-      includeObject._count = {
-        select: {
-          products: true,
-        },
-      };
-    }
-
-    // Include audit info if requested
-    if (includes?.includeAuditInfo === true) {
-      includeObject.createdByUser = {
-        select: { id: true, email: true, firstName: true, lastName: true },
-      };
-      includeObject.updatedByUser = {
-        select: { id: true, email: true, firstName: true, lastName: true },
-      };
-      includeObject.deletedByUser = {
-        select: { id: true, email: true, firstName: true, lastName: true },
-      };
-    }
-
+  async findOne(id: string): Promise<VariantResponseDto> {
     const variant = await this.prisma.variant.findFirst({
       where: { id, deletedAt: null },
-      include: includeObject,
+      include: {
+        brand: {
+          select: { id: true, name: true },
+        },
+        packSizes: {
+          where: { status: 'ACTIVE' },
+          select: { id: true, name: true, status: true, createdAt: true },
+        },
+        packTypes: {
+          where: { status: 'ACTIVE' },
+          select: { id: true, name: true, status: true, createdAt: true },
+        },
+      },
     });
 
     if (!variant) {
       throw new NotFoundException('Variant not found');
     }
 
-    return variant as VariantResponseDto;
+    return {
+      ...variant,
+      description: variant.description || undefined,
+      deletedBy: variant.deletedBy || undefined,
+      deletedAt: variant.deletedAt || undefined,
+    };
   }
 
   @AuditLog({
@@ -396,8 +227,18 @@ export class VariantService {
     updateVariantDto: UpdateVariantDto,
     userId: string,
   ): Promise<VariantResponseDto> {
-    const { name, description, brandId, packSizes, packTypes } =
-      updateVariantDto;
+    const {
+      name,
+      description,
+      brandId,
+      createPackSizes = [],
+      updatePackSizes = [],
+      deletePackSizeIds = [],
+      createPackTypes = [],
+      updatePackTypes = [],
+      deletePackTypeIds = [],
+      forceDeleteConfigs = false,
+    } = updateVariantDto;
 
     // Check if variant exists
     const existingVariant = await this.prisma.variant.findFirst({
@@ -408,11 +249,11 @@ export class VariantService {
         },
         packSizes: {
           where: { status: 'ACTIVE' },
-          select: { id: true, name: true },
+          select: { id: true, name: true, status: true, createdAt: true },
         },
         packTypes: {
           where: { status: 'ACTIVE' },
-          select: { id: true, name: true },
+          select: { id: true, name: true, status: true, createdAt: true },
         },
       },
     });
@@ -421,342 +262,394 @@ export class VariantService {
       throw new NotFoundException('Variant not found');
     }
 
-    // If name is being updated, check for duplicates among active records
-    if (name && name !== existingVariant.name) {
-      const duplicateVariant = await this.prisma.variant.findFirst({
-        where: {
-          name: { equals: name, mode: 'insensitive' },
-          brandId: brandId || existingVariant.brandId,
-          deletedAt: null, // Only check active variants
-          id: { not: id },
-        },
-      });
+    return await this.prisma.$transaction(async (tx) => {
+      // Prepare variant update data
+      const updateData: any = {
+        updatedBy: userId,
+      };
 
-      if (duplicateVariant) {
-        throw new ConflictException(
-          `Variant with name "${name}" already exists for this brand`,
-        );
-      }
-    }
-
-    // Validate pack entity names are unique within arrays
-    if (packSizes) {
-      const packSizeNames = packSizes.map((ps) => ps.name.toLowerCase());
-      const uniquePackSizeNames = new Set(packSizeNames);
-      if (packSizeNames.length !== uniquePackSizeNames.size) {
-        throw new BadRequestException('Pack size names must be unique');
-      }
-    }
-
-    if (packTypes) {
-      const packTypeNames = packTypes.map((pt) => pt.name.toLowerCase());
-      const uniquePackTypeNames = new Set(packTypeNames);
-      if (packTypeNames.length !== uniquePackTypeNames.size) {
-        throw new BadRequestException('Pack type names must be unique');
-      }
-    }
-
-    // If brandId is being updated, check if brand exists and get brand info
-    let newBrand: { id: string; name: string } | null = null;
-    if (brandId && brandId !== existingVariant.brandId) {
-      newBrand = await this.prisma.brand.findUnique({
-        where: { id: brandId, deletedAt: null },
-        select: { id: true, name: true },
-      });
-
-      if (!newBrand) {
-        throw new BadRequestException('Brand not found');
-      }
-    }
-
-    // Check if this update will affect product names/SKUs
-    const willAffectProducts =
-      (name && name !== existingVariant.name) ||
-      (brandId && brandId !== existingVariant.brandId);
-
-    // Use transaction to ensure consistency
-    const result = await this.prisma.$transaction(async (tx) => {
-      // Update the variant first
-      const updatedVariant = await tx.variant.update({
-        where: { id },
-        data: {
-          ...(name && { name }),
-          ...(description !== undefined && { description }),
-          ...(brandId && { brandId }),
-          updatedBy: userId,
-        },
-        include: {
-          brand: {
-            select: {
-              id: true,
-              name: true,
-            },
-          },
-          packSizes: {
-            where: { status: 'ACTIVE' },
-            select: {
-              id: true,
-              name: true,
-              status: true,
-              createdAt: true,
-            },
-            orderBy: { name: 'asc' },
-          },
-          packTypes: {
-            where: { status: 'ACTIVE' },
-            select: {
-              id: true,
-              name: true,
-              status: true,
-              createdAt: true,
-            },
-            orderBy: { name: 'asc' },
-          },
-          _count: {
-            select: {
-              products: true,
-            },
-          },
-        },
-      });
-
-      // Handle pack size updates if provided
-      if (packSizes !== undefined) {
-        // Get current pack sizes
-        const currentPackSizes = existingVariant.packSizes;
-
-        // Process pack sizes updates
-        const packSizesToUpdate = packSizes.filter((ps) => ps.id);
-        const packSizesToCreate = packSizes.filter((ps) => !ps.id);
-        const packSizeIdsToKeep = new Set(
-          packSizes.map((ps) => ps.id).filter(Boolean),
-        );
-        const packSizesToArchive = currentPackSizes.filter(
-          (ps) => !packSizeIdsToKeep.has(ps.id),
-        );
-
-        // Archive pack sizes that are not in the update list
-        for (const packSize of packSizesToArchive) {
-          // Check if pack size has linked products
-          const linkedProducts = await tx.product.count({
-            where: { packSizeId: packSize.id, status: 'LIVE' },
-          });
-
-          if (linkedProducts > 0) {
-            throw new BadRequestException(
-              `Cannot remove pack size "${packSize.name}" because it has linked live products`,
-            );
-          }
-
-          await tx.packSize.update({
-            where: { id: packSize.id },
-            data: { status: 'ARCHIVED', updatedBy: userId },
-          });
-        }
-
-        // Update existing pack sizes
-        for (const packSize of packSizesToUpdate) {
-          await tx.packSize.update({
-            where: { id: packSize.id! },
-            data: { name: packSize.name, updatedBy: userId },
-          });
-        }
-
-        // Create new pack sizes
-        for (const packSize of packSizesToCreate) {
-          await tx.packSize.create({
-            data: {
-              name: packSize.name,
-              variantId: id,
-              createdBy: userId,
-              updatedBy: userId,
-            },
-          });
-        }
-      }
-
-      // Handle pack type updates if provided
-      if (packTypes !== undefined) {
-        // Get current pack types
-        const currentPackTypes = existingVariant.packTypes;
-
-        // Process pack types updates
-        const packTypesToUpdate = packTypes.filter((pt) => pt.id);
-        const packTypesToCreate = packTypes.filter((pt) => !pt.id);
-        const packTypeIdsToKeep = new Set(
-          packTypes.map((pt) => pt.id).filter(Boolean),
-        );
-        const packTypesToArchive = currentPackTypes.filter(
-          (pt) => !packTypeIdsToKeep.has(pt.id),
-        );
-
-        // Archive pack types that are not in the update list
-        for (const packType of packTypesToArchive) {
-          // Check if pack type has linked products
-          const linkedProducts = await tx.product.count({
-            where: { packTypeId: packType.id, status: 'LIVE' },
-          });
-
-          if (linkedProducts > 0) {
-            throw new BadRequestException(
-              `Cannot remove pack type "${packType.name}" because it has linked live products`,
-            );
-          }
-
-          await tx.packType.update({
-            where: { id: packType.id },
-            data: { status: 'ARCHIVED', updatedBy: userId },
-          });
-        }
-
-        // Update existing pack types
-        for (const packType of packTypesToUpdate) {
-          await tx.packType.update({
-            where: { id: packType.id! },
-            data: { name: packType.name, updatedBy: userId },
-          });
-        }
-
-        // Create new pack types
-        for (const packType of packTypesToCreate) {
-          await tx.packType.create({
-            data: {
-              name: packType.name,
-              variantId: id,
-              createdBy: userId,
-              updatedBy: userId,
-            },
-          });
-        }
-      }
-
-      // If changes affect product names/SKUs, update all linked products
-      if (willAffectProducts) {
-        // Get all products linked to this variant
-        const linkedProducts = await tx.product.findMany({
+      // Handle name update with duplicate check
+      if (name && name !== existingVariant.name) {
+        const duplicateVariant = await tx.variant.findFirst({
           where: {
-            variantId: id,
+            name: { equals: name, mode: 'insensitive' },
+            brandId: brandId || existingVariant.brandId,
             deletedAt: null,
-          },
-          select: {
-            id: true,
-            packSizeId: true,
-            packTypeId: true,
-            packSize: { select: { name: true } },
-            packType: { select: { name: true } },
-            brand: { select: { name: true } },
-            brandId: true,
-            manufacturerId: true,
+            id: { not: id },
           },
         });
 
-        // Check for products that would have identical specifications after update
-        const effectiveBrandName = newBrand
-          ? newBrand.name
-          : existingVariant.brand.name;
-        const effectiveVariantName = name || existingVariant.name;
-
-        const specMap = new Map<string, string[]>();
-        for (const product of linkedProducts) {
-          const specKey =
-            `${effectiveBrandName}-${effectiveVariantName}-${product.packSize.name}-${product.packType.name}`.toLowerCase();
-          if (!specMap.has(specKey)) {
-            specMap.set(specKey, []);
-          }
-          specMap.get(specKey)!.push(product.id);
-        }
-
-        // Find duplicates
-        const duplicateSpecs = Array.from(specMap.entries()).filter(
-          ([_, productIds]) => productIds.length > 1,
-        );
-
-        if (duplicateSpecs.length > 0) {
-          const duplicateInfo = duplicateSpecs
-            .map(
-              ([spec, productIds]) =>
-                `${productIds.length} products with specs: ${spec} (IDs: ${productIds.join(', ')})`,
-            )
-            .join('\n');
-
+        if (duplicateVariant) {
           throw new ConflictException(
-            `Cannot update variant because it would create products with identical specifications:\n${duplicateInfo}\n\nPlease ensure all products have unique combinations of brand, variant, pack size, and packaging type.`,
+            `Variant with name "${name}" already exists for this brand`,
           );
         }
+        updateData.name = name;
+      }
 
-        // Update each product's name and SKU
-        for (const product of linkedProducts) {
-          // Determine the effective brand (use new brand if brandId is being updated)
-          const effectiveBrandName = newBrand
-            ? newBrand.name
-            : product.brand.name;
-          const effectiveVariantName = name || existingVariant.name;
+      if (description !== undefined) {
+        updateData.description = description;
+      }
 
-          // Generate new name and SKU
-          const newName = `${effectiveBrandName} ${effectiveVariantName} ${product.packSize.name} (${product.packType.name})`;
-          const newSku = `${effectiveBrandName.toUpperCase().replace(/[^A-Z0-9]/g, '-')}-${effectiveVariantName.toUpperCase().replace(/[^A-Z0-9]/g, '-')}-${product.packSize.name.toUpperCase().replace(/[^A-Z0-9]/g, '-')}-${product.packType.name.toUpperCase().replace(/[^A-Z0-9]/g, '-')}`;
+      // Handle brand update with validation
+      if (brandId && brandId !== existingVariant.brandId) {
+        const newBrand = await tx.brand.findUnique({
+          where: { id: brandId, deletedAt: null },
+          select: { id: true, name: true },
+        });
 
-          // Update the product
-          await tx.product.update({
-            where: { id: product.id },
-            data: {
-              name: newName,
-              sku: newSku,
-              ...(brandId && { brandId }), // Update brandId if variant's brand changed
-              updatedBy: userId,
+        if (!newBrand) {
+          throw new BadRequestException('Brand not found');
+        }
+        updateData.brandId = brandId;
+      }
+
+      // Update the variant first
+      const updatedVariant = await tx.variant.update({
+        where: { id },
+        data: updateData,
+      });
+
+      const operationsSummary = {
+        packSizes: { created: 0, updated: 0, deleted: 0 },
+        packTypes: { created: 0, updated: 0, deleted: 0 },
+        productsAffected: 0,
+        errors: [] as string[],
+      };
+
+      // 1. Handle Pack Size Operations
+      // Delete operations first (check for product dependencies)
+      if (deletePackSizeIds.length > 0) {
+        for (const packSizeId of deletePackSizeIds) {
+          // Verify pack size belongs to this variant
+          const packSize = await tx.packSize.findFirst({
+            where: {
+              id: packSizeId,
+              variantId: id,
+              status: 'ACTIVE',
+            },
+            include: {
+              _count: {
+                select: { products: { where: { deletedAt: null } } },
+              },
             },
           });
+
+          if (!packSize) {
+            operationsSummary.errors.push(
+              `Pack size ${packSizeId} not found or doesn't belong to this variant`,
+            );
+            continue;
+          }
+
+          const productCount = packSize._count.products;
+
+          if (productCount > 0 && !forceDeleteConfigs) {
+            operationsSummary.errors.push(
+              `Cannot delete pack size "${packSize.name}" - it has ${productCount} products. Use forceDeleteConfigs=true to cascade delete.`,
+            );
+            continue;
+          }
+
+          if (productCount > 0 && forceDeleteConfigs) {
+            // Cascade delete: soft delete all products using this pack size
+            await tx.product.updateMany({
+              where: {
+                packSizeId: packSizeId,
+                deletedAt: null,
+              },
+              data: {
+                deletedAt: new Date(),
+                deletedBy: userId,
+              },
+            });
+            operationsSummary.productsAffected += productCount;
+          }
+
+          // Soft delete the pack size
+          await tx.packSize.update({
+            where: { id: packSizeId },
+            data: {
+              status: 'ARCHIVED',
+              deletedAt: new Date(),
+              deletedBy: userId,
+            },
+          });
+
+          operationsSummary.packSizes.deleted++;
         }
       }
 
-      // Fetch the complete updated variant with all pack entities
-      const completeVariant = await tx.variant.findUnique({
-        where: { id },
-        include: {
-          brand: {
-            select: {
-              id: true,
-              name: true,
-            },
-          },
-          packSizes: {
-            where: { status: 'ACTIVE' },
-            select: {
-              id: true,
-              name: true,
-              status: true,
-              createdAt: true,
-            },
-            orderBy: { name: 'asc' },
-          },
-          packTypes: {
-            where: { status: 'ACTIVE' },
-            select: {
-              id: true,
-              name: true,
-              status: true,
-              createdAt: true,
-            },
-            orderBy: { name: 'asc' },
-          },
-          _count: {
-            select: {
-              products: true,
-            },
-          },
-        },
-      });
+      // Update pack sizes
+      if (updatePackSizes.length > 0) {
+        for (const updateOp of updatePackSizes) {
+          const { id: packSizeId, name: newName } = updateOp;
 
-      return completeVariant;
+          // Verify pack size belongs to this variant
+          const existingPackSize = await tx.packSize.findFirst({
+            where: {
+              id: packSizeId,
+              variantId: id,
+              status: 'ACTIVE',
+            },
+          });
+
+          if (!existingPackSize) {
+            operationsSummary.errors.push(
+              `Pack size ${packSizeId} not found or doesn't belong to this variant`,
+            );
+            continue;
+          }
+
+          // Check for name conflicts within the variant
+          if (newName !== existingPackSize.name) {
+            const conflictPackSize = await tx.packSize.findFirst({
+              where: {
+                variantId: id,
+                name: { equals: newName, mode: 'insensitive' },
+                status: 'ACTIVE',
+                NOT: { id: packSizeId },
+              },
+            });
+
+            if (conflictPackSize) {
+              operationsSummary.errors.push(
+                `Pack size name "${newName}" already exists in this variant`,
+              );
+              continue;
+            }
+          }
+
+          await tx.packSize.update({
+            where: { id: packSizeId },
+            data: {
+              name: newName,
+              updatedBy: userId,
+            },
+          });
+
+          operationsSummary.packSizes.updated++;
+        }
+      }
+
+      // Create new pack sizes
+      if (createPackSizes.length > 0) {
+        // Validate new pack size names for duplicates
+        const newPackSizeNames = createPackSizes.map((ps) =>
+          ps.name.trim().toLowerCase(),
+        );
+        const duplicateNames = newPackSizeNames.filter(
+          (name, index) => newPackSizeNames.indexOf(name) !== index,
+        );
+
+        if (duplicateNames.length > 0) {
+          throw new BadRequestException(
+            `Duplicate pack size names in request: ${duplicateNames.join(', ')}`,
+          );
+        }
+
+        // Check for conflicts with existing pack sizes
+        const existingPackSizes = await tx.packSize.findMany({
+          where: {
+            variantId: id,
+            name: {
+              in: newPackSizeNames,
+              mode: 'insensitive',
+            },
+            status: 'ACTIVE',
+          },
+          select: { name: true },
+        });
+
+        if (existingPackSizes.length > 0) {
+          throw new ConflictException(
+            `Pack size names already exist: ${existingPackSizes.map((ps) => ps.name).join(', ')}`,
+          );
+        }
+
+        // Create new pack sizes
+        for (const packSize of createPackSizes) {
+          await tx.packSize.create({
+            data: {
+              name: packSize.name.trim(),
+              variantId: id,
+              createdBy: userId,
+              updatedBy: userId,
+            },
+          });
+          operationsSummary.packSizes.created++;
+        }
+      }
+
+      // 2. Handle Pack Type Operations (similar pattern)
+      // Delete operations first
+      if (deletePackTypeIds.length > 0) {
+        for (const packTypeId of deletePackTypeIds) {
+          const packType = await tx.packType.findFirst({
+            where: {
+              id: packTypeId,
+              variantId: id,
+              status: 'ACTIVE',
+            },
+            include: {
+              _count: {
+                select: { products: { where: { deletedAt: null } } },
+              },
+            },
+          });
+
+          if (!packType) {
+            operationsSummary.errors.push(
+              `Pack type ${packTypeId} not found or doesn't belong to this variant`,
+            );
+            continue;
+          }
+
+          const productCount = packType._count.products;
+
+          if (productCount > 0 && !forceDeleteConfigs) {
+            operationsSummary.errors.push(
+              `Cannot delete pack type "${packType.name}" - it has ${productCount} products. Use forceDeleteConfigs=true to cascade delete.`,
+            );
+            continue;
+          }
+
+          if (productCount > 0 && forceDeleteConfigs) {
+            // Cascade delete: soft delete all products using this pack type
+            await tx.product.updateMany({
+              where: {
+                packTypeId: packTypeId,
+                deletedAt: null,
+              },
+              data: {
+                deletedAt: new Date(),
+                deletedBy: userId,
+              },
+            });
+            operationsSummary.productsAffected += productCount;
+          }
+
+          await tx.packType.update({
+            where: { id: packTypeId },
+            data: {
+              status: 'ARCHIVED',
+              deletedAt: new Date(),
+              deletedBy: userId,
+            },
+          });
+
+          operationsSummary.packTypes.deleted++;
+        }
+      }
+
+      // Update pack types
+      if (updatePackTypes.length > 0) {
+        for (const updateOp of updatePackTypes) {
+          const { id: packTypeId, name: newName } = updateOp;
+
+          const existingPackType = await tx.packType.findFirst({
+            where: {
+              id: packTypeId,
+              variantId: id,
+              status: 'ACTIVE',
+            },
+          });
+
+          if (!existingPackType) {
+            operationsSummary.errors.push(
+              `Pack type ${packTypeId} not found or doesn't belong to this variant`,
+            );
+            continue;
+          }
+
+          if (newName !== existingPackType.name) {
+            const conflictPackType = await tx.packType.findFirst({
+              where: {
+                variantId: id,
+                name: { equals: newName, mode: 'insensitive' },
+                status: 'ACTIVE',
+                NOT: { id: packTypeId },
+              },
+            });
+
+            if (conflictPackType) {
+              operationsSummary.errors.push(
+                `Pack type name "${newName}" already exists in this variant`,
+              );
+              continue;
+            }
+          }
+
+          await tx.packType.update({
+            where: { id: packTypeId },
+            data: {
+              name: newName,
+              updatedBy: userId,
+            },
+          });
+
+          operationsSummary.packTypes.updated++;
+        }
+      }
+
+      // Create new pack types
+      if (createPackTypes.length > 0) {
+        const newPackTypeNames = createPackTypes.map((pt) =>
+          pt.name.trim().toLowerCase(),
+        );
+        const duplicateNames = newPackTypeNames.filter(
+          (name, index) => newPackTypeNames.indexOf(name) !== index,
+        );
+
+        if (duplicateNames.length > 0) {
+          throw new BadRequestException(
+            `Duplicate pack type names in request: ${duplicateNames.join(', ')}`,
+          );
+        }
+
+        const existingPackTypes = await tx.packType.findMany({
+          where: {
+            variantId: id,
+            name: {
+              in: newPackTypeNames,
+              mode: 'insensitive',
+            },
+            status: 'ACTIVE',
+          },
+          select: { name: true },
+        });
+
+        if (existingPackTypes.length > 0) {
+          throw new ConflictException(
+            `Pack type names already exist: ${existingPackTypes.map((pt) => pt.name).join(', ')}`,
+          );
+        }
+
+        for (const packType of createPackTypes) {
+          await tx.packType.create({
+            data: {
+              name: packType.name.trim(),
+              variantId: id,
+              createdBy: userId,
+              updatedBy: userId,
+            },
+          });
+          operationsSummary.packTypes.created++;
+        }
+      }
+
+      // If there were any errors, include them in the response or throw
+      if (operationsSummary.errors.length > 0) {
+        throw new BadRequestException({
+          message: 'Some pack configuration operations failed',
+          errors: operationsSummary.errors,
+          summary: operationsSummary,
+        });
+      }
+
+      // Return updated variant with fresh data
+      return await this.findOne(id);
     });
-
-    // Invalidate variant and product caches (since products may have been updated)
-    await this.cacheInvalidationService.invalidateVariant(id);
-    if (willAffectProducts) {
-      await this.cacheInvalidationService.invalidateProducts();
-    }
-
-    return result as VariantResponseDto;
   }
 
   @AuditLog({
@@ -782,86 +675,51 @@ export class VariantService {
 
     // Check if variant has associated active products
     if (existingVariant._count.products > 0) {
-      throw new BadRequestException(
+      throw new ConflictException(
         `Cannot delete variant with ${existingVariant._count.products} active product(s). Please remove or archive all products first.`,
       );
     }
 
-    // Soft delete the variant and cascade to pack entities if no live products reference them
     const result = await this.prisma.$transaction(async (tx) => {
-      // Check for pack sizes that have live products
-      const packSizesWithProducts = await tx.packSize.findMany({
-        where: {
-          variantId: id,
-          products: {
-            some: { deletedAt: null },
-          },
-        },
-        select: { id: true, name: true },
-      });
-
-      // Check for pack types that have live products
-      const packTypesWithProducts = await tx.packType.findMany({
-        where: {
-          variantId: id,
-          products: {
-            some: { deletedAt: null },
-          },
-        },
-        select: { id: true, name: true },
-      });
-
-      if (packSizesWithProducts.length > 0) {
-        const packNames = packSizesWithProducts.map((p) => p.name).join(', ');
-        throw new BadRequestException(
-          `Cannot delete variant because pack sizes (${packNames}) have live products referencing them.`,
-        );
-      }
-
-      if (packTypesWithProducts.length > 0) {
-        const packNames = packTypesWithProducts.map((p) => p.name).join(', ');
-        throw new BadRequestException(
-          `Cannot delete variant because pack types (${packNames}) have live products referencing them.`,
-        );
-      }
-
-      // Safe to cascade delete - soft delete pack entities first
+      // Archive pack sizes
       await tx.packSize.updateMany({
-        where: { variantId: id },
+        where: {
+          variantId: id,
+          status: 'ACTIVE',
+        },
         data: {
           status: 'ARCHIVED',
           deletedAt: new Date(),
           deletedBy: userId,
-          updatedBy: userId,
         },
       });
 
+      // Archive pack types
       await tx.packType.updateMany({
-        where: { variantId: id },
+        where: {
+          variantId: id,
+          status: 'ACTIVE',
+        },
         data: {
           status: 'ARCHIVED',
           deletedAt: new Date(),
           deletedBy: userId,
-          updatedBy: userId,
         },
       });
 
-      // Finally, soft delete the variant
-      return await tx.variant.update({
+      // Soft delete the variant
+      await tx.variant.update({
         where: { id },
         data: {
-          deletedBy: userId,
           deletedAt: new Date(),
+          deletedBy: userId,
         },
       });
     });
 
-    // Invalidate variant-related caches
     await this.cacheInvalidationService.invalidateVariant(id);
 
-    return {
-      message: 'Variant and its pack configurations deleted successfully',
-    };
+    return { message: 'Variant deleted successfully' };
   }
 
   async activate(id: string, userId: string): Promise<VariantResponseDto> {
@@ -879,12 +737,12 @@ export class VariantService {
 
     // Check if brand is still active
     if (deletedVariant.brand.deletedAt) {
-      throw new BadRequestException(
-        'Cannot reactivate variant because its brand is deleted. Reactivate the brand first.',
+      throw new ConflictException(
+        'Cannot activate variant because its brand is deleted',
       );
     }
 
-    // Check for name conflicts with active variants in the same brand
+    // Check for name conflict with active variants
     const conflictVariant = await this.prisma.variant.findFirst({
       where: {
         name: { equals: deletedVariant.name, mode: 'insensitive' },
@@ -900,29 +758,23 @@ export class VariantService {
       );
     }
 
-    // Reactivate the variant and its pack configurations in a transaction
+    // Reactivate the variant and its pack configurations
     const variant = await this.prisma.$transaction(async (tx) => {
-      // Reactivate the variant
-      const reactivatedVariant = await tx.variant.update({
+      // Reactivate variant
+      await tx.variant.update({
         where: { id },
         data: {
           deletedAt: null,
           deletedBy: null,
           updatedBy: userId,
         },
-        include: {
-          brand: true,
-          _count: {
-            select: { products: { where: { deletedAt: null } } },
-          },
-        },
       });
 
-      // Reactivate associated pack entities that were deleted with this variant
+      // Reactivate pack sizes
       await tx.packSize.updateMany({
         where: {
           variantId: id,
-          deletedAt: { not: null },
+          status: 'ARCHIVED',
         },
         data: {
           status: 'ACTIVE',
@@ -932,10 +784,11 @@ export class VariantService {
         },
       });
 
+      // Reactivate pack types
       await tx.packType.updateMany({
         where: {
           variantId: id,
-          deletedAt: { not: null },
+          status: 'ARCHIVED',
         },
         data: {
           status: 'ACTIVE',
@@ -944,58 +797,32 @@ export class VariantService {
           updatedBy: userId,
         },
       });
-
-      return reactivatedVariant;
     });
 
-    // Get the reactivated pack entities for response
     const reactivatedVariantWithPacks = await this.prisma.variant.findUnique({
       where: { id },
       include: {
-        brand: true,
+        brand: {
+          select: { id: true, name: true },
+        },
         packSizes: {
-          where: { deletedAt: null },
+          where: { status: 'ACTIVE' },
+          select: { id: true, name: true, status: true, createdAt: true },
         },
         packTypes: {
-          where: { deletedAt: null },
-        },
-        _count: {
-          select: { products: { where: { deletedAt: null } } },
+          where: { status: 'ACTIVE' },
+          select: { id: true, name: true, status: true, createdAt: true },
         },
       },
     });
 
-    // Invalidate variant-related caches
     await this.cacheInvalidationService.invalidateVariant(id);
 
     return {
-      id: reactivatedVariantWithPacks!.id,
-      name: reactivatedVariantWithPacks!.name,
+      ...reactivatedVariantWithPacks!,
       description: reactivatedVariantWithPacks!.description || undefined,
-      brandId: reactivatedVariantWithPacks!.brandId,
-      createdBy: reactivatedVariantWithPacks!.createdBy,
-      updatedBy: reactivatedVariantWithPacks!.updatedBy,
-      createdAt: reactivatedVariantWithPacks!.createdAt,
-      updatedAt: reactivatedVariantWithPacks!.updatedAt,
-      brand: {
-        id: reactivatedVariantWithPacks!.brand.id,
-        name: reactivatedVariantWithPacks!.brand.name,
-      },
-      _count: { products: reactivatedVariantWithPacks!._count.products },
-      packSizes: reactivatedVariantWithPacks!.packSizes.map((packSize) => ({
-        id: packSize.id,
-        name: packSize.name,
-        status: packSize.status,
-        createdAt: packSize.createdAt,
-        updatedAt: packSize.updatedAt,
-      })),
-      packTypes: reactivatedVariantWithPacks!.packTypes.map((packType) => ({
-        id: packType.id,
-        name: packType.name,
-        status: packType.status,
-        createdAt: packType.createdAt,
-        updatedAt: packType.updatedAt,
-      })),
+      deletedBy: reactivatedVariantWithPacks!.deletedBy || undefined,
+      deletedAt: reactivatedVariantWithPacks!.deletedAt || undefined,
     };
   }
 
@@ -1005,7 +832,7 @@ export class VariantService {
       where: { deletedAt: null },
     });
 
-    // Get variants by brand
+    // Get variants count by brand
     const variantsByBrandData = await this.prisma.variant.groupBy({
       by: ['brandId'],
       where: { deletedAt: null },
@@ -1015,7 +842,7 @@ export class VariantService {
     // Transform to brand name: count format
     const variantsByBrand: Record<string, number> = {};
     for (const item of variantsByBrandData) {
-      // Note: We'll need to fetch brand names separately since groupBy doesn't support include
+      // Get brand name
       const brand = await this.prisma.brand.findUnique({
         where: { id: item.brandId },
         select: { name: true },
@@ -1025,27 +852,24 @@ export class VariantService {
       }
     }
 
-    // Get most popular variants by product count
+    // Get popular variants (top 5 by product count)
     const popularVariantsData = await this.prisma.variant.findMany({
       where: { deletedAt: null },
-      select: {
-        name: true,
+      include: {
         _count: {
-          select: {
-            products: true,
-          },
+          select: { products: { where: { deletedAt: null } } },
         },
+        brand: { select: { name: true } },
       },
       orderBy: {
-        products: {
-          _count: 'desc',
-        },
+        products: { _count: 'desc' },
       },
-      take: 10,
+      take: 5,
     });
 
     const popularVariants = popularVariantsData.map((variant) => ({
       name: variant.name,
+      brandName: variant.brand.name,
       productCount: variant._count.products,
     }));
 

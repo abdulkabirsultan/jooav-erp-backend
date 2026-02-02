@@ -132,7 +132,7 @@ export class VariantController {
       includeAuditInfo,
     };
 
-    const variant = await this.variantService.findOne(id, includesDto);
+    const variant = await this.variantService.findOne(id);
     return new SuccessResponse(
       ResponseMessages.retrieved('Variant', variant.name),
       variant,

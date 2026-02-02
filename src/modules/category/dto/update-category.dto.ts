@@ -43,12 +43,13 @@ export class UpdateSubcategoryInput {
   id: string;
 
   @ApiPropertyOptional({
-    description: 'Updated subcategory data',
-    type: CreateSubcategoryInput,
+    description: 'Updated subcategory name',
+    example: 'Premium Soft Drinks',
+    maxLength: 100,
   })
-  @ValidateNested()
-  @Type(() => CreateSubcategoryInput)
-  data: Partial<CreateSubcategoryInput>;
+  @IsString()
+  @MaxLength(100)
+  name: string;
 }
 
 export class UpdateCategoryDto {
@@ -94,7 +95,7 @@ export class UpdateCategoryDto {
     example: [
       {
         id: 'sc1234567890abcdef12345678',
-        data: { name: 'Premium Soft Drinks' },
+        name: 'Premium Soft Drinks',
       },
     ],
   })

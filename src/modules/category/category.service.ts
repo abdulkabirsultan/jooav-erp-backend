@@ -480,7 +480,7 @@ export class CategoryService {
       // 2. Handle subcategory updates
       if (updateSubcategories.length > 0) {
         for (const updateOp of updateSubcategories) {
-          const { id: subcategoryId, data: subcategoryData } = updateOp;
+          const { id: subcategoryId, name: newName } = updateOp;
 
           // Verify subcategory belongs to this category
           const existingSubcategory = await tx.subcategory.findFirst({
@@ -503,14 +503,9 @@ export class CategoryService {
           };
 
           // Handle name update with uniqueness check
-          if (
-            subcategoryData.name &&
-            subcategoryData.name !== existingSubcategory.name
-          ) {
-            const sanitizedName = StringUtils.titleCase(
-              subcategoryData.name.trim(),
-            );
-            const slug = StringUtils.slugify(subcategoryData.name);
+          if (newName && newName !== existingSubcategory.name) {
+            const sanitizedName = StringUtils.titleCase(newName.trim());
+            const slug = StringUtils.slugify(newName);
 
             // Check for name conflicts within the same category
             const conflictSubcategory = await tx.subcategory.findFirst({
@@ -534,11 +529,6 @@ export class CategoryService {
 
             subcategoryUpdateData.name = sanitizedName;
             subcategoryUpdateData.slug = slug;
-          }
-
-          if (subcategoryData.description !== undefined) {
-            subcategoryUpdateData.description =
-              subcategoryData.description?.trim() || null;
           }
 
           await tx.subcategory.update({

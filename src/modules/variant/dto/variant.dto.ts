@@ -126,6 +126,38 @@ export class CreateVariantDto {
   packTypes?: CreateVariantPackTypeDto[];
 }
 
+export class CreatePackConfigInput {
+  @ApiProperty({
+    description: 'Pack configuration name',
+    example: '100g',
+    maxLength: 50,
+  })
+  @IsNotEmpty()
+  @IsString()
+  @MaxLength(50)
+  name: string;
+}
+
+export class UpdatePackConfigInput {
+  @ApiProperty({
+    description: 'Pack configuration ID to update',
+    example: 'pack_12345',
+  })
+  @IsString()
+  @IsNotEmpty()
+  id: string;
+
+  @ApiProperty({
+    description: 'Updated pack configuration name',
+    example: '125g',
+    maxLength: 50,
+  })
+  @IsNotEmpty()
+  @IsString()
+  @MaxLength(50)
+  name: string;
+}
+
 export class UpdateVariantDto {
   @ApiPropertyOptional({
     description: 'Variant name',
@@ -159,22 +191,74 @@ export class UpdateVariantDto {
   brandId?: string;
 
   @ApiPropertyOptional({
-    description: 'Pack sizes for this variant (replaces all existing)',
-    type: [UpdateVariantPackSizeDto],
+    description: 'New pack sizes to create',
+    type: [CreatePackConfigInput],
+    example: [{ name: '150g' }, { name: '300g' }],
   })
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
-  @Type(() => UpdateVariantPackSizeDto)
-  packSizes?: UpdateVariantPackSizeDto[];
+  @Type(() => CreatePackConfigInput)
+  createPackSizes?: CreatePackConfigInput[];
 
   @ApiPropertyOptional({
-    description: 'Pack types for this variant (replaces all existing)',
-    type: [UpdateVariantPackTypeDto],
+    description: 'Pack sizes to update',
+    type: [UpdatePackConfigInput],
+    example: [{ id: 'pack123', name: '125g' }],
   })
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
-  @Type(() => UpdateVariantPackTypeDto)
-  packTypes?: UpdateVariantPackTypeDto[];
+  @Type(() => UpdatePackConfigInput)
+  updatePackSizes?: UpdatePackConfigInput[];
+
+  @ApiPropertyOptional({
+    description: 'Pack size IDs to delete',
+    type: [String],
+    example: ['pack456', 'pack789'],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  deletePackSizeIds?: string[];
+
+  @ApiPropertyOptional({
+    description: 'New pack types to create',
+    type: [CreatePackConfigInput],
+    example: [{ name: 'Family Pack' }, { name: 'Travel Size' }],
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreatePackConfigInput)
+  createPackTypes?: CreatePackConfigInput[];
+
+  @ApiPropertyOptional({
+    description: 'Pack types to update',
+    type: [UpdatePackConfigInput],
+    example: [{ id: 'type123', name: 'Large Family Pack' }],
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => UpdatePackConfigInput)
+  updatePackTypes?: UpdatePackConfigInput[];
+
+  @ApiPropertyOptional({
+    description: 'Pack type IDs to delete',
+    type: [String],
+    example: ['type456', 'type789'],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  deletePackTypeIds?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Force delete pack configurations even if products use them',
+    example: false,
+    default: false,
+  })
+  @IsOptional()
+  forceDeleteConfigs?: boolean;
 }
