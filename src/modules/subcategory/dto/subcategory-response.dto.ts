@@ -1,6 +1,39 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { SubcategoryStatus } from '@prisma/client';
 
+export class SubcategoryItemDto {
+  @ApiProperty({
+    description: 'Subcategory ID',
+    example: '123e4567-e89b-12d3-a456-426614174000',
+  })
+  id: string;
+
+  @ApiProperty({
+    description: 'Subcategory name',
+    example: 'Energy Drinks',
+  })
+  name: string;
+
+  @ApiProperty({
+    description: 'Subcategory slug',
+    example: 'energy-drinks',
+  })
+  slug: string;
+
+  @ApiProperty({
+    description: 'Subcategory description',
+    example: 'High-energy beverages and sports drinks',
+    required: false,
+  })
+  description?: string | null;
+
+  @ApiProperty({
+    description: 'Number of products in this subcategory',
+    example: 12,
+  })
+  productCount: number;
+}
+
 export class SubcategoryCategoryDto {
   @ApiProperty({
     description: 'Category ID',
@@ -26,6 +59,13 @@ export class SubcategoryCategoryDto {
     required: false,
   })
   description?: string | null;
+
+  @ApiProperty({
+    description: 'All subcategories in this category',
+    type: [SubcategoryItemDto],
+    required: false,
+  })
+  subcategories?: SubcategoryItemDto[];
 }
 
 export class SubcategoryResponseDto {

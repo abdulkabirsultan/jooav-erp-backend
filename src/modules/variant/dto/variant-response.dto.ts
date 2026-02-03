@@ -206,20 +206,14 @@ export class VariantStatsDto {
   totalVariants: number;
 
   @ApiProperty({
-    description: 'Variants by brand',
-    example: { Indomie: 10, Peak: 8, 'Coca-Cola': 5 },
+    description: 'Total number of brands',
+    example: 25,
   })
-  variantsByBrand: Record<string, number>;
+  totalBrands: number;
 
   @ApiProperty({
-    description: 'Most popular variants (by product count)',
-    example: [
-      { name: 'Chicken', productCount: 15 },
-      { name: 'Beef', productCount: 12 },
-    ],
+    description: 'Number of inactive variants',
+    example: 12,
   })
-  popularVariants: Array<{
-    name: string;
-    productCount: number;
-  }>;
+  inactiveVariants: number;
 }

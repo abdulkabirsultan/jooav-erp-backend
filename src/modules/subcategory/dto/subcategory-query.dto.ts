@@ -22,7 +22,7 @@ export class SubcategoryQueryDto extends PaginationDto {
 
   @ApiPropertyOptional({
     description: 'Filter by category ID',
-    example: 'cmkydhbma000mjztoswupjw3y',
+    example: '',
   })
   @IsOptional()
   @Matches(/^c[a-z0-9]{24}$/, {

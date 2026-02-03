@@ -7,17 +7,12 @@ import {
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import {
-  SortByOptions,
-  SortOrderOptions,
-} from '../../../shared/constants/app.constants';
 
 export class VariantQueryDto {
   @ApiPropertyOptional({
     description: 'Page number (default: 1)',
     example: 1,
     minimum: 1,
-    required: false,
   })
   @IsOptional()
   @IsString()
@@ -28,7 +23,6 @@ export class VariantQueryDto {
     example: 10,
     minimum: 1,
     maximum: 100,
-    required: false,
   })
   @IsOptional()
   @IsString()
@@ -36,8 +30,7 @@ export class VariantQueryDto {
 
   @ApiPropertyOptional({
     description: 'Search term for variant name or description',
-    example: '',
-    required: false,
+    example: 'chicken',
   })
   @IsOptional()
   @IsString()
@@ -47,7 +40,6 @@ export class VariantQueryDto {
   @ApiPropertyOptional({
     description: 'Filter by brand ID',
     example: '',
-    required: false,
   })
   @IsOptional()
   @IsString()
@@ -57,20 +49,18 @@ export class VariantQueryDto {
     description: 'Sort field',
     example: 'name',
     enum: ['name', 'createdAt', 'updatedAt'],
-    required: false,
   })
   @IsOptional()
-  @IsEnum(SortByOptions)
+  @IsEnum(['name', 'createdAt', 'updatedAt'])
   sortBy?: 'name' | 'createdAt' | 'updatedAt';
 
   @ApiPropertyOptional({
     description: 'Sort order',
     example: 'asc',
     enum: ['asc', 'desc'],
-    required: false,
   })
   @IsOptional()
-  @IsEnum(SortOrderOptions)
+  @IsString()
   sortOrder?: 'asc' | 'desc';
 
   @ApiPropertyOptional({
@@ -90,7 +80,6 @@ export class VariantQueryDto {
   @ApiPropertyOptional({
     description: 'Include products count in response',
     example: true,
-    required: false,
     type: Boolean,
   })
   @IsOptional()
@@ -106,7 +95,6 @@ export class VariantQueryDto {
     description: 'Include audit information (createdBy, updatedBy, etc.)',
     example: false,
     type: Boolean,
-    required: false,
   })
   @IsOptional()
   @Transform(({ value }) => {

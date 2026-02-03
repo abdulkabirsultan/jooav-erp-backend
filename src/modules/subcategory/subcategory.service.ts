@@ -104,6 +104,24 @@ export class SubcategoryService {
       },
     });
 
+    // Fetch all subcategories in the same category (including the newly created one)
+    const allSubcategoriesInCategory = await this.prisma.subcategory.findMany({
+      where: {
+        categoryId,
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        description: true,
+        _count: {
+          select: { products: { where: { deletedAt: null } } },
+        },
+      },
+      orderBy: { name: 'asc' },
+    });
+
     // Invalidate subcategory cache
     await this.cacheInvalidationService.invalidateSubcategory(subcategory.id);
 
@@ -119,6 +137,13 @@ export class SubcategoryService {
         name: subcategory.category.name,
         slug: subcategory.category.slug,
         description: subcategory.category.description,
+        subcategories: allSubcategoriesInCategory.map((sub) => ({
+          id: sub.id,
+          name: sub.name,
+          slug: sub.slug,
+          description: sub.description,
+          productCount: sub._count.products,
+        })),
       },
       productCount: subcategory._count.products,
       createdAt: subcategory.createdAt,
@@ -202,6 +227,50 @@ export class SubcategoryService {
         subcategory.category.deletedAt === null,
     );
 
+    // Get unique category IDs from the results
+    const categoryIds = [
+      ...new Set(validSubcategories.map((sub) => sub.categoryId)),
+    ];
+
+    // Fetch all subcategories for these categories in one query
+    const allSubcategoriesByCategory = includeCategory
+      ? await this.prisma.subcategory.findMany({
+          where: {
+            categoryId: { in: categoryIds },
+            deletedAt: null,
+          },
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            description: true,
+            categoryId: true,
+            _count: {
+              select: { products: { where: { deletedAt: null } } },
+            },
+          },
+          orderBy: { name: 'asc' },
+        })
+      : [];
+
+    // Group subcategories by category ID
+    const subcategoriesByCategory = allSubcategoriesByCategory.reduce(
+      (acc, sub) => {
+        if (!acc[sub.categoryId]) {
+          acc[sub.categoryId] = [];
+        }
+        acc[sub.categoryId].push({
+          id: sub.id,
+          name: sub.name,
+          slug: sub.slug,
+          description: sub.description,
+          productCount: sub._count.products,
+        });
+        return acc;
+      },
+      {} as Record<string, any[]>,
+    );
+
     const data = validSubcategories.map(
       (subcategory): SubcategoryResponseDto => ({
         id: subcategory.id,
@@ -217,12 +286,15 @@ export class SubcategoryService {
                 name: subcategory.category.name,
                 slug: subcategory.category.slug,
                 description: subcategory.category.description,
+                subcategories:
+                  subcategoriesByCategory[subcategory.categoryId] || [],
               }
             : {
                 id: '',
                 name: '',
                 slug: '',
                 description: null,
+                subcategories: [],
               },
         productCount:
           includeProductCount && subcategory._count
@@ -271,6 +343,24 @@ export class SubcategoryService {
       );
     }
 
+    // Fetch all subcategories in the same category
+    const allSubcategoriesInCategory = await this.prisma.subcategory.findMany({
+      where: {
+        categoryId: subcategory.categoryId,
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        description: true,
+        _count: {
+          select: { products: { where: { deletedAt: null } } },
+        },
+      },
+      orderBy: { name: 'asc' },
+    });
+
     return {
       id: subcategory.id,
       name: subcategory.name,
@@ -283,6 +373,13 @@ export class SubcategoryService {
         name: subcategory.category.name,
         slug: subcategory.category.slug,
         description: subcategory.category.description,
+        subcategories: allSubcategoriesInCategory.map((sub) => ({
+          id: sub.id,
+          name: sub.name,
+          slug: sub.slug,
+          description: sub.description,
+          productCount: sub._count.products,
+        })),
       },
       productCount: subcategory._count.products,
       createdAt: subcategory.createdAt,
@@ -325,6 +422,15 @@ export class SubcategoryService {
       orderBy: { name: 'asc' },
     });
 
+    // Create the subcategory list for the category field (all subcategories in this category)
+    const allSubcategoriesInCategory = subcategories.map((sub) => ({
+      id: sub.id,
+      name: sub.name,
+      slug: sub.slug,
+      description: sub.description,
+      productCount: sub._count.products,
+    }));
+
     return subcategories.map((subcategory) => ({
       id: subcategory.id,
       name: subcategory.name,
@@ -337,6 +443,7 @@ export class SubcategoryService {
         name: subcategory.category.name,
         slug: subcategory.category.slug,
         description: subcategory.category.description,
+        subcategories: allSubcategoriesInCategory,
       },
       productCount: subcategory._count.products,
       createdAt: subcategory.createdAt,
@@ -429,6 +536,24 @@ export class SubcategoryService {
       },
     });
 
+    // Fetch all subcategories in the same category
+    const allSubcategoriesInCategory = await this.prisma.subcategory.findMany({
+      where: {
+        categoryId: updatedSubcategory.categoryId,
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        description: true,
+        _count: {
+          select: { products: { where: { deletedAt: null } } },
+        },
+      },
+      orderBy: { name: 'asc' },
+    });
+
     // Invalidate subcategory cache
     await this.cacheInvalidationService.invalidateSubcategory(id);
 
@@ -444,6 +569,13 @@ export class SubcategoryService {
         name: updatedSubcategory.category.name,
         slug: updatedSubcategory.category.slug,
         description: updatedSubcategory.category.description,
+        subcategories: allSubcategoriesInCategory.map((sub) => ({
+          id: sub.id,
+          name: sub.name,
+          slug: sub.slug,
+          description: sub.description,
+          productCount: sub._count.products,
+        })),
       },
       productCount: updatedSubcategory._count.products,
       createdAt: updatedSubcategory.createdAt,

@@ -99,7 +99,7 @@ export class CreateVariantDto {
 
   @ApiProperty({
     description: 'Brand ID that this variant belongs to',
-    example: 'cmj123456789',
+    example: '',
   })
   @IsString()
   @IsNotEmpty()
@@ -183,7 +183,7 @@ export class UpdateVariantDto {
 
   @ApiPropertyOptional({
     description: 'Brand ID that this variant belongs to',
-    example: 'cmj123456789',
+    example: '',
   })
   @IsOptional()
   @IsString()

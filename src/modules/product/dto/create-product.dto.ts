@@ -52,7 +52,7 @@ export class CreateProductDto {
 
   @ApiProperty({
     description: 'Variant ID that this product belongs to',
-    example: 'cmj123456789',
+    example: '',
   })
   @IsNotEmpty()
   @Matches(/^c[a-z0-9]{24}$/, {

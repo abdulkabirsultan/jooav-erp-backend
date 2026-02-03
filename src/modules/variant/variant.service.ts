@@ -827,56 +827,29 @@ export class VariantService {
   }
 
   async getStats(): Promise<VariantStatsDto> {
-    // Get total variants count
-    const totalVariants = await this.prisma.variant.count({
-      where: { deletedAt: null },
-    });
+    const [totalVariants, totalBrands, deletedVariants] = await Promise.all([
+      // Get total variants count (excluding deleted)
+      this.prisma.variant.count({
+        where: { deletedAt: null },
+      }),
 
-    // Get variants count by brand
-    const variantsByBrandData = await this.prisma.variant.groupBy({
-      by: ['brandId'],
-      where: { deletedAt: null },
-      _count: true,
-    });
+      // Get total brands count (excluding deleted)
+      this.prisma.brand.count({
+        where: { deletedAt: null },
+      }),
 
-    // Transform to brand name: count format
-    const variantsByBrand: Record<string, number> = {};
-    for (const item of variantsByBrandData) {
-      // Get brand name
-      const brand = await this.prisma.brand.findUnique({
-        where: { id: item.brandId },
-        select: { name: true },
-      });
-      if (brand) {
-        variantsByBrand[brand.name] = item._count;
-      }
-    }
-
-    // Get popular variants (top 5 by product count)
-    const popularVariantsData = await this.prisma.variant.findMany({
-      where: { deletedAt: null },
-      include: {
-        _count: {
-          select: { products: { where: { deletedAt: null } } },
+      // Get deleted variants count (soft deleted)
+      this.prisma.variant.count({
+        where: {
+          deletedAt: { not: null },
         },
-        brand: { select: { name: true } },
-      },
-      orderBy: {
-        products: { _count: 'desc' },
-      },
-      take: 5,
-    });
-
-    const popularVariants = popularVariantsData.map((variant) => ({
-      name: variant.name,
-      brandName: variant.brand.name,
-      productCount: variant._count.products,
-    }));
+      }),
+    ]);
 
     return {
       totalVariants,
-      variantsByBrand,
-      popularVariants,
+      totalBrands,
+      inactiveVariants: deletedVariants,
     };
   }
 }
