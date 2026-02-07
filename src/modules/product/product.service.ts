@@ -3,11 +3,13 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  Logger,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { CacheInvalidationService } from '../cache/cache-invalidation.service';
+import { CloudinaryService } from '../storage/cloudinary.service';
 import {
   CreateProductDto,
   UpdateProductDto,
@@ -20,10 +22,13 @@ import { BarcodeGenerator } from '../../common/utils/barcode.utils';
 
 @Injectable()
 export class ProductService {
+  private readonly logger = new Logger(ProductService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditLog: AuditService,
     private readonly cacheInvalidationService: CacheInvalidationService,
+    private readonly cloudinaryService: CloudinaryService,
   ) {}
 
   /**
@@ -190,6 +195,8 @@ export class ProductService {
       packSizeId,
       packTypeId,
       barcode: providedBarcode,
+      images,
+      thumbnail,
       ...rest
     } = createProductDto;
 
@@ -236,6 +243,40 @@ export class ProductService {
     if (existingProduct) {
       throw new ConflictException(`Product with SKU "${sku}" already exists`);
     }
+    // Handle file uploads
+    let uploadedImageUrls: string[] = [];
+    let uploadedThumbnailUrl: string | undefined = undefined;
+
+    try {
+      // Upload images to Cloudinary
+      if (images && Array.isArray(images) && images.length > 0) {
+        const imageUploads = await this.cloudinaryService.uploadMultipleFiles(
+          images,
+          {
+            folder: 'products/images',
+            tags: ['product', 'image'],
+          },
+        );
+        uploadedImageUrls = imageUploads.map((upload) => upload.secureUrl);
+      }
+
+      // Upload thumbnail to Cloudinary
+      if (thumbnail) {
+        const thumbnailUpload = await this.cloudinaryService.uploadFile(
+          thumbnail.buffer,
+          {
+            folder: 'products/thumbnails',
+            tags: ['product', 'thumbnail'],
+            transformation: [
+              { width: 300, height: 300, crop: 'fill', quality: 'auto' },
+            ],
+          },
+        );
+        uploadedThumbnailUrl = thumbnailUpload.secureUrl;
+      }
+    } catch (error) {
+      throw new BadRequestException(`File upload failed: ${error.message}`);
+    }
 
     try {
       const product = await this.prisma.product.create({
@@ -250,9 +291,10 @@ export class ProductService {
           packSizeId,
           packTypeId,
           ...rest,
+          images: uploadedImageUrls,
+          thumbnail: uploadedThumbnailUrl,
           createdBy: userId,
           updatedBy: userId,
-          images: rest.images || [],
         },
         include: {
           brand: {
@@ -479,6 +521,10 @@ export class ProductService {
       variantId,
       packSizeId,
       packTypeId,
+      createImages,
+      deleteImages,
+      thumbnail,
+      deleteThumbnail,
       ...rest
     } = updateProductDto;
 
@@ -546,6 +592,123 @@ export class ProductService {
       }
     }
 
+    // Handle image operations
+    let updatedImages = [...existingProduct.images] as string[];
+    let updatedThumbnail = existingProduct.thumbnail;
+
+    try {
+      // Delete specified images from Cloudinary and remove from array
+      if (deleteImages && deleteImages.length > 0) {
+        // Validate deleteImages array
+        const validDeleteImages = deleteImages.filter((url) => {
+          if (!url || typeof url !== 'string') {
+            this.logger.warn('Invalid image URL provided for deletion', {
+              invalidUrl: url,
+              productId: id,
+            });
+            return false;
+          }
+
+          // Check if URL exists in current product images
+          if (!existingProduct.images.includes(url)) {
+            this.logger.warn('URL not found in product images', {
+              url,
+              productId: id,
+            });
+            return false;
+          }
+
+          return true;
+        });
+
+        if (validDeleteImages.length > 0) {
+          const deleteResult =
+            await this.cloudinaryService.deleteFilesByUrls(validDeleteImages);
+
+          // Log any deletion errors but don't fail the whole operation
+          if (
+            deleteResult.errors &&
+            Object.keys(deleteResult.errors).length > 0
+          ) {
+            this.logger.warn('Some images failed to delete from Cloudinary', {
+              errors: deleteResult.errors,
+              productId: id,
+            });
+          }
+
+          // Remove successfully deleted images from the array
+          const successfullyDeleted = Object.keys(deleteResult.deleted || {});
+          if (successfullyDeleted.length > 0) {
+            // Map public IDs back to URLs for filtering
+            const deletedUrls = validDeleteImages.filter((url) => {
+              const publicId =
+                this.cloudinaryService.extractPublicIdFromUrl(url);
+              return successfullyDeleted.includes(publicId);
+            });
+
+            updatedImages = updatedImages.filter(
+              (url) => !deletedUrls.includes(url),
+            );
+
+            this.logger.log('Successfully deleted images from Cloudinary', {
+              deletedCount: deletedUrls.length,
+              deletedUrls,
+              productId: id,
+            });
+          }
+        } else {
+          this.logger.warn('No valid images to delete', {
+            providedUrls: deleteImages,
+            productId: id,
+          });
+        }
+      }
+
+      // Upload new images and add to array
+      if (createImages && createImages.length > 0) {
+        const imageUploads = await this.cloudinaryService.uploadMultipleFiles(
+          createImages,
+          {
+            folder: 'products/images',
+            tags: ['product', 'image'],
+          },
+        );
+        const newImageUrls = imageUploads.map((upload) => upload.secureUrl);
+        updatedImages = [...updatedImages, ...newImageUrls];
+      }
+
+      // Handle thumbnail operations
+      if (deleteThumbnail && existingProduct.thumbnail) {
+        await this.cloudinaryService.deleteFilesByUrls([
+          existingProduct.thumbnail,
+        ]);
+        updatedThumbnail = null;
+      }
+
+      if (thumbnail) {
+        // If there's an existing thumbnail and we're uploading a new one, delete the old one
+        if (existingProduct.thumbnail) {
+          await this.cloudinaryService.deleteFilesByUrls([
+            existingProduct.thumbnail,
+          ]);
+        }
+
+        const thumbnailUpload = await this.cloudinaryService.uploadFile(
+          thumbnail.buffer,
+          {
+            folder: 'products/thumbnails',
+            tags: ['product', 'thumbnail'],
+            transformation: [
+              { width: 300, height: 300, crop: 'fill', quality: 'auto' },
+            ],
+          },
+        );
+        updatedThumbnail = thumbnailUpload.secureUrl;
+      }
+    } catch (error) {
+      throw new BadRequestException(`File operation failed: ${error.message}`);
+    }
+
     try {
       const product = await this.prisma.product.update({
         where: { id },
@@ -554,6 +717,8 @@ export class ProductService {
           ...(sku && { sku }),
           ...(manufacturerId && { manufacturerId }),
           ...rest,
+          images: updatedImages,
+          thumbnail: updatedThumbnail,
           updatedBy: userId,
         },
         include: {

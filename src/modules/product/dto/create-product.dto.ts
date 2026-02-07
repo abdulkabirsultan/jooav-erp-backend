@@ -4,7 +4,6 @@ import {
   IsDecimal,
   IsDateString,
   IsArray,
-  IsUrl,
   IsNotEmpty,
   MaxLength,
   MinLength,
@@ -62,7 +61,7 @@ export class CreateProductDto {
 
   @ApiProperty({
     description: 'Pack size ID',
-    example: 'cuid_example_pack_size_id',
+    example: '',
   })
   @IsNotEmpty()
   @IsString()
@@ -70,7 +69,7 @@ export class CreateProductDto {
 
   @ApiProperty({
     description: 'Pack type ID',
-    example: 'cuid_example_pack_type_id',
+    example: '',
   })
   @IsNotEmpty()
   @IsString()
@@ -108,23 +107,21 @@ export class CreateProductDto {
   discount?: Decimal;
 
   @ApiPropertyOptional({
-    description: 'Primary thumbnail image URL',
-    example: 'https://example.com/indomie-chicken-thumb.jpg',
+    description: 'Primary thumbnail image file',
+    type: 'string',
+    format: 'binary',
   })
   @IsOptional()
-  @IsUrl()
-  thumbnail?: string;
+  thumbnail?: Express.Multer.File;
 
   @ApiPropertyOptional({
-    description: 'Array of product image URLs (first one becomes primary)',
-    example: [
-      'https://example.com/indomie-chicken.jpg',
-      'https://example.com/indomie-chicken-back.jpg',
-    ],
-    type: [String],
+    description: 'Array of product image files',
+    type: 'array',
+    items: {
+      type: 'string',
+      format: 'binary',
+    },
   })
   @IsOptional()
-  @IsArray()
-  @IsUrl({}, { each: true })
-  images?: string[];
+  images?: Express.Multer.File[];
 }

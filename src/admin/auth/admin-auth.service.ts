@@ -285,8 +285,8 @@ export class AdminAuthService {
           delete: isSuperAdmin, // Only super admin can delete
           approve: true,
         },
-        smeUsers: {
-          create: false, // SMEs register themselves
+        wholesalers: {
+          create: false, // Wholesalers register themselves
           read: true,
           update: true,
           delete: isSuperAdmin,

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   v2 as cloudinary,
@@ -40,12 +40,72 @@ export class CloudinaryService {
   }
 
   /**
+   * Validate if file is an image
+   */
+  private validateImageFile(
+    file:
+      | Express.Multer.File
+      | { buffer: Buffer; originalname: string; mimetype?: string },
+  ): void {
+    const allowedMimeTypes = [
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'image/webp',
+      'image/gif',
+      'image/svg+xml',
+    ];
+
+    const allowedExtensions = [
+      '.jpg',
+      '.jpeg',
+      '.png',
+      '.webp',
+      '.gif',
+      '.svg',
+    ];
+
+    // Check MIME type if available
+    if ('mimetype' in file && file.mimetype) {
+      if (!allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
+        throw new BadRequestException(
+          `Invalid file type: ${file.mimetype}. Only images are allowed.`,
+        );
+      }
+    }
+
+    // Check file extension
+    const filename = file.originalname.toLowerCase();
+    const hasValidExtension = allowedExtensions.some((ext) =>
+      filename.endsWith(ext),
+    );
+
+    if (!hasValidExtension) {
+      throw new BadRequestException(
+        `Invalid file extension. Only image files are allowed: ${allowedExtensions.join(', ')}`,
+      );
+    }
+
+    // Basic file size check (10MB limit)
+    if (file.buffer.length > 10 * 1024 * 1024) {
+      throw new BadRequestException(
+        'File size too large. Maximum size is 10MB.',
+      );
+    }
+  }
+
+  /**
    * Upload file buffer to Cloudinary
    */
   async uploadFile(
     buffer: Buffer,
     options: CloudinaryUploadOptions = {},
+    filename?: string,
   ): Promise<CloudinaryUploadResult> {
+    // Basic validation for image uploads
+    if (filename && options.resourceType !== 'raw') {
+      this.validateImageFile({ buffer, originalname: filename });
+    }
     return new Promise((resolve, reject) => {
       const uploadOptions = {
         folder: options.folder || this.configService.get('cloudinary.folder'),
@@ -91,16 +151,33 @@ export class CloudinaryService {
    * Upload multiple files
    */
   async uploadMultipleFiles(
-    files: Array<{ buffer: Buffer; originalname: string }>,
+    files:
+      | Express.Multer.File[]
+      | Array<{ buffer: Buffer; originalname: string }>,
     options: CloudinaryUploadOptions = {},
   ): Promise<CloudinaryUploadResult[]> {
+    if (!Array.isArray(files)) {
+      throw new BadRequestException(
+        `Expected files to be an array, but got ${typeof files}`,
+      );
+    }
+
+    // Validate each file before upload
+    files.forEach((file) => {
+      this.validateImageFile(file);
+    });
+
     const uploadPromises = files.map((file) =>
-      this.uploadFile(file.buffer, {
-        ...options,
-        publicId: options.publicId
-          ? `${options.publicId}_${Date.now()}`
-          : undefined,
-      }),
+      this.uploadFile(
+        file.buffer,
+        {
+          ...options,
+          publicId: options.publicId
+            ? `${options.publicId}_${Date.now()}`
+            : undefined,
+        },
+        file.originalname,
+      ),
     );
 
     return Promise.all(uploadPromises);
@@ -131,6 +208,107 @@ export class CloudinaryService {
     } catch (error) {
       this.logger.error('Failed to delete multiple files', error);
       throw error;
+    }
+  }
+
+  /**
+   * Extract public ID from Cloudinary URL
+   */
+  extractPublicIdFromUrl(url: string): string {
+    try {
+      // Extract public ID from Cloudinary URL
+      // URL format: https://res.cloudinary.com/cloud_name/image/upload/v1234567890/folder/public_id.jpg
+      const urlParts = url.split('/');
+      const uploadIndex = urlParts.findIndex((part) => part === 'upload');
+      if (uploadIndex === -1) return '';
+
+      // Get everything after version number (or 'upload' if no version)
+      let publicIdPart = urlParts.slice(uploadIndex + 1);
+
+      // Remove version if present (starts with 'v' followed by numbers)
+      if (
+        publicIdPart[0] &&
+        publicIdPart[0].startsWith('v') &&
+        /^v\d+$/.test(publicIdPart[0])
+      ) {
+        publicIdPart = publicIdPart.slice(1);
+      }
+
+      // Join the remaining parts and remove file extension
+      const publicIdWithExtension = publicIdPart.join('/');
+      const lastDotIndex = publicIdWithExtension.lastIndexOf('.');
+      return lastDotIndex > 0
+        ? publicIdWithExtension.substring(0, lastDotIndex)
+        : publicIdWithExtension;
+    } catch (error) {
+      this.logger.error(`Failed to extract public ID from URL: ${url}`, error);
+      return '';
+    }
+  }
+
+  /**
+   * Delete files by URLs
+   */
+  async deleteFilesByUrls(urls: string[]): Promise<{
+    deleted: Record<string, string>;
+    errors: Record<string, string>;
+  }> {
+    try {
+      // Validate input
+      if (!Array.isArray(urls) || urls.length === 0) {
+        this.logger.warn('No URLs provided for deletion');
+        return { deleted: {}, errors: {} };
+      }
+
+      // Filter out empty/invalid URLs and extract public IDs
+      const validUrls = urls.filter(
+        (url) => url && typeof url === 'string' && url.trim().length > 0,
+      );
+
+      if (validUrls.length === 0) {
+        this.logger.warn('No valid URLs found for deletion');
+        return { deleted: {}, errors: {} };
+      }
+
+      const publicIds = validUrls
+        .map((url) => {
+          try {
+            return this.extractPublicIdFromUrl(url);
+          } catch (error) {
+            this.logger.warn(
+              `Failed to extract public ID from URL: ${url}`,
+              error,
+            );
+            return null;
+          }
+        })
+        .filter((id): id is string => id !== null && id.length > 0);
+
+      if (publicIds.length === 0) {
+        this.logger.warn('No valid public IDs found from URLs');
+        return { deleted: {}, errors: {} };
+      }
+
+      this.logger.log(
+        `Attempting to delete ${publicIds.length} files from Cloudinary`,
+      );
+      const result = await this.deleteMultipleFiles(publicIds);
+
+      return {
+        deleted: result.deleted || {},
+        errors: result.not_found
+          ? Object.fromEntries(
+              Object.keys(result.not_found).map((id) => [id, 'File not found']),
+            )
+          : {},
+      };
+    } catch (error) {
+      this.logger.error('Failed to delete files by URLs', error);
+      // Don't throw - return partial success info
+      return {
+        deleted: {},
+        errors: { general: error.message || 'Unknown error occurred' },
+      };
     }
   }
 

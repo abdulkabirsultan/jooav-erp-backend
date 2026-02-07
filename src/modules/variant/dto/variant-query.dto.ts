@@ -30,7 +30,7 @@ export class VariantQueryDto {
 
   @ApiPropertyOptional({
     description: 'Search term for variant name or description',
-    example: 'chicken',
+    example: '',
   })
   @IsOptional()
   @IsString()

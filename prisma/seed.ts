@@ -105,16 +105,53 @@ async function main() {
     },
   });
 
-  // Create SME user
-  const smeUser = await prisma.user.upsert({
-    where: { email: 'sme@jooav.com' },
+  // Create regions
+  const regions = await Promise.all([
+    prisma.region.upsert({
+      where: { code: 'NG-LA' },
+      update: {},
+      create: {
+        name: 'Lagos',
+        code: 'NG-LA',
+        country: 'Nigeria',
+        state: 'Lagos State',
+        isActive: true,
+      },
+    }),
+    prisma.region.upsert({
+      where: { code: 'NG-AB' },
+      update: {},
+      create: {
+        name: 'Abuja',
+        code: 'NG-AB',
+        country: 'Nigeria',
+        state: 'FCT',
+        isActive: true,
+      },
+    }),
+    prisma.region.upsert({
+      where: { code: 'NG-KA' },
+      update: {},
+      create: {
+        name: 'Kano',
+        code: 'NG-KA',
+        country: 'Nigeria',
+        state: 'Kano State',
+        isActive: true,
+      },
+    }),
+  ]);
+
+  // Create Wholesaler user
+  const wholesalerUser = await prisma.user.upsert({
+    where: { email: 'wholesaler@jooav.com' },
     update: {},
     create: {
-      email: 'sme@jooav.com',
-      firstName: 'Small Business',
+      email: 'wholesaler@jooav.com',
+      firstName: 'Wholesale Business',
       lastName: 'Owner',
       password: await hashPassword('password123'), // Argon2 hashed
-      role: UserRole.SME_USER,
+      role: UserRole.WHOLESALER,
       status: UserStatus.ACTIVE,
       emailVerified: true,
       profile: {
@@ -126,7 +163,7 @@ async function main() {
   });
 
   // Collect users for easy reference
-  const users = [superAdmin, admin, subAdmin, smeUser];
+  const users = [superAdmin, admin, subAdmin, wholesalerUser];
 
   // Create sample manufacturers
   const manufacturers = await Promise.all([
@@ -638,6 +675,85 @@ async function main() {
     }),
   ]);
 
+  // Create wholesaler profile
+  const wholesalerProfile = await prisma.wholesaler.create({
+    data: {
+      userId: wholesalerUser.id,
+      businessName: 'Metro Wholesale Distribution',
+      businessType: 'Wholesale',
+      regionId: regions[0].id, // Lagos region
+      businessLicense: 'WHL-NGR-2024-001',
+      verificationStatus: 'APPROVED',
+      approvedBy: superAdmin.id,
+      approvedAt: new Date(),
+    },
+  });
+
+  // Create sample orders
+  const sampleOrders = await Promise.all([
+    prisma.order.create({
+      data: {
+        orderNumber: 'ORD-260207-001',
+        wholesalerId: wholesalerProfile.id,
+        createdById: wholesalerUser.id,
+        status: 'SUBMITTED',
+        subtotal: 180000,
+        totalAmount: 180000,
+        deliveryAddress: {
+          address: '45 Broad Street, Lagos Island',
+          city: 'Lagos',
+          state: 'Lagos State',
+          contactName: 'Wholesale Business Owner',
+          contactPhone: '+234801234567',
+        },
+        customerNotes: 'Urgent delivery needed for weekend sales',
+        orderDate: new Date(),
+        submittedAt: new Date(),
+        items: {
+          create: [
+            {
+              productId: products[0].id, // Indomie noodles
+              quantity: 20,
+              unitPrice: 4500,
+              lineTotal: 90000,
+              status: 'PENDING',
+            },
+            {
+              productId: products[1].id, // Coca Cola
+              quantity: 15,
+              unitPrice: 6000,
+              lineTotal: 90000,
+              status: 'PENDING',
+            },
+          ],
+        },
+      },
+    }),
+    prisma.order.create({
+      data: {
+        orderNumber: 'ORD-260207-002',
+        wholesalerId: wholesalerProfile.id,
+        createdById: wholesalerUser.id,
+        status: 'DRAFT',
+        subtotal: 120000,
+        totalAmount: 120000,
+        customerNotes: 'Regular monthly stock replenishment',
+        orderDate: new Date(),
+        items: {
+          create: [
+            {
+              productId: products[2].id, // Peak Milk
+              quantity: 20,
+              unitPrice: 6000,
+              lineTotal: 120000,
+              status: 'PENDING',
+            },
+          ],
+        },
+      },
+    }),
+  ]);
+
   // Create system configurations
   await prisma.systemConfig.createMany({
     data: [
@@ -667,7 +783,7 @@ async function main() {
   console.log('✅ Database seeding completed successfully!');
   console.log('📊 Seeded data:');
   console.log(
-    `   - ${4} Users (1 Super Admin, 1 Admin, 1 Sub-Admin, 1 SME User)`,
+    `   - ${4} Users (1 Super Admin, 1 Admin, 1 Sub-Admin, 1 Wholesaler User)`,
   );
   console.log(`   - ${manufacturers.length} Manufacturers`);
   console.log(`   - ${brands.length} Brands`);

@@ -93,7 +93,12 @@ export class AuthService {
   async validateUserById(id: string): Promise<User | null> {
     const user = await this.prisma.user.findUnique({
       where: { id },
-      include: { profile: true },
+      include: {
+        profile: true,
+        wholesalerProfile: true,
+        procurementOfficerProfile: true,
+        adminProfile: true,
+      },
     });
 
     if (!user || user.status !== UserStatus.ACTIVE) {
@@ -170,7 +175,7 @@ export class AuthService {
         firstName: registerDto.firstName,
         lastName: registerDto.lastName,
         phone: registerDto.phone,
-        role: UserRole.SME_USER, // Default role
+        role: UserRole.WHOLESALER, // Default role
         status: UserStatus.ACTIVE,
         profile: {
           create: {

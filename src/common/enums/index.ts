@@ -2,7 +2,7 @@ export enum UserRole {
   SUPER_ADMIN = 'SUPER_ADMIN',
   ADMIN = 'ADMIN',
   PROCUREMENT_OFFICER = 'PROCUREMENT_OFFICER',
-  SME_USER = 'SME_USER',
+  WHOLESALER = 'WHOLESALER',
 }
 
 export enum UserStatus {
