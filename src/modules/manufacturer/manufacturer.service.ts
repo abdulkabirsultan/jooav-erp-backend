@@ -137,7 +137,7 @@ export class ManufacturerService {
       _count: {
         select: {
           products: true,
-          orders: true,
+          brands: true,
         },
       },
     };
@@ -218,7 +218,7 @@ export class ManufacturerService {
       _count: {
         select: {
           products: true,
-          orders: true,
+          brands: true,
         },
       },
     };
@@ -504,6 +504,7 @@ export class ManufacturerService {
         _count: {
           select: {
             products: { where: { deletedAt: null } },
+            brands: { where: { deletedAt: null } },
           },
         },
       },
@@ -527,7 +528,7 @@ export class ManufacturerService {
       description: manufacturer.description || undefined,
       status: manufacturer.status,
       productsCount: manufacturer._count.products,
-      ordersCount: 0,
+      brandsCount: manufacturer._count.brands,
       createdAt: manufacturer.createdAt,
       updatedAt: manufacturer.updatedAt,
     };
@@ -854,7 +855,7 @@ export class ManufacturerService {
           }
         : undefined,
       productsCount: manufacturer._count?.products || 0,
-      ordersCount: manufacturer._count?.orders || 0,
+      brandsCount: manufacturer._count?.brands || 0,
       brands:
         manufacturer.brands?.map((brand: any) => ({
           id: brand.id,
