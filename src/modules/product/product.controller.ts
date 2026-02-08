@@ -390,6 +390,24 @@ export class ProductController {
     },
     @CurrentUserId() userId: string,
   ): Promise<SuccessResponse<ProductResponseDto>> {
+    // Normalize FormData fields for proper validation
+    // Handle deleteImages - convert single string to array
+    if (
+      updateProductDto.deleteImages &&
+      !Array.isArray(updateProductDto.deleteImages)
+    ) {
+      updateProductDto.deleteImages = [
+        updateProductDto.deleteImages as unknown as string,
+      ];
+    }
+
+    // Handle deleteThumbnail - convert string to boolean
+    if (typeof updateProductDto.deleteThumbnail === 'string') {
+      updateProductDto.deleteThumbnail =
+        updateProductDto.deleteThumbnail === 'true' ||
+        updateProductDto.deleteThumbnail === '1';
+    }
+
     // Attach files to DTO
     if (files?.thumbnail && files.thumbnail[0]) {
       updateProductDto.thumbnail = files.thumbnail[0];

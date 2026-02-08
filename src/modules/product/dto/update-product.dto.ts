@@ -36,6 +36,15 @@ export class UpdateProductDto extends PartialType(CreateProductDto) {
   @IsOptional()
   @IsArray()
   @IsUrl({}, { each: true })
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      return [value]; // Convert single string to array
+    }
+    if (Array.isArray(value)) {
+      return value; // Keep arrays as they are
+    }
+    return []; // Default to empty array for other types
+  })
   deleteImages?: string[];
 
   @ApiPropertyOptional({
@@ -52,5 +61,11 @@ export class UpdateProductDto extends PartialType(CreateProductDto) {
   })
   @IsOptional()
   @IsBoolean()
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      return value === 'true' || value === '1';
+    }
+    return Boolean(value);
+  })
   deleteThumbnail?: boolean;
 }
