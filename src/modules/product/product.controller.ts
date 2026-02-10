@@ -40,6 +40,10 @@ import {
   UpdateProductDto,
   ProductQueryDto,
   ProductResponseDto,
+  BulkDeleteProductDto,
+  BulkDeleteResultDto,
+  BulkUpdateStatusDto,
+  BulkUpdateStatusResultDto,
 } from './dto';
 import {
   BulkProductCreationDto,
@@ -123,13 +127,19 @@ export class ProductController {
   @ApiOperation({
     summary: 'Create a new product with file uploads',
     description:
-      'Create a new FMCG product with auto-generated SKU and name, supporting image uploads',
+      'Create a new FMCG product with user-provided unique name and auto-generated SKU, supporting image uploads',
   })
   @ApiBody({
     description: 'Product creation data with file uploads',
     schema: {
       type: 'object',
       properties: {
+        name: {
+          type: 'string',
+          maxLength: 255,
+          example: 'Indomie Chicken Noodles 70g',
+          description: 'Product name (must be unique)',
+        },
         description: { type: 'string', maxLength: 500, example: '' },
         brandId: { type: 'string', example: '' },
         subcategoryId: { type: 'string', example: '' },
@@ -149,6 +159,7 @@ export class ProductController {
         },
       },
       required: [
+        'name',
         'brandId',
         'subcategoryId',
         'variantId',
@@ -168,7 +179,7 @@ export class ProductController {
       'Invalid input data, file upload error, or reference not found',
   })
   @ApiConflictResponse({
-    description: 'Product with this SKU already exists',
+    description: 'Product with this name or SKU already exists',
   })
   @ApiUnauthorizedResponse({ description: 'Authentication required' })
   @ApiForbiddenResponse({ description: 'Admin access required' })
@@ -239,8 +250,9 @@ export class ProductController {
   @UseInterceptors(CacheInterceptor)
   @Cache({
     key: 'products',
-    ttl: 600, // 10 minutes - products change more frequently than categories
+    ttl: 600, // 10 minutes - product lists change more frequently
     includeParams: true,
+    tags: ['products'],
   })
   @ApiOperation({
     summary: 'Get all products (Accessible to everyone)',
@@ -278,12 +290,49 @@ export class ProductController {
     );
   }
 
+  @Get('stats')
+  @UseGuards(UnifiedAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @ApiBearerAuth('admin-access-token')
+  @ApiOperation({
+    summary: 'Get product statistics',
+    description: 'Get comprehensive product statistics',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Product statistics retrieved successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean' },
+        message: { type: 'string' },
+        data: {
+          type: 'object',
+          properties: {
+            totalProducts: { type: 'number', example: 150 },
+            totalVariants: { type: 'number', example: 25 },
+            drafts: { type: 'number', example: 10 },
+            archived: { type: 'number', example: 5 },
+          },
+        },
+      },
+    },
+  })
+  async getProductStats(): Promise<SuccessResponse<any>> {
+    const stats = await this.productService.getProductStats();
+    return new SuccessResponse(
+      'Product statistics retrieved successfully',
+      stats,
+    );
+  }
+
   @Get(':id')
   @UseInterceptors(CacheInterceptor)
   @Cache({
     key: 'product',
     ttl: 900, // 15 minutes - individual products don't change as frequently
     includeParams: true,
+    tags: ['products'], // Will be enhanced dynamically
   })
   @ApiOperation({
     summary: 'Get product by ID (Accessible to everyone)',
@@ -329,13 +378,19 @@ export class ProductController {
   @ApiOperation({
     summary: 'Update product with file management',
     description:
-      'Update product information with support for adding/deleting images. SKU and name are auto-regenerated if identifier fields change.',
+      'Update product information with support for adding/deleting images. Only SKU is auto-regenerated if identifier fields change. Product name can be updated and must remain unique.',
   })
   @ApiBody({
     description: 'Product update data with file management',
     schema: {
       type: 'object',
       properties: {
+        name: {
+          type: 'string',
+          maxLength: 255,
+          example: 'Updated Product Name',
+          description: 'Product name (must be unique)',
+        },
         description: { type: 'string', maxLength: 500, example: '' },
         brandId: { type: 'string', example: '' },
         subcategoryId: { type: 'string', example: '' },
@@ -375,7 +430,7 @@ export class ProductController {
   })
   @ApiNotFoundResponse({ description: 'Product not found' })
   @ApiConflictResponse({
-    description: 'Product with this SKU already exists',
+    description: 'Product with this name or SKU already exists',
   })
   @ApiUnauthorizedResponse({ description: 'Authentication required' })
   @ApiForbiddenResponse({ description: 'Admin access required' })
@@ -425,6 +480,87 @@ export class ProductController {
       ResponseMessages.updated('Product', product.name),
       product,
     );
+  }
+
+  @Delete('bulk')
+  @UseGuards(UnifiedAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @ApiBearerAuth('admin-access-token')
+  @ApiOperation({
+    summary: 'Delete multiple products',
+    description:
+      'Soft delete multiple products by their IDs. Returns success/failure status for each product.',
+  })
+  @ApiBody({
+    description: 'Array of product IDs to delete',
+    type: BulkDeleteProductDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Bulk delete operation completed',
+    type: BulkDeleteResultDto,
+  })
+  @ApiBadRequestResponse({ description: 'Invalid product IDs or empty array' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  @ApiForbiddenResponse({ description: 'Admin access required' })
+  @AuditLog({ action: 'BULK_DELETE', resource: 'product' })
+  async removeMany(
+    @Body() bulkDeleteDto: BulkDeleteProductDto,
+    @CurrentUserId() userId: string,
+  ): Promise<SuccessResponse<BulkDeleteResultDto>> {
+    const result = await this.productService.removeMany(
+      bulkDeleteDto.productIds,
+      userId,
+    );
+
+    let message = `Bulk delete completed: ${result.deletedCount} products deleted successfully`;
+    if (result.failedIds.length > 0) {
+      message += `, ${result.failedIds.length} failed`;
+    }
+
+    return new SuccessResponse(message, result);
+  }
+
+  @Patch('bulk/status')
+  @UseGuards(UnifiedAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @ApiBearerAuth('admin-access-token')
+  @ApiOperation({
+    summary: 'Update status of multiple products',
+    description:
+      'Update the status of multiple products by their IDs. Returns success/failure status for each product.',
+  })
+  @ApiBody({
+    description: 'Array of product IDs and new status',
+    type: BulkUpdateStatusDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Bulk status update operation completed',
+    type: BulkUpdateStatusResultDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid product IDs, status, or empty array',
+  })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  @ApiForbiddenResponse({ description: 'Admin access required' })
+  @AuditLog({ action: 'BULK_UPDATE_STATUS', resource: 'product' })
+  async updateManyStatus(
+    @Body() bulkUpdateStatusDto: BulkUpdateStatusDto,
+    @CurrentUserId() userId: string,
+  ): Promise<SuccessResponse<BulkUpdateStatusResultDto>> {
+    const result = await this.productService.updateManyStatus(
+      bulkUpdateStatusDto.productIds,
+      bulkUpdateStatusDto.status,
+      userId,
+    );
+
+    let message = `Bulk status update completed: ${result.updatedCount} products updated to ${bulkUpdateStatusDto.status}`;
+    if (result.failedIds.length > 0) {
+      message += `, ${result.failedIds.length} failed`;
+    }
+
+    return new SuccessResponse(message, result);
   }
 
   @Delete(':id')

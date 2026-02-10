@@ -39,6 +39,10 @@ import {
   UpdateUserProfileDto,
   UpdateAdminPermissionsDto,
 } from './dto/user.dto';
+import {
+  CreateUserResponseDto,
+  RegenerateResetTokenResponseDto,
+} from './dto/user-response.dto';
 import { UserProfileDto } from '../auth/dto/auth-response.dto';
 import { PaginationDto } from '../../common/dto';
 
@@ -88,24 +92,6 @@ export class UsersController {
     );
   }
 
-  @Get('stats')
-  @UseGuards(RolesGuard)
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
-  @ApiOperation({ summary: 'Get user statistics (Admin only)' })
-  @ApiResponse({
-    status: 200,
-    description: 'User statistics retrieved successfully',
-  })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({
-    status: 403,
-    description: 'Forbidden - Admin access required',
-  })
-  async getUserStats() {
-    const stats = await this.usersService.getUserStats();
-    return new SuccessResponse(ResponseMessages.statsRetrieved('User'), stats);
-  }
-
   @Post()
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
@@ -113,8 +99,8 @@ export class UsersController {
   @ApiBody({ type: CreateUserDto })
   @ApiResponse({
     status: 201,
-    description: 'User created successfully',
-    type: UserProfileDto,
+    description: 'User created successfully with reset URL',
+    type: CreateUserResponseDto,
   })
   @ApiResponse({ status: 400, description: 'Invalid user data' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
@@ -132,8 +118,84 @@ export class UsersController {
     @Body() createUserDto: CreateUserDto,
     @CurrentUserId() currentUserId: string,
     @Request() req: any,
-  ): Promise<UserProfileDto> {
-    return this.usersService.create(createUserDto, currentUserId, req);
+  ): Promise<SuccessResponse<CreateUserResponseDto>> {
+    const user = await this.usersService.create(
+      createUserDto,
+      currentUserId,
+      req,
+    );
+    return new SuccessResponse(
+      ResponseMessages.created('User', user.email),
+      user as CreateUserResponseDto,
+    );
+  }
+
+  @Post(':id/regenerate-reset-token')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Regenerate password reset token for user (Admin only)',
+    description: 'Generate a new password reset token for the specified user',
+  })
+  @ApiParam({ name: 'id', description: 'User ID' })
+  @ApiResponse({
+    status: 200,
+    description: 'Reset token regenerated successfully',
+    type: RegenerateResetTokenResponseDto,
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Admin only' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  @AuditLog({
+    action: 'REGENERATE_RESET_TOKEN',
+    resource: 'USER',
+  })
+  async regenerateResetToken(
+    @Param('id') userId: string,
+    @CurrentUserId() currentUserId: string,
+    @Request() req: any,
+  ): Promise<SuccessResponse<RegenerateResetTokenResponseDto>> {
+    const result = await this.usersService.regenerateResetToken(
+      userId,
+      currentUserId,
+      req,
+    );
+    return new SuccessResponse(
+      'Password reset token regenerated successfully',
+      result,
+    );
+  }
+
+  @Get('stats')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Get user statistics',
+    description: 'Get comprehensive user statistics',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'User statistics retrieved successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean' },
+        message: { type: 'string' },
+        data: {
+          type: 'object',
+          properties: {
+            totalUsers: { type: 'number', example: 50 },
+            archived: { type: 'number', example: 3 },
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Admin only' })
+  async getUserStats(): Promise<SuccessResponse<any>> {
+    const stats = await this.usersService.getUserStats();
+    return new SuccessResponse('User statistics retrieved successfully', stats);
   }
 
   @Get(':id')

@@ -53,10 +53,25 @@ export class CacheInterceptor implements NestInterceptor {
         tap(async (data) => {
           try {
             const ttl = cacheOptions.ttl || 300; // Default 5 minutes
-            await this.cacheService.setex(cacheKey, ttl, JSON.stringify(data));
-            this.logger.debug(
-              `Cached result with key: ${cacheKey} for ${ttl}s`,
-            );
+
+            if (cacheOptions.tags && cacheOptions.tags.length > 0) {
+              // Use tag-based caching
+              await this.cacheService.setWithTags(
+                cacheKey,
+                data,
+                cacheOptions.tags,
+                ttl,
+              );
+              this.logger.debug(
+                `Cached result with tags: ${cacheKey} [${cacheOptions.tags.join(', ')}] for ${ttl}s`,
+              );
+            } else {
+              // Fallback to regular caching
+              await this.cacheService.set(cacheKey, data, { ex: ttl });
+              this.logger.debug(
+                `Cached result with key: ${cacheKey} for ${ttl}s`,
+              );
+            }
           } catch (error) {
             this.logger.error(
               `Failed to cache result for key: ${cacheKey}`,

@@ -229,7 +229,6 @@ export class UsersService {
       temporaryPassword,
       this.argon2Options,
     );
-    console.log(temporaryPassword);
 
     // Create user
     const userData: any = {
@@ -283,10 +282,11 @@ export class UsersService {
       },
     });
 
+    // Generate reset URL
+    const resetUrl = `${this.configService.get('email.baseUrl')}/reset-password?token=${resetToken}`;
+
     // Send password setup email
     try {
-      const resetUrl = `${this.configService.get('email.baseUrl')}/reset-password?token=${resetToken}`;
-
       await this.emailService.sendTemplatedEmail(user.email, 'passwordSetup', {
         firstName: user.firstName || 'User',
         resetUrl,
@@ -311,7 +311,11 @@ export class UsersService {
     );
 
     const { password, ...userWithoutPassword } = user;
-    return userWithoutPassword as UserProfileDto;
+    return {
+      ...userWithoutPassword,
+      resetUrl,
+      resetTokenExpiry: expiresAt,
+    } as UserProfileDto & { resetUrl: string; resetTokenExpiry: Date };
   }
 
   /**
@@ -783,30 +787,8 @@ export class UsersService {
   // ================================
 
   /**
-   * Get user statistics
+   * Get user activity logs with pagination
    */
-  async getUserStats() {
-    const [totalUsers, activeUsers, deactivatedUsers, adminUsers] =
-      await Promise.all([
-        this.prisma.user.count(),
-        this.prisma.user.count({ where: { status: UserStatus.ACTIVE } }),
-        this.prisma.user.count({ where: { status: UserStatus.DEACTIVATED } }),
-        this.prisma.user.count({
-          where: {
-            role: { in: [UserRole.SUPER_ADMIN, UserRole.ADMIN] },
-          },
-        }),
-      ]);
-
-    return {
-      totalUsers,
-      activeUsers,
-      deactivatedUsers,
-      adminUsers,
-      usersByRole: await this.getUsersByRole(),
-      recentRegistrations: await this.getRecentRegistrations(),
-    };
-  }
 
   /**
    * Get users grouped by role
@@ -898,6 +880,98 @@ export class UsersService {
         hasNextPage: page * limit < total,
         hasPreviousPage: page > 1,
       },
+    };
+  }
+
+  /**
+   * Regenerate password reset token for a user (Admin only)
+   */
+  async regenerateResetToken(
+    userId: string,
+    requestedBy: string,
+    request?: any,
+  ): Promise<{ resetUrl: string; resetTokenExpiry: Date }> {
+    // Verify user exists
+    const user = await this.findOne(userId);
+
+    // Get current user to check permissions
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: requestedBy },
+      include: { adminProfile: true },
+    });
+
+    if (!currentUser) {
+      throw new NotFoundException('Current user not found');
+    }
+
+    // Check permissions for regenerating reset tokens
+    if (
+      (user.role === UserRole.ADMIN || user.role === UserRole.SUPER_ADMIN) &&
+      !currentUser.adminProfile?.canSuspendAdmins
+    ) {
+      throw new BadRequestException(
+        'Insufficient permissions to regenerate reset token for admin accounts',
+      );
+    }
+
+    // Delete any existing reset tokens for this user
+    await this.prisma.passwordReset.deleteMany({
+      where: { email: user.email },
+    });
+
+    // Generate new password reset token
+    const { token: resetToken, expiresAt } = generatePasswordResetToken(24);
+
+    // Store password reset token
+    await this.prisma.passwordReset.create({
+      data: {
+        email: user.email,
+        token: resetToken,
+        expiresAt,
+      },
+    });
+
+    // Generate reset URL
+    const resetUrl = `${this.configService.get('email.baseUrl')}/reset-password?token=${resetToken}`;
+
+    // Log token regeneration
+    await this.auditService.logUserAction(
+      requestedBy,
+      'REGENERATE_RESET_TOKEN',
+      'USER',
+      userId,
+      {
+        email: user.email,
+        tokenExpiry: expiresAt,
+      },
+      request,
+    );
+
+    return {
+      resetUrl,
+      resetTokenExpiry: expiresAt,
+    };
+  }
+
+  /**
+   * Get user statistics
+   */
+  async getUserStats(): Promise<{
+    totalUsers: number;
+    archived: number;
+  }> {
+    const [totalUsers, archived] = await Promise.all([
+      this.prisma.user.count(),
+      this.prisma.user.count({
+        where: {
+          status: UserStatus.SUSPENDED, // Assuming SUSPENDED is "archived"
+        },
+      }),
+    ]);
+
+    return {
+      totalUsers,
+      archived,
     };
   }
 }

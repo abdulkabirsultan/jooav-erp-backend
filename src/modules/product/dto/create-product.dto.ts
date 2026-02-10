@@ -15,6 +15,16 @@ import { Decimal } from '@prisma/client/runtime/library';
 
 export class CreateProductDto {
   @ApiProperty({
+    description: 'Product name',
+    example: 'Indomie Chicken Noodles 70g',
+    maxLength: 255,
+  })
+  @IsNotEmpty()
+  @IsString()
+  @MaxLength(255)
+  name: string;
+
+  @ApiProperty({
     description: 'Product description',
     example:
       'Delicious instant noodles with chicken flavor, perfect for quick meals',

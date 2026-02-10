@@ -50,153 +50,105 @@ export class CacheService implements OnModuleInit {
         `Initialized traditional Redis client for ${nodeEnv} environment (${options.host}:${options.port})`,
       );
 
-      // Handle connection events
       this.ioredisClient.on('connect', () => {
+        this.isConnected = true;
         this.logger.log('Connected to traditional Redis');
-        this.isConnected = true;
       });
 
-      this.ioredisClient.on('ready', () => {
-        this.logger.log('Traditional Redis client is ready');
-        this.isConnected = true;
-      });
-
-      this.ioredisClient.on('error', (error) => {
-        this.logger.error('Redis connection error:', error);
+      this.ioredisClient.on('error', (err) => {
         this.isConnected = false;
+        this.logger.error('Traditional Redis connection error:', err);
       });
 
       this.ioredisClient.on('close', () => {
-        this.logger.warn('Redis connection closed');
         this.isConnected = false;
+        this.logger.warn('Traditional Redis connection closed');
       });
     }
   }
 
-  async get(key: string): Promise<string | null> {
+  async get<T = string>(key: string): Promise<T | null> {
     try {
+      let result: string | null;
+
       if (this.clientType === 'upstash' && this.upstashClient) {
-        return await this.upstashClient.get(key);
-      } else if (this.ioredisClient) {
-        return await this.ioredisClient.get(key);
+        result = await this.upstashClient.get(key);
+      } else if (this.clientType === 'traditional' && this.ioredisClient) {
+        result = await this.ioredisClient.get(key);
+      } else {
+        throw new Error('No Redis client available');
       }
-      return null;
+
+      if (result === null) return null;
+
+      try {
+        return JSON.parse(result) as T;
+      } catch {
+        return result as unknown as T;
+      }
     } catch (error) {
-      this.logger.error(`Error getting key ${key}:`, error);
+      this.logger.error(`Error getting cache key ${key}:`, error);
       return null;
     }
   }
 
   async set(
     key: string,
-    value: string,
-    options?: { ex?: number; px?: number; nx?: boolean; xx?: boolean },
-  ): Promise<boolean> {
+    value: any,
+    options?: { ex?: number; px?: number },
+  ): Promise<void> {
     try {
+      const serializedValue = JSON.stringify(value);
+
       if (this.clientType === 'upstash' && this.upstashClient) {
         if (options?.ex) {
-          const result = await this.upstashClient.setex(key, options.ex, value);
-          return result === 'OK';
+          await this.upstashClient.setex(key, options.ex, serializedValue);
         } else if (options?.px) {
-          const result = await this.upstashClient.psetex(
-            key,
-            options.px,
-            value,
-          );
-          return result === 'OK';
+          await this.upstashClient.psetex(key, options.px, serializedValue);
         } else {
-          const result = await this.upstashClient.set(key, value);
-          return result === 'OK';
+          await this.upstashClient.set(key, serializedValue);
         }
-      } else if (this.ioredisClient) {
+      } else if (this.clientType === 'traditional' && this.ioredisClient) {
         if (options?.ex) {
-          const result = await this.ioredisClient.setex(key, options.ex, value);
-          return result === 'OK';
+          await this.ioredisClient.setex(key, options.ex, serializedValue);
         } else if (options?.px) {
-          const result = await this.ioredisClient.psetex(
-            key,
-            options.px,
-            value,
-          );
-          return result === 'OK';
-        } else if (options?.nx) {
-          const result = await this.ioredisClient.setnx(key, value);
-          return result === 1;
+          await this.ioredisClient.psetex(key, options.px, serializedValue);
         } else {
-          const result = await this.ioredisClient.set(key, value);
-          return result === 'OK';
+          await this.ioredisClient.set(key, serializedValue);
         }
+      } else {
+        throw new Error('No Redis client available');
       }
-      return false;
     } catch (error) {
-      this.logger.error(`Error setting key ${key}:`, error);
-      return false;
+      this.logger.error(`Error setting cache key ${key}:`, error);
+      throw error;
     }
   }
 
-  async del(key: string): Promise<boolean> {
+  async del(key: string | string[]): Promise<number> {
     try {
-      if (this.clientType === 'upstash' && this.upstashClient) {
-        const result = await this.upstashClient.del(key);
-        return result > 0;
-      } else if (this.ioredisClient) {
-        const result = await this.ioredisClient.del(key);
-        return result > 0;
-      }
-      return false;
-    } catch (error) {
-      this.logger.error(`Error deleting key ${key}:`, error);
-      return false;
-    }
-  }
+      let result: number;
 
-  async exists(key: string): Promise<boolean> {
-    try {
       if (this.clientType === 'upstash' && this.upstashClient) {
-        const result = await this.upstashClient.exists(key);
-        return result > 0;
-      } else if (this.ioredisClient) {
-        const result = await this.ioredisClient.exists(key);
-        return result > 0;
+        if (Array.isArray(key)) {
+          result = await this.upstashClient.del(...key);
+        } else {
+          result = await this.upstashClient.del(key);
+        }
+      } else if (this.clientType === 'traditional' && this.ioredisClient) {
+        if (Array.isArray(key)) {
+          result = await this.ioredisClient.del(...key);
+        } else {
+          result = await this.ioredisClient.del(key);
+        }
+      } else {
+        throw new Error('No Redis client available');
       }
-      return false;
-    } catch (error) {
-      this.logger.error(`Error checking existence of key ${key}:`, error);
-      return false;
-    }
-  }
 
-  async setex(key: string, seconds: number, value: string): Promise<boolean> {
-    return this.set(key, value, { ex: seconds });
-  }
-
-  async ttl(key: string): Promise<number> {
-    try {
-      if (this.clientType === 'upstash' && this.upstashClient) {
-        return await this.upstashClient.ttl(key);
-      } else if (this.ioredisClient) {
-        return await this.ioredisClient.ttl(key);
-      }
-      return -1;
+      return result;
     } catch (error) {
-      this.logger.error(`Error getting TTL for key ${key}:`, error);
-      return -1;
-    }
-  }
-
-  async flushall(): Promise<boolean> {
-    try {
-      if (this.clientType === 'upstash' && this.upstashClient) {
-        await this.upstashClient.flushall();
-        return true;
-      } else if (this.ioredisClient) {
-        await this.ioredisClient.flushall();
-        return true;
-      }
-      return false;
-    } catch (error) {
-      this.logger.error('Error flushing Redis:', error);
-      return false;
+      this.logger.error(`Error deleting cache key(s) ${key}:`, error);
+      return 0;
     }
   }
 
@@ -205,7 +157,7 @@ export class CacheService implements OnModuleInit {
       if (this.clientType === 'upstash' && this.upstashClient) {
         const result = await this.upstashClient.ping();
         return result === 'PONG';
-      } else if (this.ioredisClient) {
+      } else if (this.clientType === 'traditional' && this.ioredisClient) {
         const result = await this.ioredisClient.ping();
         return result === 'PONG';
       }
@@ -216,16 +168,100 @@ export class CacheService implements OnModuleInit {
     }
   }
 
-  async disconnect(): Promise<void> {
+  async exists(key: string): Promise<boolean> {
     try {
-      if (this.ioredisClient) {
-        await this.ioredisClient.disconnect();
-        this.logger.log('Disconnected from traditional Redis');
+      let result: number;
+
+      if (this.clientType === 'upstash' && this.upstashClient) {
+        result = await this.upstashClient.exists(key);
+      } else if (this.clientType === 'traditional' && this.ioredisClient) {
+        result = await this.ioredisClient.exists(key);
+      } else {
+        return false;
       }
-      // Upstash doesn't need explicit disconnection
-      this.isConnected = false;
+
+      return result === 1;
     } catch (error) {
-      this.logger.error('Error disconnecting from Redis:', error);
+      this.logger.error(`Error checking existence of key ${key}:`, error);
+      return false;
+    }
+  }
+
+  async ttl(key: string): Promise<number> {
+    try {
+      if (this.clientType === 'upstash' && this.upstashClient) {
+        return await this.upstashClient.ttl(key);
+      } else if (this.clientType === 'traditional' && this.ioredisClient) {
+        return await this.ioredisClient.ttl(key);
+      }
+      return -2;
+    } catch (error) {
+      this.logger.error(`Error getting TTL for key ${key}:`, error);
+      return -2;
+    }
+  }
+
+  async keys(pattern: string): Promise<string[]> {
+    try {
+      if (this.clientType === 'upstash' && this.upstashClient) {
+        return await this.upstashClient.keys(pattern);
+      } else if (this.clientType === 'traditional' && this.ioredisClient) {
+        return await this.ioredisClient.keys(pattern);
+      }
+      return [];
+    } catch (error) {
+      this.logger.error(`Error getting keys with pattern ${pattern}:`, error);
+      return [];
+    }
+  }
+
+  async scan(
+    cursor: string | number = 0,
+    options?: { match?: string; count?: number },
+  ): Promise<{ cursor: string; keys: string[] }> {
+    try {
+      if (this.clientType === 'upstash' && this.upstashClient) {
+        const scanOptions = options || { match: '*', count: 10 };
+        const result = await this.upstashClient.scan(cursor, scanOptions);
+        return {
+          cursor: result[0].toString(),
+          keys: Array.isArray(result[1])
+            ? result[1].map((item: any) =>
+                typeof item === 'string' ? item : item.key,
+              )
+            : [],
+        };
+      } else if (this.clientType === 'traditional' && this.ioredisClient) {
+        const result = await this.ioredisClient.scan(
+          cursor.toString(),
+          'MATCH',
+          options?.match || '*',
+          'COUNT',
+          options?.count || 10,
+        );
+        return {
+          cursor: result[0],
+          keys: result[1],
+        };
+      }
+      return { cursor: '0', keys: [] };
+    } catch (error) {
+      this.logger.error('Error scanning Redis keys:', error);
+      return { cursor: '0', keys: [] };
+    }
+  }
+
+  async flushall(): Promise<void> {
+    try {
+      if (this.clientType === 'upstash' && this.upstashClient) {
+        await this.upstashClient.flushall();
+      } else if (this.clientType === 'traditional' && this.ioredisClient) {
+        await this.ioredisClient.flushall();
+      }
+      this.logger.log('Cache flushed successfully');
+    } catch (error) {
+      this.logger.error('Error flushing cache:', error);
+      throw error;
     }
   }
 
@@ -303,30 +339,141 @@ export class CacheService implements OnModuleInit {
   async getConnectionInfo(): Promise<any> {
     try {
       if (this.clientType === 'upstash' && this.upstashClient) {
-        // For Upstash, we can only check if ping works
         const pingResult = await this.ping();
         return {
           type: 'upstash',
           connected: pingResult,
-          url: process.env.UPSTASH_REDIS_REST_URL
-            ? 'configured'
-            : 'not configured',
+          environment: process.env.NODE_ENV || 'development',
         };
       } else if (this.ioredisClient) {
-        const info = {
-          type: 'traditional',
+        return {
           connected: this.isConnected,
           status: this.ioredisClient.status,
           host: this.ioredisClient.options.host,
           port: this.ioredisClient.options.port,
           db: this.ioredisClient.options.db,
+          environment: process.env.NODE_ENV || 'development',
         };
-        return info;
       }
-      return { type: 'none', connected: false };
     } catch (error) {
       this.logger.error('Error getting connection info:', error);
-      return { type: this.clientType, connected: false, error: error.message };
+      return { connected: false, error: error.message };
+    }
+  }
+
+  // Tag-based cache methods for performance optimization
+
+  /**
+   * Set a cache value with associated tags for efficient invalidation
+   */
+  async setWithTags(
+    key: string,
+    value: any,
+    tags: string[],
+    ttl?: number,
+  ): Promise<void> {
+    try {
+      const serializedValue = JSON.stringify(value);
+      const actualTtl = ttl || 3600; // Default 1 hour
+
+      if (this.clientType === 'upstash' && this.upstashClient) {
+        // Set the main cache value
+        await this.upstashClient.setex(key, actualTtl, serializedValue);
+
+        // Add key to tag sets
+        const tagOperations = tags.map((tag) =>
+          this.upstashClient!.sadd(`tag:${tag}`, key),
+        );
+        await Promise.all(tagOperations);
+
+        // Set expiration for tag sets (slightly longer than cache TTL)
+        const tagTtlOperations = tags.map((tag) =>
+          this.upstashClient!.expire(`tag:${tag}`, actualTtl + 300),
+        );
+        await Promise.all(tagTtlOperations);
+      } else if (this.clientType === 'traditional' && this.ioredisClient) {
+        // Set the main cache value
+        await this.ioredisClient.setex(key, actualTtl, serializedValue);
+
+        // Add key to tag sets
+        const tagOperations = tags.map((tag) =>
+          this.ioredisClient!.sadd(`tag:${tag}`, key),
+        );
+        await Promise.all(tagOperations);
+
+        // Set expiration for tag sets (slightly longer than cache TTL)
+        const tagTtlOperations = tags.map((tag) =>
+          this.ioredisClient!.expire(`tag:${tag}`, actualTtl + 300),
+        );
+        await Promise.all(tagTtlOperations);
+      }
+
+      this.logger.debug(`Cache set with tags: ${key} [${tags.join(', ')}]`);
+    } catch (error) {
+      this.logger.error(`Error setting cache with tags for key ${key}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Invalidate all cache entries associated with a specific tag
+   */
+  async invalidateByTag(tag: string): Promise<number> {
+    try {
+      let deletedCount = 0;
+
+      if (this.clientType === 'upstash' && this.upstashClient) {
+        const keys = await this.upstashClient.smembers(`tag:${tag}`);
+        if (keys.length > 0) {
+          await this.upstashClient.del(...keys);
+          await this.upstashClient.del(`tag:${tag}`);
+          deletedCount = keys.length;
+        }
+      } else if (this.clientType === 'traditional' && this.ioredisClient) {
+        const keys = await this.ioredisClient.smembers(`tag:${tag}`);
+        if (keys.length > 0) {
+          await this.ioredisClient.del(...keys);
+          await this.ioredisClient.del(`tag:${tag}`);
+          deletedCount = keys.length;
+        }
+      }
+
+      this.logger.debug(
+        `Invalidated ${deletedCount} cache entries with tag: ${tag}`,
+      );
+      return deletedCount;
+    } catch (error) {
+      this.logger.error(`Error invalidating cache by tag ${tag}:`, error);
+      return 0;
+    }
+  }
+
+  /**
+   * Invalidate all cache entries associated with multiple tags
+   */
+  async invalidateByTags(tags: string[]): Promise<number> {
+    let totalDeleted = 0;
+    for (const tag of tags) {
+      const deleted = await this.invalidateByTag(tag);
+      totalDeleted += deleted;
+    }
+    return totalDeleted;
+  }
+
+  /**
+   * Get all cache keys associated with a specific tag
+   */
+  async getKeysByTag(tag: string): Promise<string[]> {
+    try {
+      if (this.clientType === 'upstash' && this.upstashClient) {
+        return await this.upstashClient.smembers(`tag:${tag}`);
+      } else if (this.clientType === 'traditional' && this.ioredisClient) {
+        return await this.ioredisClient.smembers(`tag:${tag}`);
+      }
+      return [];
+    } catch (error) {
+      this.logger.error(`Error getting keys by tag ${tag}:`, error);
+      return [];
     }
   }
 }

@@ -1,10 +1,29 @@
 import { PartialType } from '@nestjs/swagger';
 import { CreateProductDto } from './create-product.dto';
-import { IsOptional, IsBoolean, IsEnum, IsArray, IsUrl } from 'class-validator';
+import {
+  IsOptional,
+  IsBoolean,
+  IsEnum,
+  IsArray,
+  IsUrl,
+  IsString,
+  MaxLength,
+  IsNotEmpty,
+} from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 
 export class UpdateProductDto extends PartialType(CreateProductDto) {
+  @ApiPropertyOptional({
+    description: 'Product name',
+    example: 'Updated Product Name',
+    maxLength: 255,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  name?: string;
+
   @ApiPropertyOptional({
     description: 'Product status',
     example: 'LIVE',

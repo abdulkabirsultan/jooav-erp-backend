@@ -282,7 +282,7 @@ model Product {
   id              String        @id @default(cuid())
   
   // Basic Product Information
-  name            String        // Generated: Brand Variant PackSize (PackType)
+  name            String        @unique // User-provided product name (must be unique)
   description     String?
   sku             String        @unique // Auto-generated: Brand Variant PackSize (PackType)
   

@@ -8,49 +8,41 @@ export class CacheInvalidationService {
   constructor(private readonly cacheService: CacheService) {}
 
   /**
-   * Invalidate all category-related caches
+   * Invalidate all category-related caches using tags
    */
   async invalidateCategories(): Promise<void> {
     try {
-      const patterns = [
-        'get:/categories*',
-        'get:/categories/tree*',
-        'get:/categories/subcategories*',
-      ];
-
-      await this.invalidateByPatterns(patterns);
-      this.logger.log('Invalidated all category caches');
+      const deletedCount =
+        await this.cacheService.invalidateByTag('categories');
+      this.logger.log(`Invalidated ${deletedCount} category cache entries`);
     } catch (error) {
       this.logger.error('Failed to invalidate category caches', error);
     }
   }
 
   /**
-   * Invalidate all product-related caches
+   * Invalidate all product-related caches using tags
    */
   async invalidateProducts(): Promise<void> {
     try {
-      const patterns = ['get:/api/v1/products*', 'get:/api/v1/products/*'];
-
-      await this.invalidateByPatterns(patterns);
-      this.logger.log('Invalidated all product caches');
+      const deletedCount = await this.cacheService.invalidateByTag('products');
+      this.logger.log(`Invalidated ${deletedCount} product cache entries`);
     } catch (error) {
       this.logger.error('Failed to invalidate product caches', error);
     }
   }
 
   /**
-   * Invalidate caches for a specific product
+   * Invalidate caches for a specific product using tags
    */
   async invalidateProduct(productId: string): Promise<void> {
     try {
-      const patterns = [
-        `get:/api/v1/products/${productId}*`,
-        'get:/api/v1/products*', // Also invalidate the list since it might include this product
-      ];
-
-      await this.invalidateByPatterns(patterns);
-      this.logger.log(`Invalidated caches for product: ${productId}`);
+      const deletedCount = await this.cacheService.invalidateByTag(
+        `product:${productId}`,
+      );
+      this.logger.log(
+        `Invalidated ${deletedCount} cache entries for product: ${productId}`,
+      );
     } catch (error) {
       this.logger.error(
         `Failed to invalidate caches for product: ${productId}`,
@@ -60,20 +52,15 @@ export class CacheInvalidationService {
   }
 
   /**
-   * Invalidate caches for a specific category and related products
+   * Invalidate caches for a specific category and related products using tags
    */
   async invalidateCategory(categoryId: string): Promise<void> {
     try {
-      const patterns = [
-        'get:/categories*',
-        'get:/categories/tree*',
-        'get:/categories/subcategories*',
-        // Also invalidate products since they might be filtered by this category
-        'get:/api/v1/products*',
-      ];
-
-      await this.invalidateByPatterns(patterns);
-      this.logger.log(`Invalidated caches for category: ${categoryId}`);
+      const tags = [`category:${categoryId}`, 'categories'];
+      const deletedCount = await this.cacheService.invalidateByTags(tags);
+      this.logger.log(
+        `Invalidated ${deletedCount} cache entries for category: ${categoryId}`,
+      );
     } catch (error) {
       this.logger.error(
         `Failed to invalidate caches for category: ${categoryId}`,
@@ -83,19 +70,19 @@ export class CacheInvalidationService {
   }
 
   /**
-   * Invalidate caches for a specific subcategory and related products
+   * Invalidate caches for a specific subcategory and related products using tags
    */
   async invalidateSubcategory(subcategoryId: string): Promise<void> {
     try {
-      const patterns = [
-        'get:/subcategories*',
-        'get:/categories*', // Also invalidate categories as they include subcategory data
-        // Also invalidate products since they might be filtered by this subcategory
-        'get:/api/v1/products*',
+      const tags = [
+        `subcategory:${subcategoryId}`,
+        'subcategories',
+        'categories',
       ];
-
-      await this.invalidateByPatterns(patterns);
-      this.logger.log(`Invalidated caches for subcategory: ${subcategoryId}`);
+      const deletedCount = await this.cacheService.invalidateByTags(tags);
+      this.logger.log(
+        `Invalidated ${deletedCount} cache entries for subcategory: ${subcategoryId}`,
+      );
     } catch (error) {
       this.logger.error(
         `Failed to invalidate caches for subcategory: ${subcategoryId}`,
@@ -105,16 +92,15 @@ export class CacheInvalidationService {
   }
 
   /**
-   * Invalidate caches related to a brand
+   * Invalidate caches for a specific brand and related products using tags
    */
   async invalidateBrand(brandId: string): Promise<void> {
     try {
-      const patterns = [
-        'get:/api/v1/products*', // Products are filtered by brand
-      ];
-
-      await this.invalidateByPatterns(patterns);
-      this.logger.log(`Invalidated caches for brand: ${brandId}`);
+      const tags = [`brand:${brandId}`, 'brands', 'products'];
+      const deletedCount = await this.cacheService.invalidateByTags(tags);
+      this.logger.log(
+        `Invalidated ${deletedCount} cache entries for brand: ${brandId}`,
+      );
     } catch (error) {
       this.logger.error(
         `Failed to invalidate caches for brand: ${brandId}`,
@@ -124,64 +110,20 @@ export class CacheInvalidationService {
   }
 
   /**
-   * Invalidate caches related to a variant
+   * Invalidate caches for a specific variant and related products using tags
    */
   async invalidateVariant(variantId: string): Promise<void> {
     try {
-      const patterns = [
-        'get:/api/v1/products*', // Products use variants
-      ];
-
-      await this.invalidateByPatterns(patterns);
-      this.logger.log(`Invalidated caches for variant: ${variantId}`);
+      const tags = [`variant:${variantId}`, 'variants', 'products'];
+      const deletedCount = await this.cacheService.invalidateByTags(tags);
+      this.logger.log(
+        `Invalidated ${deletedCount} cache entries for variant: ${variantId}`,
+      );
     } catch (error) {
       this.logger.error(
         `Failed to invalidate caches for variant: ${variantId}`,
         error,
       );
-    }
-  }
-
-  /**
-   * Invalidate all public endpoint caches
-   */
-  async invalidateAllPublic(): Promise<void> {
-    try {
-      const patterns = ['get:/categories*', 'get:/api/v1/products*'];
-
-      await this.invalidateByPatterns(patterns);
-      this.logger.log('Invalidated all public endpoint caches');
-    } catch (error) {
-      this.logger.error('Failed to invalidate all public caches', error);
-    }
-  }
-
-  /**
-   * Helper method to invalidate caches by patterns
-   * Note: This is a simplified implementation. In a production environment,
-   * you might want to use Redis SCAN with pattern matching for more efficiency.
-   */
-  private async invalidateByPatterns(patterns: string[]): Promise<void> {
-    // Since we can't easily scan Redis keys with patterns in this setup,
-    // we'll use a simple approach by tracking known cache keys
-    // In a more sophisticated setup, you could use Redis SCAN or maintain a separate index
-
-    for (const pattern of patterns) {
-      // For now, we'll just log the pattern that would be invalidated
-      // In production, you'd implement actual pattern matching
-      this.logger.debug(`Would invalidate pattern: ${pattern}`);
-    }
-  }
-
-  /**
-   * Clear a specific cache key
-   */
-  async invalidateKey(key: string): Promise<void> {
-    try {
-      await this.cacheService.del(key);
-      this.logger.debug(`Invalidated cache key: ${key}`);
-    } catch (error) {
-      this.logger.error(`Failed to invalidate cache key: ${key}`, error);
     }
   }
 
