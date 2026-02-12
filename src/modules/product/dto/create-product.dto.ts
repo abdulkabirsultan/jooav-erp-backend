@@ -8,10 +8,12 @@ import {
   MaxLength,
   MinLength,
   Matches,
+  IsEnum,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import { Decimal } from '@prisma/client/runtime/library';
+import { ProductStatus } from '@prisma/client';
 
 export class CreateProductDto {
   @ApiProperty({
@@ -38,6 +40,17 @@ export class CreateProductDto {
   @IsOptional()
   @IsString()
   barcode?: string;
+
+  @ApiPropertyOptional({
+    description: 'Product status',
+    example: 'ACTIVE',
+    enum: ProductStatus,
+    enumName: 'ProductStatus',
+    default: 'ACTIVE',
+  })
+  @IsOptional()
+  @IsEnum(ProductStatus)
+  status?: ProductStatus;
 
   @ApiProperty({
     description: 'Brand ID that this product belongs to',

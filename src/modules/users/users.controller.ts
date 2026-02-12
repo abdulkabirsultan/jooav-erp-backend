@@ -44,6 +44,7 @@ import {
   RegenerateResetTokenResponseDto,
 } from './dto/user-response.dto';
 import { UserProfileDto } from '../auth/dto/auth-response.dto';
+import { UsersQueryDto } from './dto/users-query.dto';
 import { PaginationDto } from '../../common/dto';
 
 @ApiTags('Users')
@@ -64,11 +65,6 @@ export class UsersController {
   @ApiOperation({
     summary: 'Get all users with pagination and filters (Admin only)',
   })
-  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
-  @ApiQuery({ name: 'limit', required: false, type: Number, example: 10 })
-  @ApiQuery({ name: 'search', required: false, type: String })
-  @ApiQuery({ name: 'role', required: false, enum: UserRole })
-  @ApiQuery({ name: 'status', required: false, enum: UserStatus })
   @ApiResponse({
     status: 200,
     description: 'Users retrieved successfully',
@@ -80,14 +76,12 @@ export class UsersController {
     description: 'Forbidden - Admin access required',
   })
   async findAll(
-    @Query() paginationDto: PaginationDto,
-    @Query('role') role?: UserRole,
-    @Query('status') status?: UserStatus,
+    @Query() queryDto: UsersQueryDto,
     @CurrentUserId() currentUserId?: string,
   ): Promise<PaginatedResponse<UserProfileDto>> {
     return this.usersService.findAll(
-      paginationDto,
-      { role, status },
+      queryDto,
+      { role: queryDto.role, status: queryDto.status },
       currentUserId,
     );
   }
