@@ -482,7 +482,7 @@ export class ProductController {
     );
   }
 
-  @Delete('bulk')
+  @Post('bulk')
   @UseGuards(UnifiedAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   @ApiBearerAuth('admin-access-token')
