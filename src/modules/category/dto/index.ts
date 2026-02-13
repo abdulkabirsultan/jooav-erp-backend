@@ -8,4 +8,5 @@ export {
   CategoryResponseDto,
   CategorySubcategoryDto,
 } from './category-response.dto';
+export { BulkDeleteCategoryDto } from './bulk-delete-category.dto';
 export { CategoryStatsDto } from './category-stats.dto';

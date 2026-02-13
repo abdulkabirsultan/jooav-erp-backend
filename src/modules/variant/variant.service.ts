@@ -17,6 +17,7 @@ import {
   VariantStatsDto,
 } from './dto';
 import { PaginatedResponse } from '../../common/dto/paginated-response.dto';
+import { BulkDeleteResultDto } from '../../common/dto';
 import { AuditLog } from '../../common/decorators/audit-log.decorator';
 
 @Injectable()
@@ -850,6 +851,84 @@ export class VariantService {
       totalVariants,
       totalBrands,
       inactiveVariants: deletedVariants,
+    };
+  }
+
+  @AuditLog({
+    action: 'BULK_DELETE',
+    resource: 'VARIANT',
+  })
+  async removeMany(
+    variantIds: string[],
+    userId: string,
+  ): Promise<BulkDeleteResultDto> {
+    const results: Array<{ id: string; success: boolean; error?: string }> = [];
+
+    // Process each variant deletion individually to handle errors gracefully
+    for (const variantId of variantIds) {
+      try {
+        // Check if variant exists and is not already deleted
+        const variant = await this.prisma.variant.findFirst({
+          where: {
+            id: variantId,
+            deletedAt: null,
+          },
+        });
+
+        if (!variant) {
+          results.push({
+            id: variantId,
+            success: false,
+            error: 'Variant not found or already deleted',
+          });
+          continue;
+        }
+
+        // Check if variant has associated products
+        const associatedProducts = await this.prisma.product.count({
+          where: {
+            variantId: variantId,
+            deletedAt: null,
+          },
+        });
+
+        if (associatedProducts > 0) {
+          results.push({
+            id: variantId,
+            success: false,
+            error: `Cannot delete variant with ${associatedProducts} associated products`,
+          });
+          continue;
+        }
+
+        // Perform soft delete
+        await this.prisma.variant.update({
+          where: { id: variantId },
+          data: {
+            deletedAt: new Date(),
+            deletedBy: userId,
+          },
+        });
+
+        // Invalidate cache
+        await this.cacheInvalidationService.invalidateVariant(variantId);
+
+        results.push({ id: variantId, success: true });
+      } catch (error) {
+        results.push({
+          id: variantId,
+          success: false,
+          error:
+            error instanceof Error ? error.message : 'Unknown error occurred',
+        });
+      }
+    }
+
+    return {
+      results,
+      totalRequested: variantIds.length,
+      successful: results.filter((r) => r.success).length,
+      failed: results.filter((r) => !r.success).length,
     };
   }
 }

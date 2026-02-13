@@ -11,6 +11,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { generatePasswordResetToken } from '../../common/utils/token.util';
 import { AuditService } from '../audit/audit.service';
 import { EmailService } from '../email/email.service';
+import { CacheService } from '../cache/cache.service';
 import { ConfigService } from '@nestjs/config';
 import { PaginationDto, PaginatedResponse } from '../../common/dto';
 import {
@@ -21,7 +22,9 @@ import {
   UpdateUserProfileDto,
   UpdateAdminPermissionsDto,
 } from './dto/user.dto';
+import { BulkDeleteUserDto } from './dto/bulk-delete-user.dto';
 import { UserProfileDto } from '../auth/dto/auth-response.dto';
+import { BulkDeleteResultDto } from '../../common/dto';
 
 @Injectable()
 export class UsersService {
@@ -37,6 +40,7 @@ export class UsersService {
     private auditService: AuditService,
     private emailService: EmailService,
     private configService: ConfigService,
+    private cacheService: CacheService,
   ) {}
 
   // ================================
@@ -782,6 +786,125 @@ export class UsersService {
     );
   }
 
+  /**
+   * Bulk soft delete users
+   */
+  async bulkDelete(
+    userIds: string[],
+    deletedBy: string,
+    request?: any,
+  ): Promise<{
+    deletedCount: number;
+    deletedIds: string[];
+    failedIds: Array<{ id: string; error: string }>;
+  }> {
+    const deletedIds: string[] = [];
+    const failedIds: Array<{ id: string; error: string }> = [];
+
+    // Get current user to check permissions
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: deletedBy },
+      include: { adminProfile: true },
+    });
+
+    if (!currentUser) {
+      throw new NotFoundException('Current user not found');
+    }
+
+    // Process each user deletion individually to handle errors gracefully
+    for (const userId of userIds) {
+      try {
+        // Check if user exists and is not already deleted
+        const user = await this.prisma.user.findFirst({
+          where: {
+            id: userId,
+            status: { not: UserStatus.DEACTIVATED },
+          },
+        });
+
+        if (!user) {
+          failedIds.push({
+            id: userId,
+            error: 'User not found or already deleted',
+          });
+          continue;
+        }
+
+        // Check if user is trying to delete themselves
+        if (user.id === deletedBy) {
+          failedIds.push({
+            id: userId,
+            error: 'Cannot delete yourself',
+          });
+          continue;
+        }
+
+        // Check permissions for deleting admin accounts
+        if (
+          (user.role === UserRole.ADMIN ||
+            user.role === UserRole.SUPER_ADMIN) &&
+          !currentUser.adminProfile?.canSuspendAdmins
+        ) {
+          failedIds.push({
+            id: userId,
+            error: 'Insufficient permissions to delete admin accounts',
+          });
+          continue;
+        }
+
+        // Prevent deletion of super admin accounts by anyone
+        if (user.role === UserRole.SUPER_ADMIN) {
+          failedIds.push({
+            id: userId,
+            error: 'Super Admin accounts cannot be deleted',
+          });
+          continue;
+        }
+
+        // Perform soft delete
+        await this.prisma.user.update({
+          where: { id: userId },
+          data: {
+            status: UserStatus.DEACTIVATED,
+            updatedAt: new Date(),
+          },
+        });
+
+        // Invalidate all user sessions
+        await this.prisma.userSession.deleteMany({
+          where: { userId },
+        });
+
+        // Log user deletion for each user
+        await this.auditService.logUserAction(
+          deletedBy,
+          'BULK_DELETE_USER',
+          'USER',
+          userId,
+          {
+            email: user.email,
+            bulkOperation: true,
+          },
+          request,
+        );
+
+        deletedIds.push(userId);
+      } catch (error) {
+        failedIds.push({
+          id: userId,
+          error:
+            error instanceof Error ? error.message : 'Unknown error occurred',
+        });
+      }
+    }
+
+    return {
+      deletedCount: deletedIds.length,
+      deletedIds,
+      failedIds,
+    };
+  }
+
   // ================================
   // UTILITY METHODS
   // ================================
@@ -972,6 +1095,141 @@ export class UsersService {
     return {
       totalUsers,
       archived,
+    };
+  }
+
+  /**
+   * Check for user dependencies before deletion
+   */
+  private async checkUserDependencies(userId: string): Promise<string[]> {
+    const dependencies: string[] = [];
+
+    try {
+      // Check for created orders
+      const ordersCount = await this.prisma.order.count({
+        where: { createdById: userId },
+      });
+      if (ordersCount > 0) {
+        dependencies.push(`${ordersCount} orders`);
+      }
+
+      // Check for other relations that might prevent deletion
+      // Add more dependency checks as needed based on your business logic
+    } catch (error) {
+      // If we can't check dependencies, assume there are some to be safe
+      dependencies.push('unknown dependencies');
+    }
+
+    return dependencies;
+  }
+
+  async removeMany(
+    userIds: string[],
+    currentUserId: string,
+  ): Promise<BulkDeleteResultDto> {
+    const results: Array<{ id: string; success: boolean; error?: string }> = [];
+
+    // Process each user deletion individually to handle errors gracefully
+    for (const userId of userIds) {
+      try {
+        // Check if user exists
+        const user = await this.prisma.user.findUnique({
+          where: { id: userId },
+        });
+
+        if (!user) {
+          results.push({
+            id: userId,
+            success: false,
+            error: 'User not found',
+          });
+          continue;
+        }
+
+        // Prevent user from deleting themselves
+        if (userId === currentUserId) {
+          results.push({
+            id: userId,
+            success: false,
+            error: 'Cannot delete your own account',
+          });
+          continue;
+        }
+
+        // Prevent deletion of SUPER_ADMIN users by non-SUPER_ADMINs
+        const currentUser = await this.prisma.user.findUnique({
+          where: { id: currentUserId },
+          select: { role: true },
+        });
+
+        if (
+          user.role === UserRole.SUPER_ADMIN &&
+          currentUser?.role !== UserRole.SUPER_ADMIN
+        ) {
+          results.push({
+            id: userId,
+            success: false,
+            error: 'Only SUPER_ADMIN can delete SUPER_ADMIN users',
+          });
+          continue;
+        }
+
+        // Check if this is the last SUPER_ADMIN
+        if (user.role === UserRole.SUPER_ADMIN) {
+          const superAdminCount = await this.prisma.user.count({
+            where: {
+              role: UserRole.SUPER_ADMIN,
+            },
+          });
+
+          if (superAdminCount <= 1) {
+            results.push({
+              id: userId,
+              success: false,
+              error: 'Cannot delete the last SUPER_ADMIN user',
+            });
+            continue;
+          }
+        }
+
+        // Check for dependencies (orders, created content, etc.)
+        const dependencies = await this.checkUserDependencies(userId);
+        if (dependencies.length > 0) {
+          results.push({
+            id: userId,
+            success: false,
+            error: `Cannot delete user with existing dependencies: ${dependencies.join(', ')}`,
+          });
+          continue;
+        }
+
+        // Perform hard delete (since User model doesn't have soft delete fields)
+        await this.prisma.user.delete({
+          where: { id: userId },
+        });
+
+        results.push({
+          id: userId,
+          success: true,
+        });
+
+        // Invalidate cache
+        await this.cacheService.invalidateByTags(['users']);
+      } catch (error) {
+        results.push({
+          id: userId,
+          success: false,
+          error:
+            error instanceof Error ? error.message : 'Unknown error occurred',
+        });
+      }
+    }
+
+    return {
+      results,
+      totalRequested: userIds.length,
+      successful: results.filter((r) => r.success).length,
+      failed: results.filter((r) => !r.success).length,
     };
   }
 }

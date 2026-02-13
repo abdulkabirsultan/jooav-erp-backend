@@ -15,6 +15,7 @@ import {
 import { ManufacturerResponseDto } from './dto/manufacturer-response.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResponse } from '../../common/dto/paginated-response.dto';
+import { BulkDeleteResultDto } from '../../common/dto';
 
 @Injectable()
 export class ManufacturerService {
@@ -943,6 +944,77 @@ export class ManufacturerService {
         hasNextPage: page < Math.ceil(total / limit),
         hasPreviousPage: page > 1,
       },
+    };
+  }
+
+  async removeMany(
+    manufacturerIds: string[],
+    userId: string,
+  ): Promise<BulkDeleteResultDto> {
+    const results: Array<{ id: string; success: boolean; error?: string }> = [];
+
+    // Process each manufacturer deletion individually to handle errors gracefully
+    for (const manufacturerId of manufacturerIds) {
+      try {
+        // Check if manufacturer exists and is not already deleted
+        const manufacturer = await this.prisma.manufacturer.findFirst({
+          where: {
+            id: manufacturerId,
+            deletedAt: null,
+          },
+        });
+
+        if (!manufacturer) {
+          results.push({
+            id: manufacturerId,
+            success: false,
+            error: 'Manufacturer not found or already deleted',
+          });
+          continue;
+        }
+
+        // Check if manufacturer has associated products
+        const associatedProducts = await this.prisma.product.count({
+          where: {
+            manufacturerId: manufacturerId,
+            deletedAt: null,
+          },
+        });
+
+        if (associatedProducts > 0) {
+          results.push({
+            id: manufacturerId,
+            success: false,
+            error: `Cannot delete manufacturer with ${associatedProducts} associated products`,
+          });
+          continue;
+        }
+
+        // Perform soft delete
+        await this.prisma.manufacturer.update({
+          where: { id: manufacturerId },
+          data: {
+            deletedAt: new Date(),
+            deletedBy: userId,
+          },
+        });
+
+        results.push({ id: manufacturerId, success: true });
+      } catch (error) {
+        results.push({
+          id: manufacturerId,
+          success: false,
+          error:
+            error instanceof Error ? error.message : 'Unknown error occurred',
+        });
+      }
+    }
+
+    return {
+      results,
+      totalRequested: manufacturerIds.length,
+      successful: results.filter((r) => r.success).length,
+      failed: results.filter((r) => !r.success).length,
     };
   }
 }

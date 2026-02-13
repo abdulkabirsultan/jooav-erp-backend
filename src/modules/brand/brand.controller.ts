@@ -26,6 +26,7 @@ import {
   ApiBody,
   ApiUnauthorizedResponse,
   ApiForbiddenResponse,
+  ApiBadRequestResponse,
 } from '@nestjs/swagger';
 import { BrandStatus } from '@prisma/client';
 import { BrandService } from './brand.service';
@@ -39,7 +40,9 @@ import {
   BrandStatsDto,
   BulkBrandOperationDto,
   BulkBrandOperationResultDto,
+  BulkDeleteBrandDto,
 } from './dto';
+import { BulkDeleteResultDto } from '../../common/dto';
 import { UnifiedAuthGuard } from '../../common/guards/unified-auth.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import {
@@ -463,6 +466,43 @@ export class BrandController {
       ResponseMessages.deleted('Brand', brandName),
       null,
     );
+  }
+
+  @Post('bulk/delete')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'Delete multiple brands',
+    description:
+      'Soft delete multiple brands by their IDs. Returns success/failure status for each brand.',
+  })
+  @ApiBody({
+    description: 'Array of brand IDs to delete',
+    type: BulkDeleteBrandDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Bulk delete operation completed',
+    type: BulkDeleteResultDto,
+  })
+  @ApiBadRequestResponse({ description: 'Invalid brand IDs or empty array' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  @ApiForbiddenResponse({ description: 'Admin access required' })
+  @AuditLog({ action: 'BULK_DELETE', resource: 'brand' })
+  async removeMany(
+    @Body() bulkDeleteDto: BulkDeleteBrandDto,
+    @CurrentUserId() userId: string,
+  ): Promise<SuccessResponse<BulkDeleteResultDto>> {
+    const result = await this.brandService.removeMany(
+      bulkDeleteDto.brandIds,
+      userId,
+    );
+
+    let message = `Bulk delete completed: ${result.successful} brands deleted successfully`;
+    if (result.failed > 0) {
+      message += `, ${result.failed} failed`;
+    }
+
+    return new SuccessResponse(message, result);
   }
 
   @Patch(':id/activate')

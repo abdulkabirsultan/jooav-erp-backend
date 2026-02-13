@@ -20,6 +20,9 @@ import {
   ApiQuery,
   ApiParam,
   ApiBody,
+  ApiBadRequestResponse,
+  ApiUnauthorizedResponse,
+  ApiForbiddenResponse,
 } from '@nestjs/swagger';
 import { UserRole, ManufacturerStatus } from '@prisma/client';
 
@@ -50,6 +53,8 @@ import {
   BulkManufacturerOperationDto,
   BulkOperationResultDto,
 } from './dto/bulk-manufacturer-operation.dto';
+import { BulkDeleteManufacturerDto } from './dto/bulk-delete-manufacturer.dto';
+import { BulkDeleteResultDto } from '../../common/dto';
 
 @ApiTags('Manufacturers')
 @Controller('manufacturers')
@@ -511,6 +516,49 @@ export class ManufacturerController {
       ),
       paginatedData,
     );
+  }
+
+  // ================================
+  // BULK OPERATIONS
+  // ================================
+
+  @Post('bulk/delete')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'Delete multiple manufacturers',
+    description:
+      'Soft delete multiple manufacturers by their IDs. Returns success/failure status for each manufacturer.',
+  })
+  @ApiBody({
+    description: 'Array of manufacturer IDs to delete',
+    type: BulkDeleteManufacturerDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Bulk delete operation completed',
+    type: BulkDeleteResultDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid manufacturer IDs or empty array',
+  })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  @ApiForbiddenResponse({ description: 'Admin access required' })
+  @AuditLog({ action: 'BULK_DELETE', resource: 'manufacturer' })
+  async removeMany(
+    @Body() bulkDeleteDto: BulkDeleteManufacturerDto,
+    @CurrentUserId() adminId: string,
+  ): Promise<SuccessResponse<BulkDeleteResultDto>> {
+    const result = await this.manufacturerService.removeMany(
+      bulkDeleteDto.manufacturerIds,
+      adminId,
+    );
+
+    let message = `Bulk delete completed: ${result.successful} manufacturers deleted successfully`;
+    if (result.failed > 0) {
+      message += `, ${result.failed} failed`;
+    }
+
+    return new SuccessResponse(message, result);
   }
 
   // ================================

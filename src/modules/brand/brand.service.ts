@@ -21,6 +21,7 @@ import {
   PaginatedResponse,
   PaginationMeta,
 } from '../../common/dto/paginated-response.dto';
+import { BulkDeleteResultDto } from '../../common/dto';
 
 @Injectable()
 export class BrandService {
@@ -664,6 +665,97 @@ export class BrandService {
     };
   }
 
+  /**
+   * Bulk soft delete brands
+   */
+  async bulkDelete(
+    brandIds: string[],
+    userId: string,
+  ): Promise<{
+    deletedCount: number;
+    deletedIds: string[];
+    failedIds: Array<{ id: string; error: string }>;
+  }> {
+    const deletedIds: string[] = [];
+    const failedIds: Array<{ id: string; error: string }> = [];
+
+    // Process each brand deletion individually to handle errors gracefully
+    for (const brandId of brandIds) {
+      try {
+        // Check if brand exists and is not already deleted
+        const brand = await this.prisma.brand.findFirst({
+          where: {
+            id: brandId,
+            deletedAt: null,
+          },
+          include: {
+            _count: {
+              select: {
+                products: { where: { deletedAt: null } },
+                variants: { where: { deletedAt: null } },
+              },
+            },
+          },
+        });
+
+        if (!brand) {
+          failedIds.push({
+            id: brandId,
+            error: 'Brand not found or already deleted',
+          });
+          continue;
+        }
+
+        // Check if brand has associated products
+        if (brand._count.products > 0) {
+          failedIds.push({
+            id: brandId,
+            error: `Cannot delete brand with ${brand._count.products} associated products`,
+          });
+          continue;
+        }
+
+        // Perform soft delete
+        await this.prisma.brand.update({
+          where: { id: brandId },
+          data: {
+            deletedAt: new Date(),
+            deletedBy: userId,
+          },
+        });
+
+        // Log audit for each brand
+        await this.auditService.createAuditLog({
+          action: 'BULK_DELETE',
+          resource: 'Brand',
+          resourceId: brandId,
+          userId,
+          metadata: {
+            brandName: brand.name,
+            bulkOperation: true,
+          },
+        });
+
+        // Invalidate cache
+        await this.cacheInvalidationService.invalidateBrand(brandId);
+
+        deletedIds.push(brandId);
+      } catch (error) {
+        failedIds.push({
+          id: brandId,
+          error:
+            error instanceof Error ? error.message : 'Unknown error occurred',
+        });
+      }
+    }
+
+    return {
+      deletedCount: deletedIds.length,
+      deletedIds,
+      failedIds,
+    };
+  }
+
   async activate(id: string, userId: string): Promise<BrandResponseDto> {
     // Check if brand exists in deleted state
     const deletedBrand = await this.prisma.brand.findFirst({
@@ -984,6 +1076,97 @@ export class BrandService {
     return {
       data: brandsWithDeletedInfo as any,
       meta: new PaginationMeta(page, limit, total),
+    };
+  }
+
+  async removeMany(
+    brandIds: string[],
+    userId: string,
+  ): Promise<BulkDeleteResultDto> {
+    const results: Array<{ id: string; success: boolean; error?: string }> = [];
+
+    // Process each brand deletion individually to handle errors gracefully
+    for (const brandId of brandIds) {
+      try {
+        // Check if brand exists and is not already deleted
+        const brand = await this.prisma.brand.findFirst({
+          where: {
+            id: brandId,
+            deletedAt: null,
+          },
+        });
+
+        if (!brand) {
+          results.push({
+            id: brandId,
+            success: false,
+            error: 'Brand not found or already deleted',
+          });
+          continue;
+        }
+
+        // Check if brand has associated products
+        const associatedProducts = await this.prisma.product.count({
+          where: {
+            brandId: brandId,
+            deletedAt: null,
+          },
+        });
+
+        if (associatedProducts > 0) {
+          results.push({
+            id: brandId,
+            success: false,
+            error: `Cannot delete brand with ${associatedProducts} associated products`,
+          });
+          continue;
+        }
+
+        // Check if brand has associated variants
+        const associatedVariants = await this.prisma.variant.count({
+          where: {
+            brandId: brandId,
+            deletedAt: null,
+          },
+        });
+
+        if (associatedVariants > 0) {
+          results.push({
+            id: brandId,
+            success: false,
+            error: `Cannot delete brand with ${associatedVariants} associated variants`,
+          });
+          continue;
+        }
+
+        // Perform soft delete
+        await this.prisma.brand.update({
+          where: { id: brandId },
+          data: {
+            deletedAt: new Date(),
+            deletedBy: userId,
+          },
+        });
+
+        // Invalidate cache
+        await this.cacheInvalidationService.invalidateBrand(brandId);
+
+        results.push({ id: brandId, success: true });
+      } catch (error) {
+        results.push({
+          id: brandId,
+          success: false,
+          error:
+            error instanceof Error ? error.message : 'Unknown error occurred',
+        });
+      }
+    }
+
+    return {
+      results,
+      totalRequested: brandIds.length,
+      successful: results.filter((r) => r.success).length,
+      failed: results.filter((r) => !r.success).length,
     };
   }
 }

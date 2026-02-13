@@ -37,7 +37,9 @@ import {
   CategoryQueryDto,
   CategoryResponseDto,
   CategoryStatsDto,
+  BulkDeleteCategoryDto,
 } from './dto';
+import { BulkDeleteResultDto } from '../../common/dto';
 import { SuccessResponse, PaginatedResponse } from '../../common/dto';
 import { Cache } from '../../common/decorators/cache.decorator';
 import { CacheInterceptor } from '../../common/interceptors/cache.interceptor';
@@ -274,6 +276,45 @@ export class CategoryController {
   ): Promise<SuccessResponse<{ message: string }>> {
     const result = await this.categoryService.remove(id, userId);
     return new SuccessResponse(result.message, result);
+  }
+
+  @Post('bulk/delete')
+  @UseGuards(UnifiedAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @ApiBearerAuth('admin-access-token')
+  @AuditLog({ action: 'BULK_DELETE', resource: 'category' })
+  @ApiOperation({
+    summary: 'Delete multiple categories',
+    description:
+      'Soft delete multiple categories by their IDs. Returns success/failure status for each category.',
+  })
+  @ApiBody({
+    description: 'Array of category IDs to delete',
+    type: BulkDeleteCategoryDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Bulk delete operation completed',
+    type: BulkDeleteResultDto,
+  })
+  @ApiBadRequestResponse({ description: 'Invalid category IDs or empty array' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  @ApiForbiddenResponse({ description: 'Admin access required' })
+  async removeMany(
+    @Body() bulkDeleteDto: BulkDeleteCategoryDto,
+    @CurrentUserId() userId: string,
+  ): Promise<SuccessResponse<BulkDeleteResultDto>> {
+    const result = await this.categoryService.removeMany(
+      bulkDeleteDto.categoryIds,
+      userId,
+    );
+
+    let message = `Bulk delete completed: ${result.successful} categories deleted successfully`;
+    if (result.failed > 0) {
+      message += `, ${result.failed} failed`;
+    }
+
+    return new SuccessResponse(message, result);
   }
 
   @Patch(':id/activate')

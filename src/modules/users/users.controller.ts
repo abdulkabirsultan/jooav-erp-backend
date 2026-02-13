@@ -10,6 +10,7 @@ import {
   UseGuards,
   Request,
   ParseEnumPipe,
+  HttpStatus,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -19,6 +20,9 @@ import {
   ApiBody,
   ApiQuery,
   ApiParam,
+  ApiBadRequestResponse,
+  ApiUnauthorizedResponse,
+  ApiForbiddenResponse,
 } from '@nestjs/swagger';
 import { UserRole, UserStatus } from '@prisma/client';
 
@@ -43,6 +47,8 @@ import {
   CreateUserResponseDto,
   RegenerateResetTokenResponseDto,
 } from './dto/user-response.dto';
+import { BulkDeleteUserDto } from './dto/bulk-delete-user.dto';
+import { BulkDeleteResultDto } from '../../common/dto';
 import { UserProfileDto } from '../auth/dto/auth-response.dto';
 import { UsersQueryDto } from './dto/users-query.dto';
 import { PaginationDto } from '../../common/dto';
@@ -366,6 +372,52 @@ export class UsersController {
   ): Promise<{ message: string }> {
     await this.usersService.remove(id, currentUserId, req);
     return { message: 'User deleted successfully' };
+  }
+
+  @Post('bulk/delete')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN) // Only Super Admin can bulk delete users
+  @ApiOperation({
+    summary: 'Delete multiple users',
+    description:
+      'Soft delete multiple users by their IDs. Returns success/failure status for each user.',
+  })
+  @ApiBody({
+    description: 'Array of user IDs to delete',
+    type: BulkDeleteUserDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Bulk delete operation completed',
+    type: BulkDeleteResultDto,
+  })
+  @ApiBadRequestResponse({ description: 'Invalid user IDs or empty array' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  @ApiForbiddenResponse({ description: 'Super Admin access required' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Super Admin access required',
+  })
+  @AuditLog({
+    action: 'BULK_DELETE_USER',
+    resource: 'USER',
+  })
+  async removeMany(
+    @Body() bulkDeleteDto: BulkDeleteUserDto,
+    @CurrentUserId() currentUserId: string,
+  ): Promise<SuccessResponse<BulkDeleteResultDto>> {
+    const result = await this.usersService.removeMany(
+      bulkDeleteDto.userIds,
+      currentUserId,
+    );
+
+    let message = `Bulk delete completed: ${result.successful} users deleted successfully`;
+    if (result.failed > 0) {
+      message += `, ${result.failed} failed`;
+    }
+
+    return new SuccessResponse(message, result);
   }
 
   // ================================

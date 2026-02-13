@@ -41,10 +41,10 @@ import {
   ProductQueryDto,
   ProductResponseDto,
   BulkDeleteProductDto,
-  BulkDeleteResultDto,
   BulkUpdateStatusDto,
   BulkUpdateStatusResultDto,
 } from './dto';
+import { BulkDeleteResultDto } from '../../common/dto';
 import {
   BulkProductCreationDto,
   BulkProductCreationResponse,
@@ -513,9 +513,9 @@ export class ProductController {
       userId,
     );
 
-    let message = `Bulk delete completed: ${result.deletedCount} products deleted successfully`;
-    if (result.failedIds.length > 0) {
-      message += `, ${result.failedIds.length} failed`;
+    let message = `Bulk delete completed: ${result.successful} products deleted successfully`;
+    if (result.failed > 0) {
+      message += `, ${result.failed} failed`;
     }
 
     return new SuccessResponse(message, result);

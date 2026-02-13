@@ -20,29 +20,6 @@ export class BulkDeleteProductDto {
   productIds: string[];
 }
 
-export class BulkDeleteResultDto {
-  @ApiProperty({
-    description: 'Number of products successfully deleted',
-    example: 3,
-  })
-  deletedCount: number;
-
-  @ApiProperty({
-    description: 'Array of product IDs that were successfully deleted',
-    example: ['clx123abc', 'clx456def'],
-    type: [String],
-  })
-  deletedIds: string[];
-
-  @ApiProperty({
-    description:
-      'Array of product IDs that failed to delete with error messages',
-    example: [{ id: 'clx789ghi', error: 'Product not found' }],
-    type: [Object],
-  })
-  failedIds: Array<{ id: string; error: string }>;
-}
-
 export class BulkUpdateStatusDto {
   @ApiProperty({
     description: 'Array of product IDs to update',

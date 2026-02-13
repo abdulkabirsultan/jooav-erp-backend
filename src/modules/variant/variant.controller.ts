@@ -17,6 +17,8 @@ import {
   ApiBearerAuth,
   ApiUnauthorizedResponse,
   ApiForbiddenResponse,
+  ApiBadRequestResponse,
+  ApiBody,
 } from '@nestjs/swagger';
 import { VariantService } from './variant.service';
 import {
@@ -25,7 +27,9 @@ import {
   VariantQueryDto,
   VariantResponseDto,
   VariantStatsDto,
+  BulkDeleteVariantDto,
 } from './dto';
+import { BulkDeleteResultDto } from '../../common/dto';
 import { UnifiedAuthGuard } from '../../common/guards/unified-auth.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user.decorator';
@@ -192,6 +196,43 @@ export class VariantController {
       ResponseMessages.deleted('Variant', 'item'),
       null,
     );
+  }
+
+  @Post('bulk/delete')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'Delete multiple variants',
+    description:
+      'Soft delete multiple variants by their IDs. Returns success/failure status for each variant.',
+  })
+  @ApiBody({
+    description: 'Array of variant IDs to delete',
+    type: BulkDeleteVariantDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Bulk delete operation completed',
+    type: BulkDeleteResultDto,
+  })
+  @ApiBadRequestResponse({ description: 'Invalid variant IDs or empty array' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  @ApiForbiddenResponse({ description: 'Admin access required' })
+  @AuditLog({ action: 'BULK_DELETE', resource: 'variant' })
+  async removeMany(
+    @Body() bulkDeleteDto: BulkDeleteVariantDto,
+    @CurrentUserId() userId: string,
+  ): Promise<SuccessResponse<BulkDeleteResultDto>> {
+    const result = await this.variantService.removeMany(
+      bulkDeleteDto.variantIds,
+      userId,
+    );
+
+    let message = `Bulk delete completed: ${result.successful} variants deleted successfully`;
+    if (result.failed > 0) {
+      message += `, ${result.failed} failed`;
+    }
+
+    return new SuccessResponse(message, result);
   }
 
   @Patch(':id/activate')

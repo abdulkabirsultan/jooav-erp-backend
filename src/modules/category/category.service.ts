@@ -20,6 +20,7 @@ import {
   PaginatedResponse,
   PaginationMeta,
 } from '../../common/dto/paginated-response.dto';
+import { BulkDeleteResultDto } from '../../common/dto';
 
 @Injectable()
 export class CategoryService {
@@ -812,6 +813,123 @@ export class CategoryService {
   }
 
   /**
+   * Bulk soft delete categories
+   */
+  async bulkDelete(
+    categoryIds: string[],
+    userId: string,
+  ): Promise<{
+    deletedCount: number;
+    deletedIds: string[];
+    failedIds: Array<{ id: string; error: string }>;
+  }> {
+    const deletedIds: string[] = [];
+    const failedIds: Array<{ id: string; error: string }> = [];
+
+    // Process each category deletion individually to handle errors gracefully
+    for (const categoryId of categoryIds) {
+      try {
+        // Check if category exists and is not already deleted
+        const category = await this.prisma.category.findFirst({
+          where: {
+            id: categoryId,
+            deletedAt: null,
+          },
+        });
+
+        if (!category) {
+          failedIds.push({
+            id: categoryId,
+            error: 'Category not found or already deleted',
+          });
+          continue;
+        }
+
+        // Check for active subcategories
+        const activeSubcategoriesCount = await this.prisma.subcategory.count({
+          where: {
+            categoryId: categoryId,
+            deletedAt: null,
+          },
+        });
+
+        if (activeSubcategoriesCount > 0) {
+          failedIds.push({
+            id: categoryId,
+            error: `Cannot delete category with ${activeSubcategoriesCount} subcategories`,
+          });
+          continue;
+        }
+
+        // Check for products in subcategories
+        const subcategoryProductsCount = await this.prisma.product.count({
+          where: {
+            subcategoryId: {
+              in: await this.prisma.subcategory
+                .findMany({
+                  where: {
+                    categoryId: categoryId,
+                    deletedAt: null,
+                  },
+                  select: { id: true },
+                })
+                .then((subs) => subs.map((sub) => sub.id)),
+            },
+            deletedAt: null,
+          },
+        });
+
+        if (subcategoryProductsCount > 0) {
+          failedIds.push({
+            id: categoryId,
+            error: `Cannot delete category with ${subcategoryProductsCount} products in subcategories`,
+          });
+          continue;
+        }
+
+        // Perform soft delete
+        await this.prisma.category.update({
+          where: { id: categoryId },
+          data: {
+            status: CategoryStatus.INACTIVE,
+            deletedAt: new Date(),
+            deletedBy: userId,
+          },
+        });
+
+        // Log audit for each category
+        await this.auditService.createAuditLog({
+          action: 'BULK_DELETE',
+          resource: 'Category',
+          resourceId: categoryId,
+          userId,
+          metadata: {
+            categoryName: category.name,
+            bulkOperation: true,
+          },
+        });
+
+        // Invalidate cache
+        await this.cacheInvalidationService.invalidateCategory(categoryId);
+
+        deletedIds.push(categoryId);
+      } catch (error) {
+        failedIds.push({
+          id: categoryId,
+          error:
+            error instanceof Error ? error.message : 'Unknown error occurred',
+        });
+      }
+    }
+
+    return {
+      deletedCount: deletedIds.length,
+      deletedIds,
+      failedIds,
+    };
+  }
+
+  /**
    * Cascade delete category with all its subcategories (only if no products exist)
    */
   async removeCascade(
@@ -1076,6 +1194,99 @@ export class CategoryService {
         }),
       ),
       topCategoriesByProducts: categoriesWithProducts,
+    };
+  }
+
+  async removeMany(
+    categoryIds: string[],
+    userId: string,
+  ): Promise<BulkDeleteResultDto> {
+    const results: Array<{ id: string; success: boolean; error?: string }> = [];
+
+    // Process each category deletion individually to handle errors gracefully
+    for (const categoryId of categoryIds) {
+      try {
+        // Check if category exists and is not already deleted
+        const category = await this.prisma.category.findFirst({
+          where: {
+            id: categoryId,
+            deletedAt: null,
+          },
+        });
+
+        if (!category) {
+          results.push({
+            id: categoryId,
+            success: false,
+            error: 'Category not found or already deleted',
+          });
+          continue;
+        }
+
+        // Check if category has associated subcategories
+        const associatedSubcategories = await this.prisma.subcategory.count({
+          where: {
+            categoryId: categoryId,
+            deletedAt: null,
+          },
+        });
+
+        if (associatedSubcategories > 0) {
+          results.push({
+            id: categoryId,
+            success: false,
+            error: `Cannot delete category with ${associatedSubcategories} associated subcategories`,
+          });
+          continue;
+        }
+
+        // Check if category has associated products (through subcategories)
+        const associatedProducts = await this.prisma.product.count({
+          where: {
+            subcategory: {
+              categoryId: categoryId,
+            },
+            deletedAt: null,
+          },
+        });
+
+        if (associatedProducts > 0) {
+          results.push({
+            id: categoryId,
+            success: false,
+            error: `Cannot delete category with ${associatedProducts} associated products`,
+          });
+          continue;
+        }
+
+        // Perform soft delete
+        await this.prisma.category.update({
+          where: { id: categoryId },
+          data: {
+            deletedAt: new Date(),
+            deletedBy: userId,
+          },
+        });
+
+        // Invalidate cache
+        await this.cacheInvalidationService.invalidateCategory(categoryId);
+
+        results.push({ id: categoryId, success: true });
+      } catch (error) {
+        results.push({
+          id: categoryId,
+          success: false,
+          error:
+            error instanceof Error ? error.message : 'Unknown error occurred',
+        });
+      }
+    }
+
+    return {
+      results,
+      totalRequested: categoryIds.length,
+      successful: results.filter((r) => r.success).length,
+      failed: results.filter((r) => !r.success).length,
     };
   }
 }

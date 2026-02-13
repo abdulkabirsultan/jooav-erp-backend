@@ -18,6 +18,7 @@ import {
   ProductResponseDto,
 } from './dto';
 import { PaginatedResponse } from '../../common/dto/paginated-response.dto';
+import { BulkDeleteResultDto } from '../../common/dto';
 import { StringUtils } from '../../common/utils/string.utils';
 import { BarcodeGenerator } from '../../common/utils/barcode.utils';
 
@@ -851,13 +852,8 @@ export class ProductService {
   async removeMany(
     productIds: string[],
     userId: string,
-  ): Promise<{
-    deletedCount: number;
-    deletedIds: string[];
-    failedIds: Array<{ id: string; error: string }>;
-  }> {
-    const deletedIds: string[] = [];
-    const failedIds: Array<{ id: string; error: string }> = [];
+  ): Promise<BulkDeleteResultDto> {
+    const results: Array<{ id: string; success: boolean; error?: string }> = [];
 
     // Process each product ID
     for (const productId of productIds) {
@@ -868,7 +864,11 @@ export class ProductService {
         });
 
         if (!existingProduct) {
-          failedIds.push({ id: productId, error: 'Product not found' });
+          results.push({
+            id: productId,
+            success: false,
+            error: 'Product not found',
+          });
           continue;
         }
 
@@ -898,11 +898,12 @@ export class ProductService {
         // Invalidate caches using tags
         await this.invalidateProductCaches(productId, existingProduct);
 
-        deletedIds.push(productId);
+        results.push({ id: productId, success: true });
       } catch (error) {
         this.logger.error(`Failed to delete product ${productId}`, error);
-        failedIds.push({
+        results.push({
           id: productId,
+          success: false,
           error: error.message || 'Unknown error occurred',
         });
       }
@@ -912,9 +913,10 @@ export class ProductService {
     await this.cacheService.invalidateByTag('products');
 
     return {
-      deletedCount: deletedIds.length,
-      deletedIds,
-      failedIds,
+      results,
+      totalRequested: productIds.length,
+      successful: results.filter((r) => r.success).length,
+      failed: results.filter((r) => !r.success).length,
     };
   }
 
