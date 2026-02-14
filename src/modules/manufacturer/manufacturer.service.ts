@@ -113,9 +113,14 @@ export class ManufacturerService {
       includeProducts?: boolean;
       includeAuditInfo?: boolean;
     },
+    sorting?: {
+      sortBy?: 'name' | 'createdAt' | 'updatedAt' | 'status';
+      sortOrder?: 'asc' | 'desc';
+    },
   ): Promise<PaginatedResponse<ManufacturerResponseDto>> {
     const { page = 1, limit = 10 } = paginationDto;
     const skip = (page - 1) * limit;
+    const { sortBy = 'createdAt', sortOrder = 'desc' } = sorting || {};
 
     const where: any = {
       deletedAt: null, // Only get non-deleted manufacturers
@@ -175,12 +180,14 @@ export class ManufacturerService {
       };
     }
 
+    const orderBy = { [sortBy]: sortOrder };
+
     const [manufacturers, total] = await Promise.all([
       this.prisma.manufacturer.findMany({
         where,
         skip,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy,
         include: includeObject,
       }),
       this.prisma.manufacturer.count({ where }),

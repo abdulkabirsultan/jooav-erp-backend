@@ -13,6 +13,7 @@ import {
   UploadedFile,
   UploadedFiles,
   BadRequestException,
+  Res,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -34,6 +35,7 @@ import {
   FileFieldsInterceptor,
 } from '@nestjs/platform-express';
 import { ProductService } from './product.service';
+import { BulkProductUploadService } from './services/bulk-product-upload.service';
 // import { BulkProductCreationService } from './services/bulk-product-creation.service';
 import {
   CreateProductDto,
@@ -43,6 +45,8 @@ import {
   BulkDeleteProductDto,
   BulkUpdateStatusDto,
   BulkUpdateStatusResultDto,
+  BulkUploadRequestDto,
+  BulkUploadResultDto,
 } from './dto';
 import { BulkDeleteResultDto } from '../../common/dto';
 import {
@@ -59,6 +63,7 @@ import { AuditLog } from '../../common/decorators/audit-log.decorator';
 import { Cache } from '../../common/decorators/cache.decorator';
 import { CacheInterceptor } from '../../common/interceptors/cache.interceptor';
 import { UserRole } from '../../common/enums/';
+import type { Response } from 'express';
 import { UnifiedAuthGuard } from '../../common/guards/unified-auth.guard';
 
 // Multer file filter for images only
@@ -101,6 +106,7 @@ const imageFileFilter = (
 export class ProductController {
   constructor(
     private readonly productService: ProductService,
+    private readonly bulkUploadService: BulkProductUploadService,
     // private readonly bulkProductCreationService: BulkProductCreationService,
   ) {}
 
@@ -207,44 +213,6 @@ export class ProductController {
       product,
     );
   }
-
-  // @Post('bulk')
-  // @UseGuards(UnifiedAuthGuard, RolesGuard)
-  // @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
-  // @ApiBearerAuth('admin-access-token')
-  // @ApiOperation({
-  //   summary: 'Bulk create products from CSV data',
-  //   description:
-  //     'Create multiple products from CSV data with automatic entity creation for manufacturers, brands, variants, and categories',
-  // })
-  // @ApiResponse({
-  //   status: HttpStatus.CREATED,
-  //   description: 'Bulk product creation completed',
-  //   type: BulkProductCreationResponse,
-  // })
-  // @ApiBadRequestResponse({
-  //   description: 'Invalid CSV data format or validation errors',
-  // })
-  // @ApiUnauthorizedResponse({ description: 'Authentication required' })
-  // @ApiForbiddenResponse({ description: 'Admin access required' })
-  // @AuditLog({ action: 'BULK_CREATE', resource: 'product' })
-  // async createBulk(
-  //   @Body() bulkCreationDto: BulkProductCreationDto,
-  //   @CurrentUserId() userId: string,
-  // ): Promise<SuccessResponse<BulkProductCreationResponse>> {
-  //   const result = await this.bulkProductCreationService.createBulkProducts(
-  //     bulkCreationDto.data,
-  //     userId,
-  //   );
-  //   return new SuccessResponse(
-  //     ResponseMessages.bulkCreated(result.successfulProducts, 'product'),
-  //     {
-  //       success: true,
-  //       message: `Bulk product creation completed. ${result.successfulProducts} products created successfully.`,
-  //       summary: result,
-  //     },
-  //   );
-  // }
 
   @Get()
   @UseInterceptors(CacheInterceptor)
@@ -645,5 +613,81 @@ export class ProductController {
       ResponseMessages.deactivated('Product', product.name),
       product,
     );
+  }
+
+  // ================================
+  // BULK UPLOAD OPERATIONS
+  // ================================
+
+  @Post('bulk/upload')
+  @UseGuards(UnifiedAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiBearerAuth('admin-access-token')
+  @ApiOperation({
+    summary: 'Bulk upload products from CSV',
+    description:
+      'Upload a CSV file to create multiple products with their dependencies (manufacturer, brand, variant, etc.)',
+  })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    description: 'CSV file containing product data',
+    type: BulkUploadRequestDto,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Bulk upload completed successfully',
+    type: BulkUploadResultDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid file format or validation errors',
+  })
+  @AuditLog({
+    action: 'BULK_UPLOAD_PRODUCTS',
+    resource: 'PRODUCT',
+  })
+  async bulkUpload(
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUserId() userId: string,
+  ): Promise<SuccessResponse<BulkUploadResultDto>> {
+    if (!file) {
+      throw new BadRequestException('CSV file is required');
+    }
+
+    if (file.mimetype !== 'text/csv' && !file.originalname.endsWith('.csv')) {
+      throw new BadRequestException('Only CSV files are allowed');
+    }
+
+    const result = await this.bulkUploadService.processUpload(file, userId);
+
+    return new SuccessResponse(result.summary, result);
+  }
+
+  @Get('bulk/upload/template')
+  @ApiOperation({
+    summary: 'Download CSV template for bulk upload',
+    description:
+      'Download a CSV template with headers and example data for bulk product upload',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'CSV template file',
+    content: {
+      'text/csv': {
+        schema: {
+          type: 'string',
+        },
+      },
+    },
+  })
+  async downloadTemplate(@Res() res: Response): Promise<void> {
+    const template = this.bulkUploadService.generateTemplate();
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename=product-upload-template.csv',
+    );
+    res.send(template);
   }
 }

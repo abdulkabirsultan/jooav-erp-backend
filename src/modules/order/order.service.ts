@@ -295,12 +295,22 @@ export class OrderService {
     wholesalerId?: string,
     procurementOfficerId?: string,
     status?: OrderStatus,
+    sorting?: {
+      sortBy?:
+        | 'orderNumber'
+        | 'totalAmount'
+        | 'orderDate'
+        | 'createdAt'
+        | 'updatedAt';
+      sortOrder?: 'asc' | 'desc';
+    },
   ) {
     // Validate pagination parameters
     if (page < 1) page = 1;
     if (limit < 1 || limit > 100) limit = 10;
 
     const skip = (page - 1) * limit;
+    const { sortBy = 'createdAt', sortOrder = 'desc' } = sorting || {};
     const whereCondition: any = {};
 
     if (wholesalerId) whereCondition.wholesalerId = wholesalerId;
@@ -326,7 +336,7 @@ export class OrderService {
         },
         skip,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { [sortBy]: sortOrder },
       }),
       this.prisma.order.count({ where: whereCondition }),
     ]);

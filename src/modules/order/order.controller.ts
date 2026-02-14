@@ -16,6 +16,7 @@ import { OrderService } from './order.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { OrderResponseDto } from './dto/order-response.dto';
+import { OrderQueryDto } from './dto/order-query.dto';
 import {
   ApiTags,
   ApiOperation,
@@ -138,7 +139,9 @@ export class OrderController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'Get orders with pagination and filtering' })
+  @ApiOperation({
+    summary: 'Get orders with pagination, filtering and sorting',
+  })
   @ApiResponse({
     status: 200,
     description: 'Orders retrieved successfully',
@@ -146,12 +149,22 @@ export class OrderController {
   @ApiQuery({ name: 'page', required: false, type: 'number', example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: 'number', example: 10 })
   @ApiQuery({ name: 'status', required: false, enum: OrderStatus })
-  async findAll(
-    @Request() req: any,
-    @Query('page', new ParseIntPipe({ optional: true })) page: number = 1,
-    @Query('limit', new ParseIntPipe({ optional: true })) limit: number = 10,
-    @Query('status') status?: OrderStatus,
-  ) {
+  @ApiQuery({
+    name: 'sortBy',
+    required: false,
+    enum: ['orderNumber', 'totalAmount', 'orderDate', 'createdAt', 'updatedAt'],
+    description: 'Sort by field',
+  })
+  @ApiQuery({
+    name: 'sortOrder',
+    required: false,
+    enum: ['asc', 'desc'],
+    description: 'Sort order',
+  })
+  async findAll(@Request() req: any, @Query() query: OrderQueryDto) {
+    let page = query.page ? parseInt(query.page.toString(), 10) : 1;
+    let limit = query.limit ? parseInt(query.limit.toString(), 10) : 10;
+
     // Validate pagination parameters
     if (page < 1) page = 1;
     if (limit < 1 || limit > 100) limit = 10;
@@ -173,7 +186,11 @@ export class OrderController {
       limit,
       wholesalerId,
       procurementOfficerId,
-      status,
+      query.status,
+      {
+        sortBy: query.sortBy,
+        sortOrder: query.sortOrder,
+      },
     );
   }
 

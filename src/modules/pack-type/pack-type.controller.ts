@@ -24,6 +24,7 @@ import {
   CreatePackTypeDto,
   UpdatePackTypeDto,
   PackTypeResponseDto,
+  PackTypeQueryDto,
 } from './dto';
 import { UnifiedAuthGuard } from '../../common/guards/unified-auth.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -64,20 +65,37 @@ export class PackTypeController {
   @Get()
   @ApiOperation({
     summary: 'Get all pack types',
-    description: 'Retrieve all active pack types',
+    description:
+      'Retrieve all active pack types with optional filtering and sorting',
   })
   @ApiQuery({
     name: 'variantId',
     required: false,
     description: 'Filter by variant ID',
   })
+  @ApiQuery({
+    name: 'sortBy',
+    required: false,
+    enum: ['name', 'createdAt', 'updatedAt'],
+    description: 'Sort by field',
+  })
+  @ApiQuery({
+    name: 'sortOrder',
+    required: false,
+    enum: ['asc', 'desc'],
+    description: 'Sort order',
+  })
   @ApiResponse({
     status: 200,
     description: 'Pack types retrieved successfully',
     type: [PackTypeResponseDto],
   })
-  async findAll(@Query('variantId') variantId?: string) {
-    const packTypes = await this.packTypeService.findAll(variantId);
+  async findAll(@Query() query: PackTypeQueryDto) {
+    const packTypes = await this.packTypeService.findAll({
+      variantId: query.variantId,
+      sortBy: query.sortBy,
+      sortOrder: query.sortOrder,
+    });
 
     return new SuccessResponse(
       ResponseMessages.foundItems(packTypes.length, 'pack type'),

@@ -57,7 +57,13 @@ export class PackSizeService {
     });
   }
 
-  async findAll(variantId?: string) {
+  async findAll(query?: {
+    variantId?: string;
+    sortBy?: 'name' | 'createdAt' | 'updatedAt';
+    sortOrder?: 'asc' | 'desc';
+  }) {
+    const { variantId, sortBy = 'createdAt', sortOrder = 'desc' } = query || {};
+
     const where: any = {
       status: PackSizeStatus.ACTIVE,
       deletedAt: null,
@@ -84,7 +90,7 @@ export class PackSizeService {
         },
       },
       orderBy: {
-        createdAt: 'desc',
+        [sortBy]: sortOrder,
       },
     });
   }

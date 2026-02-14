@@ -184,10 +184,16 @@ export class ManufacturerController {
       includeAuditInfo: queryDto.includeAuditInfo,
     };
 
+    const sortingDto = {
+      sortBy: queryDto.sortBy,
+      sortOrder: queryDto.sortOrder,
+    };
+
     const result = await this.manufacturerService.findAll(
       paginationDto,
       filtersDto,
       includesDto,
+      sortingDto,
     );
 
     return new SuccessResponse(

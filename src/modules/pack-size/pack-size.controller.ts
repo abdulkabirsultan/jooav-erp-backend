@@ -24,6 +24,7 @@ import {
   CreatePackSizeDto,
   UpdatePackSizeDto,
   PackSizeResponseDto,
+  PackSizeQueryDto,
 } from './dto';
 import { UnifiedAuthGuard } from '../../common/guards/unified-auth.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -64,20 +65,37 @@ export class PackSizeController {
   @Get()
   @ApiOperation({
     summary: 'Get all pack sizes',
-    description: 'Retrieve all active pack sizes',
+    description:
+      'Retrieve all active pack sizes with optional filtering and sorting',
   })
   @ApiQuery({
     name: 'variantId',
     required: false,
     description: 'Filter by variant ID',
   })
+  @ApiQuery({
+    name: 'sortBy',
+    required: false,
+    enum: ['name', 'createdAt', 'updatedAt'],
+    description: 'Sort by field',
+  })
+  @ApiQuery({
+    name: 'sortOrder',
+    required: false,
+    enum: ['asc', 'desc'],
+    description: 'Sort order',
+  })
   @ApiResponse({
     status: 200,
     description: 'Pack sizes retrieved successfully',
     type: [PackSizeResponseDto],
   })
-  async findAll(@Query('variantId') variantId?: string) {
-    const packSizes = await this.packSizeService.findAll(variantId);
+  async findAll(@Query() query: PackSizeQueryDto) {
+    const packSizes = await this.packSizeService.findAll({
+      variantId: query.variantId,
+      sortBy: query.sortBy,
+      sortOrder: query.sortOrder,
+    });
 
     return new SuccessResponse(
       ResponseMessages.foundItems(packSizes.length, 'pack size'),

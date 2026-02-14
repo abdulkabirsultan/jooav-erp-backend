@@ -11,6 +11,7 @@ import { CacheInvalidationService } from '../cache/cache-invalidation.service';
 import { StringUtils } from '../../common/utils/helpers.utils';
 import {
   CreateCategoryDto,
+  CreateSubcategoryInput,
   UpdateCategoryDto,
   CategoryQueryDto,
   CategoryResponseDto,
@@ -45,14 +46,13 @@ export class CategoryService {
   }
 
   /**
-   * Generate unique slug within transaction context
+   * Generate unique category slug safely outside transaction
    */
-  private async generateUniqueSlug(
+  private async generateUniqueCategorySlugSafe(
     baseSlug: string,
-    tx: any,
     excludeId?: string,
   ): Promise<string> {
-    const existingSlugs = await tx.category.findMany({
+    const existingSlugs = await this.prisma.category.findMany({
       where: {
         slug: { startsWith: baseSlug },
         deletedAt: null,
@@ -61,7 +61,7 @@ export class CategoryService {
       select: { slug: true },
     });
 
-    const existingSlugSet = new Set(existingSlugs.map((c: any) => c.slug));
+    const existingSlugSet = new Set(existingSlugs.map((c) => c.slug));
 
     if (!existingSlugSet.has(baseSlug)) {
       return baseSlug;
@@ -84,8 +84,62 @@ export class CategoryService {
   }
 
   /**
-   * Generate unique subcategory slug within transaction context
+   * Pre-generate subcategory slugs outside transaction
    */
+  private async preGenerateSubcategorySlugs(
+    subcategories: CreateSubcategoryInput[],
+  ): Promise<string[]> {
+    if (subcategories.length === 0) {
+      return [];
+    }
+
+    // Generate base slugs for all subcategories
+    const baseSlugs = subcategories.map((subcat) => {
+      const subcategoryName = StringUtils.titleCase(subcat.name.trim());
+      return StringUtils.slugify(subcategoryName);
+    });
+
+    // Get all existing subcategory slugs that could conflict
+    const allBaseSlugsPattern = baseSlugs.map((slug) => `${slug}%`).join(',');
+    const existingSlugs = await this.prisma.subcategory.findMany({
+      where: {
+        OR: baseSlugs.map((baseSlug) => ({
+          slug: { startsWith: baseSlug },
+        })),
+        deletedAt: null,
+      },
+      select: { slug: true },
+    });
+
+    const existingSlugSet = new Set(existingSlugs.map((s) => s.slug));
+    const usedSlugs = new Set<string>();
+    const resultSlugs: string[] = [];
+
+    // Generate unique slug for each subcategory
+    for (const baseSlug of baseSlugs) {
+      let uniqueSlug = baseSlug;
+
+      if (existingSlugSet.has(uniqueSlug) || usedSlugs.has(uniqueSlug)) {
+        let counter = 1;
+        uniqueSlug = `${baseSlug}-${counter}`;
+        while (existingSlugSet.has(uniqueSlug) || usedSlugs.has(uniqueSlug)) {
+          counter++;
+          uniqueSlug = `${baseSlug}-${counter}`;
+
+          if (counter > 999) {
+            throw new BadRequestException(
+              `Unable to generate unique slug for subcategory. Please use a different name.`,
+            );
+          }
+        }
+      }
+
+      usedSlugs.add(uniqueSlug);
+      resultSlugs.push(uniqueSlug);
+    }
+
+    return resultSlugs;
+  }
   private async generateUniqueSubcategorySlug(
     baseSlug: string,
     tx: any,
@@ -152,99 +206,99 @@ export class CategoryService {
       }
     }
 
-    // Create category and subcategories in a single atomic transaction
-    const result = await this.prisma.$transaction(async (tx) => {
-      // Check for duplicate category name
-      const existingCategory = await tx.category.findFirst({
+    // Pre-validate existence outside of transaction
+    const existingCategory = await this.prisma.category.findFirst({
+      where: {
+        name: { equals: sanitizedName, mode: 'insensitive' },
+        deletedAt: null,
+      },
+    });
+
+    if (existingCategory) {
+      throw new ConflictException(
+        `Category with name "${sanitizedName}" already exists`,
+      );
+    }
+
+    // Pre-validate subcategories
+    if (subcategories.length > 0) {
+      const subcategoryNames = subcategories.map((sub) =>
+        StringUtils.titleCase(sub.name.trim()),
+      );
+      const existingSubcategories = await this.prisma.subcategory.findMany({
         where: {
-          name: { equals: sanitizedName, mode: 'insensitive' },
+          name: {
+            in: subcategoryNames,
+            mode: 'insensitive',
+          },
           deletedAt: null,
         },
+        select: { name: true },
       });
 
-      if (existingCategory) {
+      if (existingSubcategories.length > 0) {
         throw new ConflictException(
-          `Category with name "${sanitizedName}" already exists`,
+          `Subcategory names already exist: ${existingSubcategories.map((s) => s.name).join(', ')}`,
         );
       }
+    }
 
-      // Check for existing subcategory names
-      if (subcategories.length > 0) {
-        const subcategoryNames = subcategories.map((sub) =>
-          StringUtils.titleCase(sub.name.trim()),
-        );
-        const existingSubcategories = await tx.subcategory.findMany({
-          where: {
-            name: {
-              in: subcategoryNames,
-              mode: 'insensitive',
-            },
-            deletedAt: null,
+    // Pre-generate unique slugs outside transaction
+    const finalSlug = await this.generateUniqueCategorySlugSafe(baseSlug);
+    const subcategorySlugs =
+      await this.preGenerateSubcategorySlugs(subcategories);
+
+    // Create category and subcategories in a single atomic transaction
+    const result = await this.prisma.$transaction(
+      async (tx) => {
+        // Create the category
+        const category = await tx.category.create({
+          data: {
+            name: sanitizedName,
+            slug: finalSlug,
+            description: description?.trim(),
+            createdBy: userId,
+            updatedBy: userId,
           },
-          select: { name: true },
         });
 
-        if (existingSubcategories.length > 0) {
-          throw new ConflictException(
-            `Subcategory names already exist: ${existingSubcategories.map((s) => s.name).join(', ')}`,
-          );
-        }
-      }
+        // Create subcategories with pre-generated slugs
+        const createdSubcategories: any[] = [];
+        if (subcategories.length > 0) {
+          for (let i = 0; i < subcategories.length; i++) {
+            const subcat = subcategories[i];
+            const subcategoryName = StringUtils.titleCase(subcat.name.trim());
+            const uniqueSubSlug = subcategorySlugs[i];
 
-      // Generate unique slug for category
-      const finalSlug = await this.generateUniqueSlug(baseSlug, tx);
-
-      // Create the category
-      const category = await tx.category.create({
-        data: {
-          name: sanitizedName,
-          slug: finalSlug,
-          description: description?.trim(),
-          createdBy: userId,
-          updatedBy: userId,
-        },
-      });
-
-      // Create subcategories with unique slugs
-      const createdSubcategories: any[] = [];
-      if (subcategories.length > 0) {
-        const usedSlugs = new Set<string>();
-
-        for (const subcat of subcategories) {
-          const subcategoryName = StringUtils.titleCase(subcat.name.trim());
-          const baseSubSlug = StringUtils.slugify(subcategoryName);
-
-          const uniqueSubSlug = await this.generateUniqueSubcategorySlug(
-            baseSubSlug,
-            tx,
-            usedSlugs,
-          );
-
-          const createdSubcategory = await tx.subcategory.create({
-            data: {
-              name: subcategoryName,
-              slug: uniqueSubSlug,
-              description: subcat.description?.trim(),
-              categoryId: category.id,
-              createdBy: userId,
-              updatedBy: userId,
-            },
-            include: {
-              _count: {
-                select: { products: { where: { deletedAt: null } } },
+            const createdSubcategory = await tx.subcategory.create({
+              data: {
+                name: subcategoryName,
+                slug: uniqueSubSlug,
+                description: subcat.description?.trim(),
+                categoryId: category.id,
+                createdBy: userId,
+                updatedBy: userId,
               },
-            },
-          });
-          createdSubcategories.push(createdSubcategory);
+              include: {
+                _count: {
+                  select: { products: { where: { deletedAt: null } } },
+                },
+              },
+            });
+            createdSubcategories.push(createdSubcategory);
+          }
         }
-      }
 
-      return {
-        ...category,
-        subcategories: createdSubcategories,
-        _count: { subcategories: createdSubcategories.length },
-      };
-    });
+        return {
+          ...category,
+          subcategories: createdSubcategories,
+          _count: { subcategories: createdSubcategories.length },
+        };
+      },
+      {
+        timeout: 10000, // 10 second timeout
+      },
+    );
 
     // Log audit trail for category creation
     await this.auditService.createAuditLog({
@@ -457,282 +511,289 @@ export class CategoryService {
     // Check if category exists
     const existingCategory = await this.findOne(id);
 
-    return await this.prisma.$transaction(async (tx) => {
-      // Prepare category update data
-      const updateData: any = {
-        updatedBy: userId,
-      };
+    // Pre-validate subcategory creation outside transaction
+    let subcategorySlugs: string[] = [];
+    if (createSubcategories.length > 0) {
+      // Validate new subcategory names for duplicates within request
+      const newSubcategoryNames = createSubcategories.map((sub) =>
+        sub.name.trim().toLowerCase(),
+      );
+      const duplicateNames = newSubcategoryNames.filter(
+        (name, index) => newSubcategoryNames.indexOf(name) !== index,
+      );
 
-      // Handle name update
-      if (name && name !== existingCategory.name) {
-        const sanitizedName = this.sanitizeCategoryName(name);
-        const slug = this.generateSlug(sanitizedName);
+      if (duplicateNames.length > 0) {
+        throw new BadRequestException(
+          `Duplicate subcategory names in request: ${duplicateNames.join(', ')}`,
+        );
+      }
 
-        // Check for conflicts
-        const conflictCategory = await tx.category.findFirst({
-          where: {
-            OR: [
-              { name: { equals: sanitizedName, mode: 'insensitive' } },
-              { slug },
-            ],
-            deletedAt: null,
-            NOT: { id },
+      // Check for conflicts with existing subcategories
+      const sanitizedNames = createSubcategories.map((sub) =>
+        StringUtils.titleCase(sub.name.trim()),
+      );
+
+      const existingSubcategories = await this.prisma.subcategory.findMany({
+        where: {
+          categoryId: id,
+          name: {
+            in: sanitizedNames,
+            mode: 'insensitive',
           },
-        });
-
-        if (conflictCategory) {
-          throw new ConflictException(
-            `Category with name "${sanitizedName}" already exists`,
-          );
-        }
-
-        updateData.name = sanitizedName;
-        updateData.slug = slug;
-      }
-
-      if (description !== undefined) {
-        updateData.description = description?.trim() || null;
-      }
-
-      if (status !== undefined) {
-        updateData.status = status;
-      }
-
-      // Update the category first
-      const updatedCategory = await tx.category.update({
-        where: { id },
-        data: updateData,
+          deletedAt: null,
+        },
+        select: { name: true },
       });
 
-      const operationsSummary = {
-        created: 0,
-        updated: 0,
-        deleted: 0,
-        productsReassigned: 0,
-        errors: [] as string[],
-      };
-
-      // 1. Handle subcategory deletions first (to check for cascading effects)
-      if (deleteSubcategoryIds.length > 0) {
-        for (const subcategoryId of deleteSubcategoryIds) {
-          // Verify subcategory belongs to this category
-          const subcategory = await tx.subcategory.findFirst({
-            where: {
-              id: subcategoryId,
-              categoryId: id,
-              deletedAt: null,
-            },
-            include: {
-              _count: {
-                select: { products: { where: { deletedAt: null } } },
-              },
-            },
-          });
-
-          if (!subcategory) {
-            operationsSummary.errors.push(
-              `Subcategory ${subcategoryId} not found or doesn't belong to this category`,
-            );
-            continue;
-          }
-
-          const productCount = subcategory._count.products;
-
-          if (productCount > 0 && !forceDeleteSubcategories) {
-            operationsSummary.errors.push(
-              `Cannot delete subcategory "${subcategory.name}" - it has ${productCount} products. Use forceDeleteSubcategories=true to cascade delete.`,
-            );
-            continue;
-          }
-
-          if (productCount > 0 && forceDeleteSubcategories) {
-            // Cascade delete: soft delete all products in this subcategory
-            await tx.product.updateMany({
-              where: {
-                subcategoryId: subcategoryId,
-                deletedAt: null,
-              },
-              data: {
-                deletedAt: new Date(),
-                deletedBy: userId,
-              },
-            });
-            operationsSummary.productsReassigned += productCount;
-          }
-
-          // Soft delete the subcategory
-          await tx.subcategory.update({
-            where: { id: subcategoryId },
-            data: {
-              status: SubcategoryStatus.INACTIVE,
-              deletedAt: new Date(),
-              deletedBy: userId,
-            },
-          });
-
-          operationsSummary.deleted++;
-        }
+      if (existingSubcategories.length > 0) {
+        throw new ConflictException(
+          `Subcategory names already exist: ${existingSubcategories.map((s) => s.name).join(', ')}`,
+        );
       }
 
-      // 2. Handle subcategory updates
-      if (updateSubcategories.length > 0) {
-        for (const updateOp of updateSubcategories) {
-          const { id: subcategoryId, name: newName } = updateOp;
+      // Pre-generate slugs outside transaction
+      subcategorySlugs =
+        await this.preGenerateSubcategorySlugs(createSubcategories);
+    }
 
-          // Verify subcategory belongs to this category
-          const existingSubcategory = await tx.subcategory.findFirst({
+    return await this.prisma.$transaction(
+      async (tx) => {
+        // Prepare category update data
+        const updateData: any = {
+          updatedBy: userId,
+        };
+
+        // Handle name update
+        if (name && name !== existingCategory.name) {
+          const sanitizedName = this.sanitizeCategoryName(name);
+          const slug = this.generateSlug(sanitizedName);
+
+          // Check for conflicts
+          const conflictCategory = await tx.category.findFirst({
             where: {
-              id: subcategoryId,
-              categoryId: id,
+              OR: [
+                { name: { equals: sanitizedName, mode: 'insensitive' } },
+                { slug },
+              ],
               deletedAt: null,
+              NOT: { id },
             },
           });
 
-          if (!existingSubcategory) {
-            operationsSummary.errors.push(
-              `Subcategory ${subcategoryId} not found or doesn't belong to this category`,
+          if (conflictCategory) {
+            throw new ConflictException(
+              `Category with name "${sanitizedName}" already exists`,
             );
-            continue;
           }
 
-          const subcategoryUpdateData: any = {
-            updatedBy: userId,
-          };
+          updateData.name = sanitizedName;
+          updateData.slug = slug;
+        }
 
-          // Handle name update with uniqueness check
-          if (newName && newName !== existingSubcategory.name) {
-            const sanitizedName = StringUtils.titleCase(newName.trim());
-            const slug = StringUtils.slugify(newName);
+        if (description !== undefined) {
+          updateData.description = description?.trim() || null;
+        }
 
-            // Check for name conflicts within the same category
-            const conflictSubcategory = await tx.subcategory.findFirst({
+        if (status !== undefined) {
+          updateData.status = status;
+        }
+
+        // Update the category first
+        const updatedCategory = await tx.category.update({
+          where: { id },
+          data: updateData,
+        });
+
+        const operationsSummary = {
+          created: 0,
+          updated: 0,
+          deleted: 0,
+          productsReassigned: 0,
+          errors: [] as string[],
+        };
+
+        // 1. Handle subcategory deletions first (to check for cascading effects)
+        if (deleteSubcategoryIds.length > 0) {
+          for (const subcategoryId of deleteSubcategoryIds) {
+            // Verify subcategory belongs to this category
+            const subcategory = await tx.subcategory.findFirst({
               where: {
+                id: subcategoryId,
                 categoryId: id,
-                OR: [
-                  { name: { equals: sanitizedName, mode: 'insensitive' } },
-                  { slug },
-                ],
                 deletedAt: null,
-                NOT: { id: subcategoryId },
+              },
+              include: {
+                _count: {
+                  select: { products: { where: { deletedAt: null } } },
+                },
               },
             });
 
-            if (conflictSubcategory) {
+            if (!subcategory) {
               operationsSummary.errors.push(
-                `Subcategory name "${sanitizedName}" already exists in this category`,
+                `Subcategory ${subcategoryId} not found or doesn't belong to this category`,
               );
               continue;
             }
 
-            subcategoryUpdateData.name = sanitizedName;
-            subcategoryUpdateData.slug = slug;
+            const productCount = subcategory._count.products;
+
+            if (productCount > 0 && !forceDeleteSubcategories) {
+              operationsSummary.errors.push(
+                `Cannot delete subcategory "${subcategory.name}" - it has ${productCount} products. Use forceDeleteSubcategories=true to cascade delete.`,
+              );
+              continue;
+            }
+
+            if (productCount > 0 && forceDeleteSubcategories) {
+              // Cascade delete: soft delete all products in this subcategory
+              await tx.product.updateMany({
+                where: {
+                  subcategoryId: subcategoryId,
+                  deletedAt: null,
+                },
+                data: {
+                  deletedAt: new Date(),
+                  deletedBy: userId,
+                },
+              });
+              operationsSummary.productsReassigned += productCount;
+            }
+
+            // Soft delete the subcategory
+            await tx.subcategory.update({
+              where: { id: subcategoryId },
+              data: {
+                status: SubcategoryStatus.INACTIVE,
+                deletedAt: new Date(),
+                deletedBy: userId,
+              },
+            });
+
+            operationsSummary.deleted++;
           }
-
-          await tx.subcategory.update({
-            where: { id: subcategoryId },
-            data: subcategoryUpdateData,
-          });
-
-          operationsSummary.updated++;
-        }
-      }
-
-      // 3. Handle subcategory creation with clean slug generation
-      if (createSubcategories.length > 0) {
-        // Validate new subcategory names for duplicates within request and existing
-        const newSubcategoryNames = createSubcategories.map((sub) =>
-          sub.name.trim().toLowerCase(),
-        );
-        const duplicateNames = newSubcategoryNames.filter(
-          (name, index) => newSubcategoryNames.indexOf(name) !== index,
-        );
-
-        if (duplicateNames.length > 0) {
-          throw new BadRequestException(
-            `Duplicate subcategory names in request: ${duplicateNames.join(', ')}`,
-          );
         }
 
-        // Check for conflicts with existing subcategories
-        const sanitizedNames = createSubcategories.map((sub) =>
-          StringUtils.titleCase(sub.name.trim()),
-        );
+        // 2. Handle subcategory updates
+        if (updateSubcategories.length > 0) {
+          for (const updateOp of updateSubcategories) {
+            const { id: subcategoryId, name: newName } = updateOp;
 
-        const existingSubcategories = await tx.subcategory.findMany({
-          where: {
-            categoryId: id,
-            name: {
-              in: sanitizedNames,
-              mode: 'insensitive',
-            },
-            deletedAt: null,
-          },
-          select: { name: true },
-        });
+            // Verify subcategory belongs to this category
+            const existingSubcategory = await tx.subcategory.findFirst({
+              where: {
+                id: subcategoryId,
+                categoryId: id,
+                deletedAt: null,
+              },
+            });
 
-        if (existingSubcategories.length > 0) {
-          throw new ConflictException(
-            `Subcategory names already exist: ${existingSubcategories.map((s) => s.name).join(', ')}`,
-          );
-        }
+            if (!existingSubcategory) {
+              operationsSummary.errors.push(
+                `Subcategory ${subcategoryId} not found or doesn't belong to this category`,
+              );
+              continue;
+            }
 
-        // Create new subcategories with unique slugs
-        const usedSlugs = new Set<string>();
-        for (const subcat of createSubcategories) {
-          const subcategoryName = StringUtils.titleCase(subcat.name.trim());
-          const baseSlug = StringUtils.slugify(subcategoryName);
-
-          const uniqueSlug = await this.generateUniqueSubcategorySlug(
-            baseSlug,
-            tx,
-            usedSlugs,
-          );
-
-          await tx.subcategory.create({
-            data: {
-              name: subcategoryName,
-              slug: uniqueSlug,
-              description: subcat.description?.trim(),
-              categoryId: id,
-              createdBy: userId,
+            const subcategoryUpdateData: any = {
               updatedBy: userId,
-            },
-          });
-          operationsSummary.created++;
+            };
+
+            // Handle name update with uniqueness check
+            if (newName && newName !== existingSubcategory.name) {
+              const sanitizedName = StringUtils.titleCase(newName.trim());
+              const slug = StringUtils.slugify(newName);
+
+              // Check for name conflicts within the same category
+              const conflictSubcategory = await tx.subcategory.findFirst({
+                where: {
+                  categoryId: id,
+                  OR: [
+                    { name: { equals: sanitizedName, mode: 'insensitive' } },
+                    { slug },
+                  ],
+                  deletedAt: null,
+                  NOT: { id: subcategoryId },
+                },
+              });
+
+              if (conflictSubcategory) {
+                operationsSummary.errors.push(
+                  `Subcategory name "${sanitizedName}" already exists in this category`,
+                );
+                continue;
+              }
+
+              subcategoryUpdateData.name = sanitizedName;
+              subcategoryUpdateData.slug = slug;
+            }
+
+            await tx.subcategory.update({
+              where: { id: subcategoryId },
+              data: subcategoryUpdateData,
+            });
+
+            operationsSummary.updated++;
+          }
         }
-      }
 
-      // Log comprehensive audit trail
-      await this.auditService.createAuditLog({
-        action: 'UPDATE',
-        resource: 'Category',
-        resourceId: id,
-        userId,
-        metadata: {
-          categoryName: updatedCategory.name,
-          categoryUpdates: Object.keys(updateData),
-          subcategoryOperations: operationsSummary,
-          errors: operationsSummary.errors,
-        },
-      });
+        // 3. Handle subcategory creation with pre-generated slugs
+        if (createSubcategories.length > 0) {
+          // Create new subcategories with pre-generated unique slugs
+          for (let i = 0; i < createSubcategories.length; i++) {
+            const subcat = createSubcategories[i];
+            const subcategoryName = StringUtils.titleCase(subcat.name.trim());
+            const uniqueSlug = subcategorySlugs[i];
 
-      // Invalidate category cache
-      await this.cacheInvalidationService.invalidateCategory(id);
+            await tx.subcategory.create({
+              data: {
+                name: subcategoryName,
+                slug: uniqueSlug,
+                description: subcat.description?.trim(),
+                categoryId: id,
+                createdBy: userId,
+                updatedBy: userId,
+              },
+            });
+            operationsSummary.created++;
+          }
+        }
 
-      // If there were any errors, include them in the response or throw
-      if (operationsSummary.errors.length > 0) {
-        // For partial success scenarios, you might want to return warnings
-        // For now, let's throw an error if any operation failed
-        throw new BadRequestException({
-          message: 'Some subcategory operations failed',
-          errors: operationsSummary.errors,
-          summary: operationsSummary,
+        // Log comprehensive audit trail
+        await this.auditService.createAuditLog({
+          action: 'UPDATE',
+          resource: 'Category',
+          resourceId: id,
+          userId,
+          metadata: {
+            categoryName: updatedCategory.name,
+            categoryUpdates: Object.keys(updateData),
+            subcategoryOperations: operationsSummary,
+            errors: operationsSummary.errors,
+          },
         });
-      }
 
-      // Return updated category with subcategories
-      return await this.findOne(id);
-    });
+        // Invalidate category cache
+        await this.cacheInvalidationService.invalidateCategory(id);
+
+        // If there were any errors, include them in the response or throw
+        if (operationsSummary.errors.length > 0) {
+          // For partial success scenarios, you might want to return warnings
+          // For now, let's throw an error if any operation failed
+          throw new BadRequestException({
+            message: 'Some subcategory operations failed',
+            errors: operationsSummary.errors,
+            summary: operationsSummary,
+          });
+        }
+
+        // Return updated category with subcategories
+        return await this.findOne(id);
+      },
+      {
+        timeout: 15000, // 15 second timeout for complex updates
+      },
+    );
   }
 
   async remove(id: string, userId: string): Promise<{ message: string }> {
