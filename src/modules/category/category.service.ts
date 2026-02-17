@@ -364,6 +364,14 @@ export class CategoryService {
         OR: [
           { name: { contains: search, mode: 'insensitive' } },
           { description: { contains: search, mode: 'insensitive' } },
+          {
+            subcategories: {
+              some: {
+                name: { contains: search, mode: 'insensitive' },
+                deletedAt: null,
+              },
+            },
+          },
         ],
       }),
       ...(status && { status }),
