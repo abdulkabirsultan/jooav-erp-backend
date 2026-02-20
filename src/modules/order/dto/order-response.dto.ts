@@ -37,9 +37,6 @@ export class OrderResponseDto {
   @ApiProperty({ description: 'Wholesaler user ID' })
   wholesalerId: string;
 
-  @ApiProperty({ description: 'Wholesaler business name' })
-  wholesalerBusinessName: string;
-
   @ApiProperty({ description: 'Order status' })
   status: string;
 

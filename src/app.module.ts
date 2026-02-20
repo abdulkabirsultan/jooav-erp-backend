@@ -22,6 +22,7 @@ import {
   swaggerConfig,
   sentryConfig,
   emailConfig,
+  monnifyConfig,
   validationSchema,
 } from './config';
 
@@ -73,6 +74,7 @@ import { SentryModule } from '@sentry/nestjs/setup';
         swaggerConfig,
         sentryConfig,
         emailConfig,
+        monnifyConfig,
       ],
       validationSchema,
       validationOptions: {

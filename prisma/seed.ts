@@ -16,6 +16,16 @@ async function hashPassword(password: string): Promise<string> {
   return argon2.hash(password, argonOptions);
 }
 
+// Generate order number - same as order service
+function generateOrderNumber(): string {
+  const prefix = 'JOO';
+  const timestamp = Date.now().toString().slice(-8);
+  const random = Math.floor(Math.random() * 1000)
+    .toString()
+    .padStart(3, '0');
+  return `${prefix}${timestamp}${random}`;
+}
+
 async function main() {
   console.log('🌱 Starting database seeding...');
 
@@ -83,8 +93,8 @@ async function main() {
     update: {},
     create: {
       email: 'subadmin@jooav.com',
-      firstName: 'Procurement',
-      lastName: 'Officer',
+      firstName: 'John',
+      lastName: 'Smith',
       password: await hashPassword('password123'), // Argon2 hashed
       role: UserRole.PROCUREMENT_OFFICER,
       status: UserStatus.ACTIVE,
@@ -96,10 +106,11 @@ async function main() {
       },
       procurementOfficerProfile: {
         create: {
-          employeeId: 'SUB001',
-          // regionId: undefined, // Optional - can be assigned later for scalability
+          employeeId: 'PO001',
           specializations: ['Electronics', 'Industrial Equipment'],
-          maxOrderValue: 50000.0,
+          maxOrderValue: 100000.0,
+          availabilityStatus: 'AVAILABLE', // Available PO
+          maxActiveOrders: 10,
         },
       },
     },
@@ -162,8 +173,122 @@ async function main() {
     },
   });
 
+  // Create additional procurement officers
+  const procurementOfficer2 = await prisma.user.upsert({
+    where: { email: 'po2@jooav.com' },
+    update: {},
+    create: {
+      email: 'po2@jooav.com',
+      firstName: 'Sarah',
+      lastName: 'Johnson',
+      password: await hashPassword('password123'),
+      role: UserRole.PROCUREMENT_OFFICER,
+      status: UserStatus.ACTIVE,
+      emailVerified: true,
+      profile: {
+        create: {
+          country: 'Nigeria',
+        },
+      },
+      procurementOfficerProfile: {
+        create: {
+          employeeId: 'PO002',
+          specializations: ['Food & Beverages', 'Consumer Goods'],
+          maxOrderValue: 75000.0,
+          availabilityStatus: 'UNAVAILABLE', // This officer is unavailable
+          maxActiveOrders: 8,
+        },
+      },
+    },
+  });
+
+  const procurementOfficer3 = await prisma.user.upsert({
+    where: { email: 'po3@jooav.com' },
+    update: {},
+    create: {
+      email: 'po3@jooav.com',
+      firstName: 'Michael',
+      lastName: 'Chen',
+      password: await hashPassword('password123'),
+      role: UserRole.PROCUREMENT_OFFICER,
+      status: UserStatus.ACTIVE,
+      emailVerified: true,
+      profile: {
+        create: {
+          country: 'Nigeria',
+        },
+      },
+      procurementOfficerProfile: {
+        create: {
+          employeeId: 'PO003',
+          specializations: ['Medical Equipment', 'Pharmaceuticals'],
+          maxOrderValue: 100000.0,
+          availabilityStatus: 'AVAILABLE',
+          maxActiveOrders: 6,
+        },
+      },
+    },
+  });
+
+  // Create additional wholesaler users
+  const wholesaler2 = await prisma.user.upsert({
+    where: { email: 'wholesaler2@jooav.com' },
+    update: {},
+    create: {
+      email: 'wholesaler2@jooav.com',
+      firstName: 'Jane',
+      lastName: 'Smith',
+      password: await hashPassword('password123'),
+      role: UserRole.WHOLESALER,
+      status: UserStatus.ACTIVE,
+      emailVerified: true,
+      profile: {
+        create: {
+          country: 'Nigeria',
+        },
+      },
+    },
+  });
+
+  const wholesaler3 = await prisma.user.upsert({
+    where: { email: 'wholesaler3@jooav.com' },
+    update: {},
+    create: {
+      email: 'wholesaler3@jooav.com',
+      firstName: 'David',
+      lastName: 'Brown',
+      password: await hashPassword('password123'),
+      role: UserRole.WHOLESALER,
+      status: UserStatus.ACTIVE,
+      emailVerified: true,
+      profile: {
+        create: {
+          country: 'Nigeria',
+        },
+      },
+    },
+  });
+
+  // Update existing PO to have proper availability status
+  await prisma.procurementOfficerProfile.update({
+    where: { userId: subAdmin.id },
+    data: {
+      availabilityStatus: 'AVAILABLE',
+      maxActiveOrders: 5,
+    },
+  });
+
   // Collect users for easy reference
-  const users = [superAdmin, admin, subAdmin, wholesalerUser];
+  const users = [
+    superAdmin,
+    admin,
+    subAdmin,
+    procurementOfficer2,
+    procurementOfficer3,
+    wholesalerUser,
+    wholesaler2,
+    wholesaler3,
+  ];
 
   // Create sample manufacturers
   const manufacturers = await Promise.all([
@@ -675,28 +800,41 @@ async function main() {
     }),
   ]);
 
-  // Create wholesaler profile
-  const wholesalerProfile = await prisma.wholesaler.create({
+  // Create wholesaler profiles
+  const wholesalerProfile1 = await prisma.wholesaler.create({
     data: {
       userId: wholesalerUser.id,
-      businessName: 'Metro Wholesale Distribution',
-      businessType: 'Wholesale',
       regionId: regions[0].id, // Lagos region
-      businessLicense: 'WHL-NGR-2024-001',
-      verificationStatus: 'APPROVED',
-      approvedBy: superAdmin.id,
-      approvedAt: new Date(),
     },
   });
 
-  // Create sample orders
+  const wholesalerProfile2 = await prisma.wholesaler.create({
+    data: {
+      userId: wholesaler2.id,
+      regionId: regions[1].id, // Abuja region
+    },
+  });
+
+  const wholesalerProfile3 = await prisma.wholesaler.create({
+    data: {
+      userId: wholesaler3.id,
+      regionId: regions[2].id, // Kano region
+    },
+  });
+
+  // Create sample orders with different assignment statuses
   const sampleOrders = await Promise.all([
+    // Order 1: Assigned and accepted by PO1
     prisma.order.create({
       data: {
-        orderNumber: 'ORD-260207-001',
-        wholesalerId: wholesalerProfile.id,
+        orderNumber: generateOrderNumber(),
+        wholesalerId: wholesalerProfile1.id,
         createdById: wholesalerUser.id,
-        status: 'SUBMITTED',
+        status: 'ASSIGNED',
+        assignmentStatus: 'ACCEPTED',
+        assignedProcurementOfficerId: subAdmin.id, // PO1 (available)
+        assignedAt: new Date(),
+        assignmentNotes: 'Auto-assigned based on availability',
         subtotal: 180000,
         totalAmount: 180000,
         deliveryAddress: {
@@ -729,16 +867,30 @@ async function main() {
         },
       },
     }),
+    // Order 2: Pending acceptance by PO2 (unavailable)
     prisma.order.create({
       data: {
-        orderNumber: 'ORD-260207-002',
-        wholesalerId: wholesalerProfile.id,
-        createdById: wholesalerUser.id,
-        status: 'DRAFT',
+        orderNumber: generateOrderNumber(),
+        wholesalerId: wholesalerProfile2.id,
+        createdById: wholesaler2.id,
+        status: 'ASSIGNED',
+        assignmentStatus: 'PENDING_ACCEPTANCE',
+        assignedProcurementOfficerId: procurementOfficer2.id, // PO2 (unavailable)
+        assignedAt: new Date(),
+        assignmentNotes:
+          'Auto-assigned to unavailable officer due to no available officers',
         subtotal: 120000,
         totalAmount: 120000,
+        deliveryAddress: {
+          address: '12 Constitution Avenue, Central Business District',
+          city: 'Abuja',
+          state: 'FCT',
+          contactName: 'Jane Smith',
+          contactPhone: '+234802345678',
+        },
         customerNotes: 'Regular monthly stock replenishment',
         orderDate: new Date(),
+        submittedAt: new Date(),
         items: {
           create: [
             {
@@ -746,7 +898,230 @@ async function main() {
               quantity: 20,
               unitPrice: 6000,
               lineTotal: 120000,
-              status: 'PENDING',
+              status: 'PAID',
+            },
+          ],
+        },
+      },
+    }),
+    // Order 3: Unassigned (confirmed but no PO assigned)
+    prisma.order.create({
+      data: {
+        orderNumber: generateOrderNumber(),
+        wholesalerId: wholesalerProfile3.id,
+        createdById: wholesaler3.id,
+        status: 'CONFIRMED',
+        assignmentStatus: 'UNASSIGNED',
+        subtotal: 85000,
+        totalAmount: 85000,
+        deliveryAddress: {
+          address: '33 Ahmadu Bello Way, Nassarawa GRA',
+          city: 'Kano',
+          state: 'Kano State',
+          contactName: 'David Brown',
+          contactPhone: '+234803456789',
+        },
+        customerNotes: 'First time order, please ensure quality check',
+        orderDate: new Date(),
+        submittedAt: new Date(),
+        items: {
+          create: [
+            {
+              productId: products[0].id, // Tecno Spark 10
+              quantity: 5,
+              unitPrice: 17000,
+              lineTotal: 85000,
+              status: 'PAID',
+            },
+          ],
+        },
+      },
+    }),
+  ]);
+
+  // Create additional test orders with comprehensive assignment scenarios
+  const additionalOrders = await Promise.all([
+    // Order 1: Assigned to available PO (John Smith) and ACCEPTED
+    prisma.order.create({
+      data: {
+        orderNumber: generateOrderNumber(),
+        wholesalerId: wholesalerProfile1.id,
+        createdById: wholesalerUser.id,
+        assignedProcurementOfficerId: subAdmin.id, // Available PO
+        status: 'CONFIRMED',
+        assignmentStatus: 'ACCEPTED',
+        subtotal: 120000,
+        totalAmount: 120000,
+        deliveryAddress: {
+          address: '15 Victoria Island, Lagos',
+          city: 'Lagos',
+          state: 'Lagos State',
+          contactName: 'Alice Johnson',
+          contactPhone: '+234801234567',
+        },
+        customerNotes: 'Urgent delivery requested - assigned and accepted',
+        orderDate: new Date(),
+        submittedAt: new Date(),
+        assignedAt: new Date(),
+        items: {
+          create: [
+            {
+              productId: products[1].id, // iPhone 15 Pro
+              quantity: 2,
+              unitPrice: 60000,
+              lineTotal: 120000,
+              status: 'PAID',
+            },
+          ],
+        },
+      },
+    }),
+
+    // Order 2: Assigned to unavailable PO (Sarah Johnson) but still PENDING_ACCEPTANCE
+    prisma.order.create({
+      data: {
+        orderNumber: generateOrderNumber(),
+        wholesalerId: wholesalerProfile2.id,
+        createdById: wholesaler2.id,
+        assignedProcurementOfficerId: procurementOfficer2.id, // Unavailable PO
+        status: 'CONFIRMED',
+        assignmentStatus: 'PENDING_ACCEPTANCE',
+        subtotal: 95000,
+        totalAmount: 95000,
+        deliveryAddress: {
+          address: '28 Garki District, Abuja',
+          city: 'Abuja',
+          state: 'FCT',
+          contactName: 'Robert Wilson',
+          contactPhone: '+234809876543',
+        },
+        customerNotes: 'Assigned to unavailable PO - testing visibility',
+        orderDate: new Date(),
+        submittedAt: new Date(),
+        assignedAt: new Date(),
+        items: {
+          create: [
+            {
+              productId: products[2].id, // Samsung Galaxy A54
+              quantity: 3,
+              unitPrice: 31667,
+              lineTotal: 95000,
+              status: 'PAID',
+            },
+          ],
+        },
+      },
+    }),
+
+    // Order 3: Assigned to available PO (Michael Chen) and ACCEPTED
+    prisma.order.create({
+      data: {
+        orderNumber: generateOrderNumber(),
+        wholesalerId: wholesalerProfile3.id,
+        createdById: wholesaler3.id,
+        assignedProcurementOfficerId: procurementOfficer3.id, // Available PO
+        status: 'CONFIRMED',
+        assignmentStatus: 'ACCEPTED',
+        subtotal: 75000,
+        totalAmount: 75000,
+        deliveryAddress: {
+          address: '42 Independence Layout, Enugu',
+          city: 'Enugu',
+          state: 'Enugu State',
+          contactName: 'Grace Okafor',
+          contactPhone: '+234807654321',
+        },
+        customerNotes: 'Second PO acceptance test',
+        orderDate: new Date(),
+        submittedAt: new Date(),
+        assignedAt: new Date(),
+        items: {
+          create: [
+            {
+              productId: products[3].id, // HP Pavilion Laptop
+              quantity: 1,
+              unitPrice: 75000,
+              lineTotal: 75000,
+              status: 'PAID',
+            },
+          ],
+        },
+      },
+    }),
+
+    // Order 4: Auto-assigned by fallback to unavailable PO when no available POs
+    prisma.order.create({
+      data: {
+        orderNumber: generateOrderNumber(),
+        wholesalerId: wholesalerProfile1.id,
+        createdById: wholesalerUser.id,
+        assignedProcurementOfficerId: procurementOfficer2.id, // Testing fallback assignment to unavailable PO
+        status: 'CONFIRMED',
+        assignmentStatus: 'PENDING_ACCEPTANCE',
+        subtotal: 140000,
+        totalAmount: 140000,
+        deliveryAddress: {
+          address: '67 Ring Road, Ibadan',
+          city: 'Ibadan',
+          state: 'Oyo State',
+          contactName: 'Emmanuel Adebayo',
+          contactPhone: '+234805432109',
+        },
+        customerNotes: 'Testing fallback assignment scenario',
+        orderDate: new Date(),
+        submittedAt: new Date(),
+        assignedAt: new Date(),
+        items: {
+          create: [
+            {
+              productId: products[4].id, // Dell Inspiron
+              quantity: 2,
+              unitPrice: 70000,
+              lineTotal: 140000,
+              status: 'PAID',
+            },
+          ],
+        },
+      },
+    }),
+
+    // Order 5: Large order assigned to most available PO (John Smith)
+    prisma.order.create({
+      data: {
+        orderNumber: generateOrderNumber(),
+        wholesalerId: wholesalerProfile2.id,
+        createdById: wholesaler2.id,
+        assignedProcurementOfficerId: subAdmin.id, // Most available PO
+        status: 'CONFIRMED',
+        assignmentStatus: 'ACCEPTED',
+        subtotal: 200000,
+        totalAmount: 200000,
+        deliveryAddress: {
+          address: '89 New Market Road, Kaduna',
+          city: 'Kaduna',
+          state: 'Kaduna State',
+          contactName: 'Fatima Abdullahi',
+          contactPhone: '+234806789123',
+        },
+        customerNotes: 'Large order - testing load distribution',
+        orderDate: new Date(),
+        submittedAt: new Date(),
+        assignedAt: new Date(),
+        items: {
+          create: [
+            {
+              productId: products[0].id, // Tecno Spark 10
+              quantity: 8,
+              unitPrice: 17000,
+              lineTotal: 136000,
+              status: 'PAID',
+            },
+            {
+              productId: products[5].id, // Oraimo FreePods
+              quantity: 16,
+              unitPrice: 4000,
+              lineTotal: 64000,
+              status: 'PAID',
             },
           ],
         },
@@ -785,6 +1160,13 @@ async function main() {
   console.log(
     `   - ${4} Users (1 Super Admin, 1 Admin, 1 Sub-Admin, 1 Wholesaler User)`,
   );
+  console.log(
+    `   - ${3} Procurement Officers (1 Available, 1 Unavailable, 1 Available)`,
+  );
+  console.log(`   - ${3} Wholesalers with comprehensive profiles`);
+  console.log(
+    `   - ${8} Total Orders (3 initial + 5 comprehensive test orders)`,
+  );
   console.log(`   - ${manufacturers.length} Manufacturers`);
   console.log(`   - ${brands.length} Brands`);
   console.log(`   - ${variants.length} Variants`);
@@ -793,6 +1175,11 @@ async function main() {
   console.log(`   - ${products.length} Products`);
   console.log(`   - ${5} System Configurations`);
   console.log('🎯 Enhanced pack entity combinations created!');
+  console.log('🔄 Assignment test scenarios:');
+  console.log('   - ACCEPTED orders by available POs');
+  console.log('   - PENDING_ACCEPTANCE orders by unavailable POs');
+  console.log('   - UNASSIGNED orders for fallback testing');
+  console.log('   - Load distribution testing with large orders');
 }
 
 main()

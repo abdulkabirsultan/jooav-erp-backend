@@ -14,29 +14,49 @@ export enum UserStatus {
 }
 
 export enum OrderStatus {
-  PENDING = 'pending',
-  CONFIRMED = 'confirmed',
-  PROCESSING = 'processing',
-  SHIPPED = 'shipped',
-  DELIVERED = 'delivered',
-  CANCELLED = 'cancelled',
-  REFUNDED = 'refunded',
+  DRAFT = 'DRAFT',
+  CONFIRMED = 'CONFIRMED',
+  ASSIGNED = 'ASSIGNED',
+  IN_PROGRESS = 'IN_PROGRESS',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
+}
+
+export enum OrderItemStatus {
+  PENDING = 'PENDING',
+  PAID = 'PAID',
+  SOURCING = 'SOURCING',
+  READY = 'READY',
+  SHIPPED = 'SHIPPED',
+  DELIVERED = 'DELIVERED',
+  UNAVAILABLE = 'UNAVAILABLE',
+  CANCELLED = 'CANCELLED',
+}
+
+export enum AssignmentStatus {
+  UNASSIGNED = 'UNASSIGNED',
+  PENDING_ACCEPTANCE = 'PENDING_ACCEPTANCE',
+  ACCEPTED = 'ACCEPTED',
+  REJECTED = 'REJECTED',
+  REASSIGNED = 'REASSIGNED',
+}
+
+export enum ProcurementOfficerStatus {
+  AVAILABLE = 'AVAILABLE',
+  UNAVAILABLE = 'UNAVAILABLE',
 }
 
 export enum PaymentStatus {
-  PENDING = 'pending',
-  COMPLETED = 'completed',
-  FAILED = 'failed',
-  CANCELLED = 'cancelled',
-  REFUNDED = 'refunded',
+  PENDING = 'PENDING',
+  COMPLETED = 'COMPLETED',
+  FAILED = 'FAILED',
+  CANCELLED = 'CANCELLED',
+  REFUNDED = 'REFUNDED',
 }
 
 export enum PaymentMethod {
-  CREDIT_CARD = 'credit_card',
-  DEBIT_CARD = 'debit_card',
-  BANK_TRANSFER = 'bank_transfer',
-  CASH = 'cash',
-  DIGITAL_WALLET = 'digital_wallet',
+  BANK_TRANSFER = 'BANK_TRANSFER',
+  CHECKOUT_URL = 'CHECKOUT_URL',
 }
 
 export enum DocumentType {

@@ -6,6 +6,7 @@ import { securityConfig, securityConfigSchema } from './security.config';
 import { swaggerConfig, swaggerConfigSchema } from './swagger.config';
 import { loggingConfig, loggingConfigSchema } from './logging.config';
 import { emailConfig, emailConfigSchema } from './email.config';
+import { monnifyConfig, monnifyConfigSchema } from './monnify.config';
 import cloudinaryConfig from './cloudinary.config';
 import sentryConfig from './sentry.config';
 
@@ -18,6 +19,7 @@ export { default as cloudinaryConfig } from './cloudinary.config';
 export { redisConfig };
 export { swaggerConfig };
 export { emailConfig };
+export { monnifyConfig };
 export { default as sentryConfig } from './sentry.config';
 
 // Cloudinary validation schema
@@ -46,6 +48,7 @@ export const validationSchema = Joi.object({
   ...swaggerConfigSchema,
   ...loggingConfigSchema,
   ...emailConfigSchema,
+  ...monnifyConfigSchema,
   ...cloudinaryConfigSchema,
   ...sentryConfigSchema,
 });
@@ -59,6 +62,7 @@ export const configurations = [
   swaggerConfig,
   loggingConfig,
   emailConfig,
+  monnifyConfig,
   cloudinaryConfig,
   sentryConfig,
 ];
