@@ -49,8 +49,8 @@ import {
   UpdateAvailabilityDto,
   AvailabilityStatusDto,
 } from './dto/assignment.dto';
-import { UnifiedAuthGuard } from 'src/common/guards/unified-auth.guard';
-import { Public } from 'src/common/decorators/public.decorator';
+import { UnifiedAuthGuard } from '../../common/guards/unified-auth.guard';
+import { Public } from '../../common/decorators/public.decorator';
 
 @ApiTags('Orders')
 @Controller('orders')
