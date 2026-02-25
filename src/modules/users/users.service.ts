@@ -10,7 +10,7 @@ import * as argon2 from 'argon2';
 import { PrismaService } from '../prisma/prisma.service';
 import { generatePasswordResetToken } from '../../common/utils/token.util';
 import { AuditService } from '../audit/audit.service';
-import { EmailService } from '../email/email.service';
+import { EmailService } from '../email/services/email.service';
 import { CacheService } from '../cache/cache.service';
 import { ConfigService } from '@nestjs/config';
 import { PaginationDto, PaginatedResponse } from '../../common/dto';
@@ -275,7 +275,7 @@ export class UsersService {
     });
 
     // Generate password reset token
-    const { token: resetToken, expiresAt } = generatePasswordResetToken(24);
+    const { token: resetToken, expiresAt } = generatePasswordResetToken(72); // 72 hours validity for initial password setup
 
     // Store password reset token
     await this.prisma.passwordReset.create({
@@ -291,10 +291,14 @@ export class UsersService {
 
     // Send password setup email
     try {
-      await this.emailService.sendTemplatedEmail(user.email, 'passwordSetup', {
-        firstName: user.firstName || 'User',
-        resetUrl,
-        platformName: 'JOOAV ERP',
+      await this.emailService.sendTemplateEmail({
+        to: user.email,
+        templateAlias: 'password-reset',
+        variables: {
+          firstName: user.firstName || 'User',
+          resetUrl,
+          platformName: 'JOOAV ERP',
+        },
       });
     } catch (error) {
       // Log email error but don't fail user creation

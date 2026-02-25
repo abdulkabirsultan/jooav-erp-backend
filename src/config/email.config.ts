@@ -4,22 +4,25 @@ import * as Joi from 'joi';
 export interface EmailConfig {
   enabled: boolean;
   apiKey: string;
-  fromEmail: string;
+  fromAddress: string;
   fromName: string;
   baseUrl: string;
 }
 
-export const emailConfig = registerAs('email', () => ({
-  enabled: process.env.EMAIL_ENABLED === 'true',
-  apiKey: process.env.RESEND_API_KEY || '',
-  fromEmail: process.env.EMAIL_FROM_ADDRESS || 'noreply@jooav.com',
-  fromName: process.env.EMAIL_FROM_NAME || 'JOOAV ERP',
-  baseUrl: process.env.APP_BASE_URL || 'http://localhost:3000',
-}));
+export const emailConfig = registerAs(
+  'email',
+  (): EmailConfig => ({
+    enabled: process.env.EMAIL_ENABLED === 'true',
+    apiKey: process.env.RESEND_API_KEY || '',
+    fromAddress: process.env.EMAIL_FROM_ADDRESS || 'noreply@jooav.com',
+    fromName: process.env.EMAIL_FROM_NAME || 'JOOAV ERP',
+    baseUrl: process.env.APP_BASE_URL || 'http://localhost:3000',
+  }),
+);
 
 // Email configuration validation schema
 export const emailConfigSchema = {
-  EMAIL_ENABLED: Joi.boolean().default(false),
+  EMAIL_ENABLED: Joi.boolean().default(true),
   RESEND_API_KEY: Joi.string().when('EMAIL_ENABLED', {
     is: true,
     then: Joi.required(),

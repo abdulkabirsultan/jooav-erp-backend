@@ -704,7 +704,15 @@ export class OrderService {
         items: {
           include: {
             product: {
-              select: { id: true, name: true, brand: true },
+              select: {
+                id: true,
+                name: true,
+                thumbnail: true,
+                images: true,
+                brand: true,
+                packSize: { select: { name: true } },
+                packType: { select: { name: true } },
+              },
             },
             statusUpdatedByUser: {
               select: { id: true, firstName: true, lastName: true },
@@ -868,7 +876,15 @@ export class OrderService {
             quantity: true,
             lineTotal: true,
             status: true,
-            product: { select: { name: true } },
+            product: {
+              select: {
+                name: true,
+                thumbnail: true,
+                images: true,
+                packSize: { select: { name: true } },
+                packType: { select: { name: true } },
+              },
+            },
           },
         },
       },

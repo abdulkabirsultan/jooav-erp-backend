@@ -15,7 +15,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { PrismaService } from '../prisma/prisma.service';
 import { generatePasswordResetToken } from '../../common/utils/token.util';
 import { AuditService } from '../audit/audit.service';
-import { EmailService } from '../email/email.service';
+import { EmailService } from '../email/services/email.service';
 import { JwtPayload } from './strategies/jwt.strategy';
 import {
   LoginDto,
@@ -317,11 +317,11 @@ export class AuthService {
 
     // Send password change confirmation email
     try {
-      await this.emailService.sendTemplatedEmail(
-        user.email,
-        'passwordChanged',
-        {
-          name: user.firstName
+      await this.emailService.sendTemplateEmail({
+        to: user.email,
+        templateAlias: 'password-reset',
+        variables: {
+          USER_NAME: user.firstName
             ? `${user.firstName} ${user.lastName || ''}`.trim()
             : user.email,
           changeTime: new Date().toLocaleString(),
@@ -329,7 +329,7 @@ export class AuthService {
             request?.ip || request?.connection?.remoteAddress || 'Unknown',
           userAgent: request?.get?.('User-Agent') || 'Unknown',
         },
-      );
+      });
     } catch (error) {
       this.logger.error(
         'Failed to send password change confirmation email:',
@@ -526,12 +526,16 @@ export class AuthService {
     const resetUrl = `${this.configService.get('email.baseUrl')}/reset-password?token=${resetToken}`;
 
     try {
-      await this.emailService.sendTemplatedEmail(email, 'passwordReset', {
-        name: user.firstName
-          ? `${user.firstName} ${user.lastName || ''}`.trim()
-          : user.email,
-        resetUrl,
-        expiresIn: '1 hour',
+      await this.emailService.sendTemplateEmail({
+        to: email,
+        templateAlias: 'password-reset',
+        variables: {
+          USER_NAME: user.firstName
+            ? `${user.firstName} ${user.lastName || ''}`.trim()
+            : user.email,
+          resetUrl,
+          expiresIn: '1 hour',
+        },
       });
     } catch (error) {
       this.logger.error('Failed to send password reset email:', error);
@@ -612,11 +616,11 @@ export class AuthService {
 
     // Send password reset success confirmation email
     try {
-      await this.emailService.sendTemplatedEmail(
-        user.email,
-        'passwordResetSuccess',
-        {
-          name: user.firstName
+      await this.emailService.sendTemplateEmail({
+        to: user.email,
+        templateAlias: 'password-reset',
+        variables: {
+          USER_NAME: user.firstName
             ? `${user.firstName} ${user.lastName || ''}`.trim()
             : user.email,
           resetTime: new Date().toLocaleString(),
@@ -624,7 +628,7 @@ export class AuthService {
             request?.ip || request?.connection?.remoteAddress || 'Unknown',
           userAgent: request?.get?.('User-Agent') || 'Unknown',
         },
-      );
+      });
     } catch (error) {
       this.logger.error('Failed to send password reset success email:', error);
       // Don't throw error as password was already reset successfully
