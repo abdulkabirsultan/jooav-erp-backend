@@ -432,7 +432,26 @@ export class OrderService {
       },
       include: {
         order: true,
-        product: { select: { name: true } },
+        product: {
+          select: {
+            id: true,
+            name: true,
+            thumbnail: true,
+            images: true,
+            brand: { select: { name: true } },
+            packSize: { select: { name: true } },
+            packType: { select: { name: true } },
+            price: true,
+            discount: true,
+            variant: { select: { id: true, name: true } },
+            subcategory: {
+              select: {
+                name: true,
+                category: { select: { name: true } },
+              },
+            },
+          },
+        },
       },
     });
 
@@ -598,16 +617,20 @@ export class OrderService {
           (item) => item.id === updateItem.itemId,
         );
 
-        // Validate procurement officer assignment for restricted statuses
-        if (
-          user.role === UserRole.PROCUREMENT_OFFICER &&
-          Object.values(OrderItemStatus).includes(updateItem.status)
-        ) {
-          // For now, allow all users to update items (simplified logic)
-          // In production, implement proper assignment checking
+        // Validate procurement officer assignment
+        if (user.role === UserRole.PROCUREMENT_OFFICER) {
+          // Procurement officers can only update items for orders assigned to them
+          if (order.assignedProcurementOfficerId !== user.id) {
+            results.push({
+              itemId: updateItem.itemId,
+              success: false,
+              message: 'You can only update items for orders assigned to you',
+            });
+            continue;
+          }
         }
 
-        // Basic validation
+        // Safety check for data consistency
         if (!existingItem) {
           results.push({
             itemId: updateItem.itemId,
@@ -629,9 +652,23 @@ export class OrderService {
           },
           include: {
             product: {
-              include: {
-                brand: true,
-                subcategory: true,
+              select: {
+                id: true,
+                name: true,
+                thumbnail: true,
+                images: true,
+                brand: { select: { name: true } },
+                packSize: { select: { name: true } },
+                packType: { select: { name: true } },
+                price: true,
+                discount: true,
+                variant: { select: { id: true, name: true } },
+                subcategory: {
+                  select: {
+                    name: true,
+                    category: { select: { name: true } },
+                  },
+                },
               },
             },
           },
@@ -709,9 +746,18 @@ export class OrderService {
                 name: true,
                 thumbnail: true,
                 images: true,
-                brand: true,
+                brand: { select: { name: true } },
                 packSize: { select: { name: true } },
                 packType: { select: { name: true } },
+                price: true,
+                discount: true,
+                variant: { select: { id: true, name: true } },
+                subcategory: {
+                  select: {
+                    name: true,
+                    category: { select: { name: true } },
+                  },
+                },
               },
             },
             statusUpdatedByUser: {
@@ -878,11 +924,22 @@ export class OrderService {
             status: true,
             product: {
               select: {
+                id: true,
                 name: true,
                 thumbnail: true,
                 images: true,
+                brand: { select: { name: true } },
                 packSize: { select: { name: true } },
                 packType: { select: { name: true } },
+                price: true,
+                discount: true,
+                variant: { select: { id: true, name: true } },
+                subcategory: {
+                  select: {
+                    name: true,
+                    category: { select: { name: true } },
+                  },
+                },
               },
             },
           },
@@ -2130,6 +2187,96 @@ export class OrderService {
       success: true,
       message: 'All officers availability retrieved successfully',
       data: officersWithCounts,
+    };
+  }
+
+  /**
+   * Get order statistics by status (Admin and Procurement Officer access)
+   */
+  async getOrderStats(userId: string) {
+    // Get user and their role
+    const user = await this.prismaService.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const userRole = user.role;
+    const where: any = {};
+
+    // Apply role-based filtering
+    if (userRole === UserRole.WHOLESALER) {
+      // Find the wholesaler profile for this user
+      const wholesalerProfile = await this.prismaService.wholesaler.findUnique({
+        where: { userId: userId },
+      });
+
+      if (!wholesalerProfile) {
+        throw new NotFoundException('Wholesaler profile not found for user');
+      }
+
+      where.wholesalerId = wholesalerProfile.id;
+    } else if (userRole === UserRole.PROCUREMENT_OFFICER) {
+      // Procurement officers can see orders assigned to them
+      where.assignedProcurementOfficerId = userId;
+    }
+
+    // Get counts for each order status
+    const statusCounts = await Promise.all([
+      this.prismaService.order.count({
+        where: { ...where, status: OrderStatus.DRAFT },
+      }),
+      this.prismaService.order.count({
+        where: { ...where, status: OrderStatus.CONFIRMED },
+      }),
+      this.prismaService.order.count({
+        where: { ...where, status: OrderStatus.ASSIGNED },
+      }),
+      this.prismaService.order.count({
+        where: { ...where, status: OrderStatus.IN_PROGRESS },
+      }),
+      this.prismaService.order.count({
+        where: { ...where, status: OrderStatus.COMPLETED },
+      }),
+      this.prismaService.order.count({
+        where: { ...where, status: OrderStatus.CANCELLED },
+      }),
+    ]);
+
+    const [
+      draftCount,
+      confirmedCount,
+      assignedCount,
+      inProgressCount,
+      completedCount,
+      cancelledCount,
+    ] = statusCounts;
+
+    const totalOrders = statusCounts.reduce((sum, count) => sum + count, 0);
+
+    return {
+      success: true,
+      message: 'Order statistics retrieved successfully',
+      data: {
+        totalOrders,
+        statusBreakdown: {
+          draft: draftCount,
+          confirmed: confirmedCount,
+          assigned: assignedCount,
+          inProgress: inProgressCount,
+          completed: completedCount,
+          cancelled: cancelledCount,
+        },
+        summary: {
+          activeOrders:
+            draftCount + confirmedCount + assignedCount + inProgressCount,
+          completedOrders: completedCount,
+          cancelledOrders: cancelledCount,
+        },
+      },
     };
   }
 }

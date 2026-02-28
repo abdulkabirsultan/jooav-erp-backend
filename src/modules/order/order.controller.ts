@@ -84,6 +84,26 @@ export class OrderController {
     return this.orderService.createOrder(createOrderDto, userId);
   }
 
+  @Get('stats')
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.SUPER_ADMIN,
+    UserRole.WHOLESALER,
+    UserRole.PROCUREMENT_OFFICER,
+  )
+  @ApiOperation({
+    summary: 'Get order statistics',
+    description:
+      'Get order statistics grouped by status with role-based filtering',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Order statistics retrieved successfully',
+  })
+  async getOrderStats(@CurrentUserId() userId: string) {
+    return this.orderService.getOrderStats(userId);
+  }
+
   @Post(':orderNumber/verify-payment')
   @Roles(
     UserRole.ADMIN,
