@@ -4,6 +4,7 @@ import {
   Get,
   Patch,
   Put,
+  Delete,
   Body,
   Param,
   Query,
@@ -21,6 +22,8 @@ import {
   ApiBearerAuth,
   ApiParam,
   ApiQuery,
+  ApiNotFoundResponse,
+  ApiForbiddenResponse,
 } from '@nestjs/swagger';
 import { OrderService } from './order.service';
 import { MonnifyService } from '../payment/monnify.service';
@@ -39,7 +42,9 @@ import {
   UpdateOrderItemStatusDto,
   ListOrdersQueryDto,
 } from './dto/create-order.dto';
+import { UpdateOrderDto } from './dto/update-order.dto';
 import { WebhookResponseDto } from './dto/webhook.dto';
+import { SuccessResponse } from '../../common/dto/api-response.dto';
 import {
   AssignOrderDto,
   AssignmentResponseDto,
@@ -192,6 +197,65 @@ export class OrderController {
     );
   }
 
+  @Delete(':orderNumber/cancel')
+  @UseGuards(UnifiedAuthGuard, RolesGuard)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.SUPER_ADMIN,
+    UserRole.WHOLESALER,
+    UserRole.PROCUREMENT_OFFICER,
+  )
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Cancel order',
+    description:
+      'Cancel order (wholesalers can only cancel DRAFT orders, admins can cancel any status)',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Order cancelled successfully',
+  })
+  @ApiNotFoundResponse({ description: 'Order not found' })
+  @ApiForbiddenResponse({
+    description: 'Insufficient permissions or invalid order status',
+  })
+  async cancelOrder(
+    @Param('orderNumber') orderNumber: string,
+    @CurrentUserId() userId: string,
+  ): Promise<SuccessResponse<any>> {
+    const result = await this.orderService.cancelOrder(orderNumber, userId);
+
+    return new SuccessResponse(result.message, result.data);
+  }
+
+  @Patch(':orderNumber')
+  @UseGuards(UnifiedAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.PROCUREMENT_OFFICER)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Update order (Admin only)',
+    description:
+      'Comprehensive order editing - can update items, quantities, status, delivery info, etc.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Order updated successfully',
+  })
+  @ApiNotFoundResponse({ description: 'Order not found' })
+  async updateOrder(
+    @Param('orderNumber') orderNumber: string,
+    @Body() updateOrderDto: UpdateOrderDto,
+    @CurrentUserId() userId: string,
+  ): Promise<SuccessResponse<any>> {
+    const result = await this.orderService.updateOrder(
+      orderNumber,
+      updateOrderDto,
+      userId,
+    );
+
+    return new SuccessResponse(result.message, result.data);
+  }
+
   @Get(':orderNumber')
   @Roles(
     UserRole.ADMIN,
@@ -228,11 +292,40 @@ export class OrderController {
   )
   @ApiOperation({
     summary: 'List orders',
-    description: 'Lists orders with optional filtering and pagination',
+    description:
+      'Lists orders with optional status filtering, sorting, and pagination',
+  })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    enum: OrderStatus,
+    description: 'Filter by order status',
+  })
+  @ApiQuery({
+    name: 'sortOrder',
+    required: false,
+    enum: ['asc', 'desc'],
+    description:
+      'Sort orders by creation date (asc = oldest first, desc = newest first)',
+    example: 'desc',
+  })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    type: 'integer',
+    description: 'Page number (starting from 1)',
+    example: 1,
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: 'integer',
+    description: 'Number of items per page',
+    example: 10,
   })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Orders retrieved successfully',
+    description: 'Orders retrieved successfully with pagination',
   })
   async listOrders(
     @CurrentUserId() userId: string,

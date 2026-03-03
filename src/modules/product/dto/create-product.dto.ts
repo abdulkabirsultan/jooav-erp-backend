@@ -9,6 +9,8 @@ import {
   MinLength,
   Matches,
   IsEnum,
+  IsInt,
+  Min,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
@@ -128,6 +130,15 @@ export class CreateProductDto {
       : undefined,
   )
   discount?: Decimal;
+
+  @ApiProperty({
+    description: 'Available stock quantity',
+    example: 100,
+    minimum: 0,
+  })
+  @IsInt()
+  @Min(0)
+  quantity: number;
 
   @ApiPropertyOptional({
     description: 'Primary thumbnail image file',

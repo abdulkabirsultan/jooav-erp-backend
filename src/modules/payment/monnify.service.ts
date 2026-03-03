@@ -347,6 +347,44 @@ export class MonnifyService {
   }
 
   /**
+   * Cancel an invoice (for draft/unpaid orders)
+   */
+  async cancelInvoice(invoiceReference: string): Promise<boolean> {
+    const token = await this.authenticate();
+
+    try {
+      this.logger.debug(`Cancelling invoice: ${invoiceReference}`);
+
+      const response = await this.httpClient.delete(
+        `/api/invoice/${invoiceReference}/cancel`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          timeout: 10000,
+        },
+      );
+
+      if (response.data?.requestSuccessful) {
+        this.logger.log(`Invoice cancelled successfully: ${invoiceReference}`);
+        return true;
+      } else {
+        this.logger.warn(
+          `Failed to cancel invoice ${invoiceReference}: ${response.data?.responseMessage}`,
+        );
+        return false;
+      }
+    } catch (error) {
+      this.logger.error(
+        `Error cancelling invoice ${invoiceReference}:`,
+        error.message,
+      );
+      // Don't throw error - cancellation failure shouldn't block order cancellation
+      return false;
+    }
+  }
+
+  /**
    * Verify Monnify webhook signature
    * Implements SHA-512 HMAC signature verification as per Monnify documentation
    */

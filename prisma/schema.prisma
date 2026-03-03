@@ -299,8 +299,11 @@ model Product {
   price           Decimal?      @db.Decimal(10,2)
   discount        Decimal?      @db.Decimal(5,2) // Discount percentage (0-100)
   
+  // Inventory
+  quantity        Int           @default(0) // Available stock quantity
+  
   // Media
-  images          String[]      // Array of Cloudinary image URLs
+  images          String[]      @default([]) // Array of Cloudinary image URLs
   thumbnail       String?       // Cloudinary thumbnail image URL
   
   // Status

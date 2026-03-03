@@ -11,6 +11,7 @@ import {
   IsEnum,
   IsDateString,
   IsInt,
+  IsIn,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { OrderStatus, OrderItemStatus } from '@prisma/client';
@@ -185,22 +186,16 @@ export class ListOrdersQueryDto {
   status?: OrderStatus;
 
   @ApiProperty({
-    description: 'Filter orders from date (ISO format)',
+    description: 'Sort order for results',
+    enum: ['asc', 'desc'],
     required: false,
-    example: '',
+    example: 'desc',
+    default: 'desc',
   })
   @IsOptional()
-  @IsDateString()
-  fromDate?: string;
-
-  @ApiProperty({
-    description: 'Filter orders to date (ISO format)',
-    required: false,
-    example: '',
-  })
-  @IsOptional()
-  @IsDateString()
-  toDate?: string;
+  @IsString()
+  @IsIn(['asc', 'desc'])
+  sortOrder?: 'asc' | 'desc' = 'desc';
 
   @ApiProperty({
     description: 'Page number (starting from 1)',
