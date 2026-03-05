@@ -153,6 +153,7 @@ export class ProductController {
         packSizeId: { type: 'string', example: '' },
         packTypeId: { type: 'string', example: '' },
         price: { type: 'string', example: '' },
+        quantity: { type: 'string', example: '' },
         thumbnail: {
           type: 'string',
           format: 'binary',
@@ -172,6 +173,7 @@ export class ProductController {
         'packSizeId',
         'packTypeId',
         'price',
+        'quantity',
       ],
     },
   })
@@ -366,6 +368,7 @@ export class ProductController {
         packSizeId: { type: 'string', example: '' },
         packTypeId: { type: 'string', example: '' },
         price: { type: 'string', example: '' },
+        quantity: { type: 'string', example: '' },
         thumbnail: {
           type: 'string',
           format: 'binary',

@@ -348,6 +348,7 @@ export class BulkProductUploadService {
           discount: productData.discount
             ? new Prisma.Decimal(productData.discount)
             : null,
+          quantity: productData.quantity,
           status: 'QUEUE', // Default as specified
           images: images,
           thumbnail: productData.product_thumbnail,
@@ -372,10 +373,6 @@ export class BulkProductUploadService {
       result.generatedSku = sku;
 
       // Add warnings if applicable
-      if (!productData.price) {
-        if (!result.warnings) result.warnings = [];
-        result.warnings.push('Price not provided - can be set later');
-      }
       if (!productData.product_description) {
         if (!result.warnings) result.warnings = [];
         result.warnings.push('Product description not provided');
@@ -397,6 +394,8 @@ export class BulkProductUploadService {
       'manufacturer',
       'brand',
       'variant',
+      'price',
+      'quantity',
       'category',
       'pack_size',
       'pack_type',
@@ -411,6 +410,14 @@ export class BulkProductUploadService {
     // Validate price if provided
     if (data.price && (isNaN(Number(data.price)) || Number(data.price) < 0)) {
       return 'Invalid price value';
+    }
+
+    // Validate quantity if provided
+    if (
+      data.quantity &&
+      (isNaN(Number(data.quantity)) || Number(data.quantity) < 0)
+    ) {
+      return 'Invalid quantity value';
     }
 
     // Validate discount if provided
@@ -435,7 +442,8 @@ export class BulkProductUploadService {
     return {
       product_name: data.product_name,
       product_description: data.product_description,
-      price: data.price ? Number(data.price) : undefined,
+      price: Number(data.price),
+      quantity: Number(data.quantity),
       discount: data.discount ? Number(data.discount) : undefined,
       manufacturer: data.manufacturer,
       brand: data.brand,
@@ -1151,60 +1159,63 @@ export class BulkProductUploadService {
    */
   generateTemplate(): string {
     const headers = [
-      'product_name',
-      'product_description',
-      'price',
-      'discount',
+      'category',
+      'subcategory',
       'manufacturer',
       'brand',
-      'brand_logo',
       'variant',
-      'category',
-      'category_description',
-      'subcategory',
-      'subcategory_description',
       'pack_size',
       'pack_type',
-      'product_images',
+      'product_name',
+      'quantity',
+      'price',
       'product_thumbnail',
+      'product_images',
+      'product_description',
+      'discount',
+      'brand_logo',
+      'category_description',
+      'subcategory_description',
     ];
 
     const sampleRows = [
       [
-        'Coca Cola Original',
-        'Classic cola with original taste',
-        '2.50',
-        '10',
+        'Beverages',
+        'Soft Drinks',
         'The Coca-Cola Company',
         'Coca Cola',
-        'https://example.com/coca-cola-logo.png',
         'Original',
-        'Beverages',
-        'Non-alcoholic drinks',
-        'Soft Drinks',
-        'Carbonated beverages',
         '500ml',
         'Bottle',
-        'https://example.com/product1.jpg,https://example.com/product2.jpg',
+        'Coca Cola Original',
+        '100',
+        '2.50',
         'https://example.com/thumbnail.jpg',
+        'https://example.com/product1.jpg,https://example.com/product2.jpg',
+        'Classic cola with original taste',
+        '10',
+        'https://example.com/coca-cola-logo.png',
+        'Non-alcoholic drinks',
+        'Carbonated beverages',
       ],
       [
-        'Pepsi Max',
-        'Zero calorie cola drink',
-        '2.30',
-        '5',
+        'Beverages',
+        'Soft Drinks',
         'PepsiCo',
         'Pepsi',
-        '',
         'Max',
-        'Beverages',
-        'Non-alcoholic drinks',
-        'Soft Drinks',
-        'Zero calorie carbonated beverages',
         '330ml',
         'Can',
+        'Pepsi Max',
+        '50',
+        '2.30',
         '',
         '',
+        'Zero calorie cola drink',
+        '5',
+        '',
+        'Non-alcoholic drinks',
+        'Zero calorie carbonated beverages',
       ],
     ];
 

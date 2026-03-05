@@ -32,13 +32,12 @@ export class ProductUploadRowDto {
   @ApiProperty({
     description: 'Product price',
     example: 1.5,
-    required: false,
+    required: true,
   })
-  @IsOptional()
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
-  price?: number;
+  price: number;
 
   @ApiProperty({
     description: 'Discount percentage (0-100)',
@@ -51,6 +50,16 @@ export class ProductUploadRowDto {
   @Min(0)
   @Max(100)
   discount?: number;
+
+  @ApiProperty({
+    description: 'Available quantity/stock',
+    example: 100,
+    required: true,
+  })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  quantity: number;
 
   @ApiProperty({
     description: 'Manufacturer name',

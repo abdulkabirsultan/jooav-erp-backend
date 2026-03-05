@@ -27,7 +27,7 @@ export class CreateOrderDto {
   wholesalerId?: string;
 
   @ApiProperty({
-    description: 'Order items',
+    description: 'Order items (optional for draft orders)',
     type: 'array',
     items: {
       type: 'object',
@@ -37,11 +37,13 @@ export class CreateOrderDto {
         unitPrice: { type: 'number', minimum: 0 },
       },
     },
+    required: false,
   })
+  @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => OrderItemDto)
-  items: OrderItemDto[];
+  items?: OrderItemDto[];
 
   @ApiProperty({
     description: 'Delivery address',
@@ -88,10 +90,12 @@ export class OrderItemDto {
     description: 'Unit price',
     example: 150.0,
     minimum: 0,
+    required: false,
   })
+  @IsOptional()
   @IsNumber()
   @Min(0)
-  unitPrice: number;
+  unitPrice?: number;
 }
 
 export class CheckoutResponseDto {
@@ -220,4 +224,73 @@ export class ListOrdersQueryDto {
   @IsInt()
   @Min(1)
   limit?: number = 10;
+}
+
+// New DTOs for payment initiation
+
+export class InitiatePaymentDto {
+  // Currently empty - could be extended in future for payment preferences
+}
+
+export class PaymentResponseDto {
+  @ApiProperty({
+    description: 'Success status',
+    example: true,
+  })
+  success: boolean;
+
+  @ApiProperty({
+    description: 'Response message',
+    example: 'Payment initiated successfully',
+  })
+  message: string;
+
+  @ApiProperty({
+    description: 'Order and payment data',
+  })
+  data: {
+    order: {
+      id: string;
+      orderNumber: string;
+      totalAmount: number;
+      status: string;
+    };
+    virtualAccounts: Array<{
+      accountNumber: string;
+      accountName: string;
+      bankCode: string;
+      bankName: string;
+    }>;
+    checkoutUrl: string;
+    expiryDate: string;
+    invoiceReference: string;
+  };
+}
+
+export class DraftOrderResponseDto {
+  @ApiProperty({
+    description: 'Success status',
+    example: true,
+  })
+  success: boolean;
+
+  @ApiProperty({
+    description: 'Response message',
+    example: 'Draft order created successfully',
+  })
+  message: string;
+
+  @ApiProperty({
+    description: 'Draft order data',
+  })
+  data: {
+    order: {
+      id: string;
+      orderNumber: string;
+      totalAmount: number;
+      status: string;
+      itemsCount: number;
+      canInitiatePayment: boolean;
+    };
+  };
 }

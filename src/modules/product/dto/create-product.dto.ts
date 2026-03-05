@@ -135,7 +135,9 @@ export class CreateProductDto {
     description: 'Available stock quantity',
     example: 100,
     minimum: 0,
+    type: 'string',
   })
+  @Transform(({ value }) => parseInt(value, 10))
   @IsInt()
   @Min(0)
   quantity: number;

@@ -756,7 +756,8 @@ enum PackTypeStatus {
 }
 
 enum OrderStatus {
-  DRAFT              // Customer building order
+  DRAFT              // Customer building order (no payment setup)
+  PENDING_PAYMENT    // Payment account generated, waiting for payment
   CONFIRMED          // Payment verified, ready for assignment
   ASSIGNED           // Assigned to procurement officer
   IN_PROGRESS        // Officer actively working

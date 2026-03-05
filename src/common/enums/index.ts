@@ -15,6 +15,7 @@ export enum UserStatus {
 
 export enum OrderStatus {
   DRAFT = 'DRAFT',
+  PENDING_PAYMENT = 'PENDING_PAYMENT',
   CONFIRMED = 'CONFIRMED',
   ASSIGNED = 'ASSIGNED',
   IN_PROGRESS = 'IN_PROGRESS',

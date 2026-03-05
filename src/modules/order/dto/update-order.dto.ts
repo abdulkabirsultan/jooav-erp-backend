@@ -1,6 +1,5 @@
 import { ApiPropertyOptional, OmitType, PartialType } from '@nestjs/swagger';
 import {
-  IsEnum,
   IsOptional,
   IsString,
   MinLength,
@@ -12,15 +11,6 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { CreateOrderDto } from './create-order.dto';
-
-export enum UpdateOrderStatus {
-  DRAFT = 'DRAFT',
-  CONFIRMED = 'CONFIRMED',
-  ASSIGNED = 'ASSIGNED',
-  IN_PROGRESS = 'IN_PROGRESS',
-  COMPLETED = 'COMPLETED',
-  CANCELLED = 'CANCELLED',
-}
 
 export class UpdateOrderItemDto {
   @ApiPropertyOptional({
@@ -51,21 +41,13 @@ export class UpdateOrderItemDto {
   })
   @IsOptional()
   @IsInt()
-  @Min(1)
+  @Min(10, { message: 'Quantity must be at least 10' })
   quantity?: number;
 }
 
 export class UpdateOrderDto extends PartialType(
   OmitType(CreateOrderDto, ['items'] as const),
 ) {
-  @ApiPropertyOptional({
-    description: 'Update order status',
-    enum: UpdateOrderStatus,
-  })
-  @IsOptional()
-  @IsEnum(UpdateOrderStatus)
-  status?: UpdateOrderStatus;
-
   @ApiPropertyOptional({
     description: 'Assign procurement officer ID',
     example: 'procurement_officer_123',

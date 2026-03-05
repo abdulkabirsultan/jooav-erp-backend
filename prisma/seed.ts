@@ -16,16 +16,6 @@ async function hashPassword(password: string): Promise<string> {
   return argon2.hash(password, argonOptions);
 }
 
-// Generate order number - same as order service
-function generateOrderNumber(): string {
-  const prefix = 'JOO';
-  const timestamp = Date.now().toString().slice(-8);
-  const random = Math.floor(Math.random() * 1000)
-    .toString()
-    .padStart(3, '0');
-  return `${prefix}${timestamp}${random}`;
-}
-
 async function main() {
   console.log('🌱 Starting database seeding...');
 
@@ -617,8 +607,12 @@ async function main() {
         packTypeId: packTypes[0].id, // Single Pack
         price: 120.0,
         discount: 5.0,
-        thumbnail: 'indomie-chicken-70g-single-thumb.jpg',
-        images: ['indomie-chicken-70g-single.jpg'],
+        thumbnail:
+          'https://images.unsplash.com/photo-1623341214825-9f4f963727da?w=300&h=300&fit=crop',
+        images: [
+          'https://images.unsplash.com/photo-1623341214825-9f4f963727da?w=800&h=600&fit=crop',
+        ],
+        quantity: 500,
         createdBy: users[0].id,
         updatedBy: users[0].id,
       },
@@ -639,8 +633,12 @@ async function main() {
         packTypeId: packTypes[1].id, // Twin Pack
         price: 220.0,
         discount: 8.0,
-        thumbnail: 'indomie-chicken-120g-twin-thumb.jpg',
-        images: ['indomie-chicken-120g-twin.jpg'],
+        thumbnail:
+          'https://images.unsplash.com/photo-1585032226651-759b368d7246?w=300&h=300&fit=crop',
+        images: [
+          'https://images.unsplash.com/photo-1585032226651-759b368d7246?w=800&h=600&fit=crop',
+        ],
+        quantity: 300,
         createdBy: users[0].id,
         updatedBy: users[0].id,
       },
@@ -661,8 +659,12 @@ async function main() {
         packTypeId: packTypes[2].id, // Family Pack
         price: 350.0,
         discount: 12.0,
-        thumbnail: 'indomie-chicken-200g-family-thumb.jpg',
-        images: ['indomie-chicken-200g-family.jpg'],
+        thumbnail:
+          'https://images.unsplash.com/photo-1612852098516-55d01c75769a?w=300&h=300&fit=crop',
+        images: [
+          'https://images.unsplash.com/photo-1612852098516-55d01c75769a?w=800&h=600&fit=crop',
+        ],
+        quantity: 200,
         createdBy: users[0].id,
         updatedBy: users[0].id,
       },
@@ -684,8 +686,12 @@ async function main() {
         packTypeId: packTypes[3].id, // Glass Bottle
         price: 180.0,
         discount: 5.0,
-        thumbnail: 'coca-cola-350ml-glass-thumb.jpg',
-        images: ['coca-cola-350ml-glass.jpg'],
+        thumbnail:
+          'https://images.unsplash.com/photo-1561758033-d89a9ad46330?w=300&h=300&fit=crop',
+        images: [
+          'https://images.unsplash.com/photo-1561758033-d89a9ad46330?w=800&h=600&fit=crop',
+        ],
+        quantity: 250,
         createdBy: users[0].id,
         updatedBy: users[0].id,
       },
@@ -705,8 +711,12 @@ async function main() {
         packTypeId: packTypes[4].id, // PET Bottle
         price: 200.0,
         discount: 10.0,
-        thumbnail: 'coca-cola-500ml-pet-thumb.jpg',
-        images: ['coca-cola-500ml-pet.jpg'],
+        thumbnail:
+          'https://images.unsplash.com/photo-1629203851122-3726ecdf080e?w=300&h=300&fit=crop',
+        images: [
+          'https://images.unsplash.com/photo-1629203851122-3726ecdf080e?w=800&h=600&fit=crop',
+        ],
+        quantity: 300,
         createdBy: users[0].id,
         updatedBy: users[0].id,
       },
@@ -726,8 +736,12 @@ async function main() {
         packTypeId: packTypes[4].id, // PET Bottle
         price: 450.0,
         discount: 15.0,
-        thumbnail: 'coca-cola-1-5l-pet-thumb.jpg',
-        images: ['coca-cola-1-5l-pet.jpg'],
+        thumbnail:
+          'https://images.unsplash.com/photo-1622543925917-763c34d1a86e?w=300&h=300&fit=crop',
+        images: [
+          'https://images.unsplash.com/photo-1622543925917-763c34d1a86e?w=800&h=600&fit=crop',
+        ],
+        quantity: 120,
         createdBy: users[0].id,
         updatedBy: users[0].id,
       },
@@ -749,8 +763,12 @@ async function main() {
         packTypeId: packTypes[6].id, // Tin
         price: 1500.0,
         discount: 10.0,
-        thumbnail: 'peak-milk-400g-tin-thumb.jpg',
-        images: ['peak-milk-400g-tin.jpg'],
+        thumbnail:
+          'https://images.unsplash.com/photo-1563636619-e9143da7973b?w=300&h=300&fit=crop',
+        images: [
+          'https://images.unsplash.com/photo-1563636619-e9143da7973b?w=800&h=600&fit=crop',
+        ],
+        quantity: 180,
         createdBy: users[0].id,
         updatedBy: users[0].id,
       },
@@ -771,8 +789,12 @@ async function main() {
         packTypeId: packTypes[7].id, // Pouch
         price: 3200.0,
         discount: 12.0,
-        thumbnail: 'peak-milk-900g-pouch-thumb.jpg',
-        images: ['peak-milk-900g-pouch.jpg'],
+        thumbnail:
+          'https://images.unsplash.com/photo-1550583724-b2692b85b150?w=300&h=300&fit=crop',
+        images: [
+          'https://images.unsplash.com/photo-1550583724-b2692b85b150?w=800&h=600&fit=crop',
+        ],
+        quantity: 100,
         createdBy: users[0].id,
         updatedBy: users[0].id,
       },
@@ -792,8 +814,12 @@ async function main() {
         packTypeId: packTypes[8].id, // Carton
         price: 6000.0,
         discount: 20.0,
-        thumbnail: 'peak-milk-1-8kg-carton-thumb.jpg',
-        images: ['peak-milk-1-8kg-carton.jpg'],
+        thumbnail:
+          'https://images.unsplash.com/photo-1559181567-c3190ca9959b?w=300&h=300&fit=crop',
+        images: [
+          'https://images.unsplash.com/photo-1559181567-c3190ca9959b?w=800&h=600&fit=crop',
+        ],
+        quantity: 60,
         createdBy: users[0].id,
         updatedBy: users[0].id,
       },
@@ -821,313 +847,6 @@ async function main() {
       regionId: regions[2].id, // Kano region
     },
   });
-
-  // Create sample orders with different assignment statuses
-  const sampleOrders = await Promise.all([
-    // Order 1: Assigned and accepted by PO1
-    prisma.order.create({
-      data: {
-        orderNumber: generateOrderNumber(),
-        wholesalerId: wholesalerProfile1.id,
-        createdById: wholesalerUser.id,
-        status: 'ASSIGNED',
-        assignmentStatus: 'ACCEPTED',
-        assignedProcurementOfficerId: subAdmin.id, // PO1 (available)
-        assignedAt: new Date(),
-        assignmentNotes: 'Auto-assigned based on availability',
-        subtotal: 180000,
-        totalAmount: 180000,
-        deliveryAddress: {
-          address: '45 Broad Street, Lagos Island',
-          city: 'Lagos',
-          state: 'Lagos State',
-          contactName: 'Wholesale Business Owner',
-          contactPhone: '+234801234567',
-        },
-        customerNotes: 'Urgent delivery needed for weekend sales',
-        orderDate: new Date(),
-        submittedAt: new Date(),
-        items: {
-          create: [
-            {
-              productId: products[0].id, // Indomie noodles
-              quantity: 20,
-              unitPrice: 4500,
-              lineTotal: 90000,
-              status: 'PENDING',
-            },
-            {
-              productId: products[1].id, // Coca Cola
-              quantity: 15,
-              unitPrice: 6000,
-              lineTotal: 90000,
-              status: 'PENDING',
-            },
-          ],
-        },
-      },
-    }),
-    // Order 2: Pending acceptance by PO2 (unavailable)
-    prisma.order.create({
-      data: {
-        orderNumber: generateOrderNumber(),
-        wholesalerId: wholesalerProfile2.id,
-        createdById: wholesaler2.id,
-        status: 'ASSIGNED',
-        assignmentStatus: 'PENDING_ACCEPTANCE',
-        assignedProcurementOfficerId: procurementOfficer2.id, // PO2 (unavailable)
-        assignedAt: new Date(),
-        assignmentNotes:
-          'Auto-assigned to unavailable officer due to no available officers',
-        subtotal: 120000,
-        totalAmount: 120000,
-        deliveryAddress: {
-          address: '12 Constitution Avenue, Central Business District',
-          city: 'Abuja',
-          state: 'FCT',
-          contactName: 'Jane Smith',
-          contactPhone: '+234802345678',
-        },
-        customerNotes: 'Regular monthly stock replenishment',
-        orderDate: new Date(),
-        submittedAt: new Date(),
-        items: {
-          create: [
-            {
-              productId: products[2].id, // Peak Milk
-              quantity: 20,
-              unitPrice: 6000,
-              lineTotal: 120000,
-              status: 'PAID',
-            },
-          ],
-        },
-      },
-    }),
-    // Order 3: Unassigned (confirmed but no PO assigned)
-    prisma.order.create({
-      data: {
-        orderNumber: generateOrderNumber(),
-        wholesalerId: wholesalerProfile3.id,
-        createdById: wholesaler3.id,
-        status: 'CONFIRMED',
-        assignmentStatus: 'UNASSIGNED',
-        subtotal: 85000,
-        totalAmount: 85000,
-        deliveryAddress: {
-          address: '33 Ahmadu Bello Way, Nassarawa GRA',
-          city: 'Kano',
-          state: 'Kano State',
-          contactName: 'David Brown',
-          contactPhone: '+234803456789',
-        },
-        customerNotes: 'First time order, please ensure quality check',
-        orderDate: new Date(),
-        submittedAt: new Date(),
-        items: {
-          create: [
-            {
-              productId: products[0].id, // Tecno Spark 10
-              quantity: 5,
-              unitPrice: 17000,
-              lineTotal: 85000,
-              status: 'PAID',
-            },
-          ],
-        },
-      },
-    }),
-  ]);
-
-  // Create additional test orders with comprehensive assignment scenarios
-  const additionalOrders = await Promise.all([
-    // Order 1: Assigned to available PO (John Smith) and ACCEPTED
-    prisma.order.create({
-      data: {
-        orderNumber: generateOrderNumber(),
-        wholesalerId: wholesalerProfile1.id,
-        createdById: wholesalerUser.id,
-        assignedProcurementOfficerId: subAdmin.id, // Available PO
-        status: 'CONFIRMED',
-        assignmentStatus: 'ACCEPTED',
-        subtotal: 120000,
-        totalAmount: 120000,
-        deliveryAddress: {
-          address: '15 Victoria Island, Lagos',
-          city: 'Lagos',
-          state: 'Lagos State',
-          contactName: 'Alice Johnson',
-          contactPhone: '+234801234567',
-        },
-        customerNotes: 'Urgent delivery requested - assigned and accepted',
-        orderDate: new Date(),
-        submittedAt: new Date(),
-        assignedAt: new Date(),
-        items: {
-          create: [
-            {
-              productId: products[1].id, // iPhone 15 Pro
-              quantity: 2,
-              unitPrice: 60000,
-              lineTotal: 120000,
-              status: 'PAID',
-            },
-          ],
-        },
-      },
-    }),
-
-    // Order 2: Assigned to unavailable PO (Sarah Johnson) but still PENDING_ACCEPTANCE
-    prisma.order.create({
-      data: {
-        orderNumber: generateOrderNumber(),
-        wholesalerId: wholesalerProfile2.id,
-        createdById: wholesaler2.id,
-        assignedProcurementOfficerId: procurementOfficer2.id, // Unavailable PO
-        status: 'CONFIRMED',
-        assignmentStatus: 'PENDING_ACCEPTANCE',
-        subtotal: 95000,
-        totalAmount: 95000,
-        deliveryAddress: {
-          address: '28 Garki District, Abuja',
-          city: 'Abuja',
-          state: 'FCT',
-          contactName: 'Robert Wilson',
-          contactPhone: '+234809876543',
-        },
-        customerNotes: 'Assigned to unavailable PO - testing visibility',
-        orderDate: new Date(),
-        submittedAt: new Date(),
-        assignedAt: new Date(),
-        items: {
-          create: [
-            {
-              productId: products[2].id, // Samsung Galaxy A54
-              quantity: 3,
-              unitPrice: 31667,
-              lineTotal: 95000,
-              status: 'PAID',
-            },
-          ],
-        },
-      },
-    }),
-
-    // Order 3: Assigned to available PO (Michael Chen) and ACCEPTED
-    prisma.order.create({
-      data: {
-        orderNumber: generateOrderNumber(),
-        wholesalerId: wholesalerProfile3.id,
-        createdById: wholesaler3.id,
-        assignedProcurementOfficerId: procurementOfficer3.id, // Available PO
-        status: 'CONFIRMED',
-        assignmentStatus: 'ACCEPTED',
-        subtotal: 75000,
-        totalAmount: 75000,
-        deliveryAddress: {
-          address: '42 Independence Layout, Enugu',
-          city: 'Enugu',
-          state: 'Enugu State',
-          contactName: 'Grace Okafor',
-          contactPhone: '+234807654321',
-        },
-        customerNotes: 'Second PO acceptance test',
-        orderDate: new Date(),
-        submittedAt: new Date(),
-        assignedAt: new Date(),
-        items: {
-          create: [
-            {
-              productId: products[3].id, // HP Pavilion Laptop
-              quantity: 1,
-              unitPrice: 75000,
-              lineTotal: 75000,
-              status: 'PAID',
-            },
-          ],
-        },
-      },
-    }),
-
-    // Order 4: Auto-assigned by fallback to unavailable PO when no available POs
-    prisma.order.create({
-      data: {
-        orderNumber: generateOrderNumber(),
-        wholesalerId: wholesalerProfile1.id,
-        createdById: wholesalerUser.id,
-        assignedProcurementOfficerId: procurementOfficer2.id, // Testing fallback assignment to unavailable PO
-        status: 'CONFIRMED',
-        assignmentStatus: 'PENDING_ACCEPTANCE',
-        subtotal: 140000,
-        totalAmount: 140000,
-        deliveryAddress: {
-          address: '67 Ring Road, Ibadan',
-          city: 'Ibadan',
-          state: 'Oyo State',
-          contactName: 'Emmanuel Adebayo',
-          contactPhone: '+234805432109',
-        },
-        customerNotes: 'Testing fallback assignment scenario',
-        orderDate: new Date(),
-        submittedAt: new Date(),
-        assignedAt: new Date(),
-        items: {
-          create: [
-            {
-              productId: products[4].id, // Dell Inspiron
-              quantity: 2,
-              unitPrice: 70000,
-              lineTotal: 140000,
-              status: 'PAID',
-            },
-          ],
-        },
-      },
-    }),
-
-    // Order 5: Large order assigned to most available PO (John Smith)
-    prisma.order.create({
-      data: {
-        orderNumber: generateOrderNumber(),
-        wholesalerId: wholesalerProfile2.id,
-        createdById: wholesaler2.id,
-        assignedProcurementOfficerId: subAdmin.id, // Most available PO
-        status: 'CONFIRMED',
-        assignmentStatus: 'ACCEPTED',
-        subtotal: 200000,
-        totalAmount: 200000,
-        deliveryAddress: {
-          address: '89 New Market Road, Kaduna',
-          city: 'Kaduna',
-          state: 'Kaduna State',
-          contactName: 'Fatima Abdullahi',
-          contactPhone: '+234806789123',
-        },
-        customerNotes: 'Large order - testing load distribution',
-        orderDate: new Date(),
-        submittedAt: new Date(),
-        assignedAt: new Date(),
-        items: {
-          create: [
-            {
-              productId: products[0].id, // Tecno Spark 10
-              quantity: 8,
-              unitPrice: 17000,
-              lineTotal: 136000,
-              status: 'PAID',
-            },
-            {
-              productId: products[5].id, // Oraimo FreePods
-              quantity: 16,
-              unitPrice: 4000,
-              lineTotal: 64000,
-              status: 'PAID',
-            },
-          ],
-        },
-      },
-    }),
-  ]);
 
   // Create system configurations
   await prisma.systemConfig.createMany({
@@ -1160,13 +879,6 @@ async function main() {
   console.log(
     `   - ${4} Users (1 Super Admin, 1 Admin, 1 Sub-Admin, 1 Wholesaler User)`,
   );
-  console.log(
-    `   - ${3} Procurement Officers (1 Available, 1 Unavailable, 1 Available)`,
-  );
-  console.log(`   - ${3} Wholesalers with comprehensive profiles`);
-  console.log(
-    `   - ${8} Total Orders (3 initial + 5 comprehensive test orders)`,
-  );
   console.log(`   - ${manufacturers.length} Manufacturers`);
   console.log(`   - ${brands.length} Brands`);
   console.log(`   - ${variants.length} Variants`);
@@ -1175,11 +887,6 @@ async function main() {
   console.log(`   - ${products.length} Products`);
   console.log(`   - ${5} System Configurations`);
   console.log('🎯 Enhanced pack entity combinations created!');
-  console.log('🔄 Assignment test scenarios:');
-  console.log('   - ACCEPTED orders by available POs');
-  console.log('   - PENDING_ACCEPTANCE orders by unavailable POs');
-  console.log('   - UNASSIGNED orders for fallback testing');
-  console.log('   - Load distribution testing with large orders');
 }
 
 main()

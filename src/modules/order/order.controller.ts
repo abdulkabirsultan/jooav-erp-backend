@@ -41,6 +41,9 @@ import {
   PaymentConfirmationDto,
   UpdateOrderItemStatusDto,
   ListOrdersQueryDto,
+  InitiatePaymentDto,
+  PaymentResponseDto,
+  DraftOrderResponseDto,
 } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { WebhookResponseDto } from './dto/webhook.dto';
@@ -73,20 +76,80 @@ export class OrderController {
   @Post()
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.WHOLESALER)
   @ApiOperation({
-    summary: 'Create order with Monnify payment integration',
+    summary: 'Create draft order',
     description:
-      'Creates order and generates dynamic virtual account + checkout URL for payment',
+      'Creates a draft order that can be edited. Items are optional and no payment is initiated.',
   })
   @ApiResponse({
     status: HttpStatus.CREATED,
-    description: 'Order created successfully with payment options',
-    type: CheckoutResponseDto,
+    description: 'Draft order created successfully',
+    type: DraftOrderResponseDto,
   })
   async createOrder(
     @Body() createOrderDto: CreateOrderDto,
     @CurrentUserId() userId: string,
-  ): Promise<CheckoutResponseDto> {
+  ): Promise<DraftOrderResponseDto> {
     return this.orderService.createOrder(createOrderDto, userId);
+  }
+
+  @Post(':orderNumber/initiate-payment')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.WHOLESALER)
+  @ApiOperation({
+    summary: 'Initiate payment for draft order',
+    description:
+      'Converts a DRAFT order to PENDING_PAYMENT with Monnify integration and virtual account generation',
+  })
+  @ApiParam({
+    name: 'orderNumber',
+    description: 'Order number to initiate payment for',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Payment initiated successfully',
+    type: PaymentResponseDto,
+  })
+  @ApiForbiddenResponse({
+    description: 'Access denied or order belongs to another user',
+  })
+  @ApiNotFoundResponse({
+    description: 'Order not found',
+  })
+  async initiatePayment(
+    @Param('orderNumber') orderNumber: string,
+    @Body() initiatePaymentDto: InitiatePaymentDto,
+    @CurrentUserId() userId: string,
+  ): Promise<PaymentResponseDto> {
+    return this.orderService.initiatePayment(orderNumber, userId);
+  }
+
+  @Post(':orderNumber/reinitiate-payment')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.WHOLESALER)
+  @ApiOperation({
+    summary: 'Reinitiate payment for expired orders',
+    description:
+      'Returns existing payment details if not expired, or recreates the order with new payment details if expired',
+  })
+  @ApiParam({
+    name: 'orderNumber',
+    description: 'Order number to reinitiate payment for',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description:
+      'Payment reinitiated successfully or existing details returned',
+    type: PaymentResponseDto,
+  })
+  @ApiForbiddenResponse({
+    description: 'Access denied or order belongs to another user',
+  })
+  @ApiNotFoundResponse({
+    description: 'Order not found',
+  })
+  async reinitiatePayment(
+    @Param('orderNumber') orderNumber: string,
+    @CurrentUserId() userId: string,
+  ): Promise<PaymentResponseDto> {
+    return this.orderService.reinitiatePayment(orderNumber, userId);
   }
 
   @Get('stats')
@@ -207,13 +270,13 @@ export class OrderController {
   )
   @ApiBearerAuth('access-token')
   @ApiOperation({
-    summary: 'Cancel order',
+    summary: 'Cancel/Delete order',
     description:
-      'Cancel order (wholesalers can only cancel DRAFT orders, admins can cancel any status)',
+      'Cancel or delete order based on status. DRAFT orders are completely deleted, other orders are marked as cancelled. Wholesalers can only delete their own DRAFT orders, admins can cancel/delete any order.',
   })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Order cancelled successfully',
+    description: 'Order cancelled/deleted successfully',
   })
   @ApiNotFoundResponse({ description: 'Order not found' })
   @ApiForbiddenResponse({
@@ -230,18 +293,27 @@ export class OrderController {
 
   @Patch(':orderNumber')
   @UseGuards(UnifiedAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.PROCUREMENT_OFFICER)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.SUPER_ADMIN,
+    UserRole.WHOLESALER,
+    UserRole.PROCUREMENT_OFFICER,
+  )
   @ApiBearerAuth('access-token')
   @ApiOperation({
-    summary: 'Update order (Admin only)',
+    summary: 'Update draft order',
     description:
-      'Comprehensive order editing - can update items, quantities, status, delivery info, etc.',
+      'Update DRAFT orders only. Role-based permissions: Wholesalers/POs can edit items & delivery address, Admins can edit all fields.',
   })
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Order updated successfully',
   })
   @ApiNotFoundResponse({ description: 'Order not found' })
+  @ApiForbiddenResponse({
+    description:
+      'Access denied - only DRAFT orders can be edited or insufficient permissions',
+  })
   async updateOrder(
     @Param('orderNumber') orderNumber: string,
     @Body() updateOrderDto: UpdateOrderDto,

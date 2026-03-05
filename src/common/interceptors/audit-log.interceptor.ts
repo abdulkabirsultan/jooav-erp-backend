@@ -9,6 +9,14 @@ import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
 import { Request } from 'express';
 
+// Extend Express Request to include user property
+interface AuthenticatedRequest extends Request {
+  user?: {
+    id: string;
+    [key: string]: any;
+  };
+}
+
 import { AuditService } from '../../modules/audit/audit.service';
 import {
   AUDIT_LOG_KEY,
@@ -32,17 +40,17 @@ export class AuditLogInterceptor implements NestInterceptor {
       return next.handle();
     }
 
-    const request = context.switchToHttp().getRequest<Request>();
+    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const { action, resource, includeRequestBody, includeResponseBody } =
       auditOptions;
 
-    // Extract user ID from request (when authentication is implemented)
-    // const userId = request.user?.id;
+    // Extract user ID from request
+    const userId = request.user?.id;
 
     const auditData = {
       action,
       resource,
-      // userId, // Uncomment when authentication is implemented
+      userId,
       ipAddress: request.ip,
       userAgent: request.get('User-Agent'),
       metadata: {
