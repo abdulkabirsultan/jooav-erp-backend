@@ -1742,7 +1742,7 @@ export class OrderService {
    * Generate unique order number
    */
   private async generateOrderNumber(): Promise<string> {
-    const prefix = 'JOOAV';
+    const prefix = 'JOO-';
     const timestamp = Date.now().toString().slice(-8);
     const random = Math.floor(Math.random() * 1000)
       .toString()
@@ -3108,12 +3108,14 @@ export class OrderService {
         'deliveryAddress',
         'customerNotes',
         'wholesalerId',
+        'assignedProcurementOfficerId',
       ],
       [UserRole.SUPER_ADMIN]: [
         'items',
         'deliveryAddress',
         'customerNotes',
         'wholesalerId',
+        'assignedProcurementOfficerId',
       ],
     };
 
@@ -3148,6 +3150,8 @@ export class OrderService {
       }[] = [];
 
       const result = await this.prismaService.$transaction(async (tx) => {
+        let updatedOrder = order;
+
         // Handle item updates if provided
         if (updateOrderDto.items && Array.isArray(updateOrderDto.items)) {
           recalculateNeeded = true;
@@ -3251,7 +3255,6 @@ export class OrderService {
         }
 
         // Recalculate order totals if items were modified
-        let updatedOrder = order;
         if (recalculateNeeded) {
           // Get updated items to recalculate totals
           const updatedItems = await tx.orderItem.findMany({
@@ -3279,6 +3282,7 @@ export class OrderService {
                       id: true,
                       name: true,
                       price: true,
+                      quantity: true,
                     },
                   },
                 },
@@ -3291,26 +3295,10 @@ export class OrderService {
         // Handle other field updates (non-items)
         const { items, ...otherUpdates } = updateOrderDto;
         if (Object.keys(otherUpdates).length > 0) {
-          // Handle status-specific timestamp updates
-          const statusUpdateData: any = { ...otherUpdates };
-          if (otherUpdates.status) {
-            switch (otherUpdates.status) {
-              case OrderStatus.CONFIRMED:
-                statusUpdateData.confirmedAt = new Date();
-                break;
-              case OrderStatus.ASSIGNED:
-                statusUpdateData.assignedAt = new Date();
-                break;
-              case OrderStatus.COMPLETED:
-                statusUpdateData.completedAt = new Date();
-                break;
-            }
-          }
-
           updatedOrder = await tx.order.update({
             where: { id: order.id },
             data: {
-              ...statusUpdateData,
+              ...otherUpdates,
               updatedAt: new Date(),
             },
             include: {
@@ -3335,7 +3323,31 @@ export class OrderService {
           });
         }
 
-        return updatedOrder;
+        // Always fetch the final order state to ensure all item updates are reflected
+        const finalOrder = await tx.order.findUnique({
+          where: { id: order.id },
+          include: {
+            items: {
+              include: {
+                product: {
+                  select: {
+                    id: true,
+                    name: true,
+                    price: true,
+                    quantity: true,
+                  },
+                },
+              },
+            },
+            wholesaler: {
+              include: {
+                user: true,
+              },
+            },
+          },
+        });
+
+        return finalOrder || updatedOrder;
       });
 
       // Create comprehensive audit log of changes

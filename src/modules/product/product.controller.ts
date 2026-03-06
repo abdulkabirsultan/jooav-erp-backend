@@ -153,6 +153,7 @@ export class ProductController {
         packSizeId: { type: 'string', example: '' },
         packTypeId: { type: 'string', example: '' },
         price: { type: 'string', example: '' },
+        status: { type: 'string', example: 'LIVE' },
         quantity: { type: 'string', example: '' },
         thumbnail: {
           type: 'string',
