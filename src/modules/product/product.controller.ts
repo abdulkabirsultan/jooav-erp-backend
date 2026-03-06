@@ -65,6 +65,7 @@ import { CacheInterceptor } from '../../common/interceptors/cache.interceptor';
 import { UserRole } from '../../common/enums/';
 import type { Response } from 'express';
 import { UnifiedAuthGuard } from '../../common/guards/unified-auth.guard';
+import { stat } from 'fs';
 
 // Multer file filter for images only
 const imageFileFilter = (
@@ -369,6 +370,7 @@ export class ProductController {
         packSizeId: { type: 'string', example: '' },
         packTypeId: { type: 'string', example: '' },
         price: { type: 'string', example: '' },
+        status: { type: 'string', example: 'LIVE' },
         quantity: { type: 'string', example: '' },
         thumbnail: {
           type: 'string',

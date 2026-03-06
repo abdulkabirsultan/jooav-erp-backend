@@ -44,6 +44,7 @@ model User {
   activities    UserActivity[]
   createdOrders Order[]        @relation("CreatedBy")
   assignedOrders Order[]       @relation("AssignedProcurementOfficer")
+  wholesalerOrders Order[]     @relation("WholesalerUser")
   itemStatusUpdates OrderItem[] @relation("ItemStatusUpdatedBy")
 
   // JooavERP specific relations
@@ -375,7 +376,7 @@ model Order {
   updatedAt DateTime @updatedAt
 
   // Relations
-  wholesaler         Wholesaler         @relation(fields: [wholesalerId], references: [id])
+  wholesaler         User         @relation("WholesalerUser", fields: [wholesalerId], references: [id])
   assignedProcurementOfficer   User? @relation("AssignedProcurementOfficer", fields: [assignedProcurementOfficerId], references: [id])
   createdBy          User                @relation("CreatedBy", fields: [createdById], references: [id])
   items              OrderItem[]
@@ -617,7 +618,6 @@ model Wholesaler {
   // Relations
   user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   region    Region?     @relation(fields: [regionId], references: [id])
-  orders    Order[]
   inventory Inventory[]
 
   @@map("wholesalers")
