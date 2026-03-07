@@ -73,6 +73,13 @@ export class AuthService {
       return null;
     }
 
+    // Check if user is a wholesaler
+    if (user.role !== UserRole.WHOLESALER) {
+      throw new UnauthorizedException(
+        'Access denied - User is not a wholesaler.',
+      );
+    }
+
     const isPasswordValid = await argon2.verify(user.password, password);
     if (!isPasswordValid) {
       return null;
@@ -118,9 +125,9 @@ export class AuthService {
       // Log failed login attempt
       await this.auditService.logAuthEvent('unknown', 'LOGIN_FAILED', request, {
         email: loginDto.email,
-        reason: 'Invalid credentials',
+        reason: 'Invalid credentials or not a wholesaler',
       });
-      throw new UnauthorizedException('Invalid credentials');
+      throw new UnauthorizedException('Access denied - Invalid credentials.');
     }
 
     const tokens = await this.generateTokens(user);

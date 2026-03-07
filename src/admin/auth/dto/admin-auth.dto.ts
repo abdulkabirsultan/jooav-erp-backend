@@ -6,7 +6,9 @@ import {
   MinLength,
   IsArray,
   IsOptional,
+  IsEnum,
 } from 'class-validator';
+import { UserRole } from '@prisma/client';
 
 export class AdminLoginDto {
   @ApiProperty({
@@ -26,6 +28,15 @@ export class AdminLoginDto {
   @IsNotEmpty({ message: 'Password is required' })
   @MinLength(8, { message: 'Password must be at least 8 characters long' })
   password: string;
+
+  @ApiProperty({
+    description: 'Expected user role for this login attempt',
+    enum: UserRole,
+    example: UserRole.ADMIN,
+  })
+  @IsEnum(UserRole, { message: 'Invalid role specified' })
+  @IsNotEmpty({ message: 'Role is required' })
+  role: UserRole;
 }
 
 export class AdminRefreshTokenDto {

@@ -227,7 +227,7 @@ export class OrderService {
     }
 
     // Generate simple draft order number (will be replaced during payment initiation)
-    const draftOrderNumber = `DRAFT-${Date.now()}`;
+    const draftOrderNumber = await this.generateOrderNumber('DRAFT-');
 
     try {
       // Create order in database as DRAFT (no Monnify integration)
@@ -428,7 +428,7 @@ export class OrderService {
 
     try {
       // Generate new order number for payment
-      const paymentOrderNumber = await this.generateOrderNumber();
+      const paymentOrderNumber = await this.generateOrderNumber('JOO-');
 
       // Create Monnify invoice
       const invoiceData = {
@@ -650,11 +650,11 @@ export class OrderService {
       await this.prismaService.order.delete({
         where: { id: order.id },
       });
-
+      const draftOrderNumber = await this.generateOrderNumber('DRAFT-');
       // 5. Create new draft order
       const newDraftOrder = await this.prismaService.order.create({
         data: {
-          orderNumber: `DRAFT-${Date.now()}}`,
+          orderNumber: draftOrderNumber, // New draft order number}`,
           wholesalerId: orderData.wholesalerId,
           status: OrderStatus.DRAFT,
           subtotal: 0, // Will be recalculated during initiation
@@ -1729,9 +1729,8 @@ export class OrderService {
   /**
    * Generate unique order number
    */
-  private async generateOrderNumber(): Promise<string> {
-    const prefix = 'JOO-';
-    const timestamp = Date.now().toString().slice(-8);
+  private async generateOrderNumber(prefix: string = 'JOO-'): Promise<string> {
+    const timestamp = Date.now().toString().slice(-7);
     const random = Math.floor(Math.random() * 1000)
       .toString()
       .padStart(3, '0');

@@ -55,23 +55,32 @@ export class AdminAuthService {
     loginDto: AdminLoginDto,
     request: any,
   ): Promise<AdminAuthResponseDto> {
-    const { email, password } = loginDto;
+    const { email, password, role: expectedRole } = loginDto;
 
-    // Find admin user with profile
+    // Find admin user with profile (now includes procurement officers)
     const admin = await this.prisma.user.findUnique({
       where: {
         email,
-        role: { in: [UserRole.SUPER_ADMIN, UserRole.ADMIN] },
+        role: {
+          in: [
+            UserRole.SUPER_ADMIN,
+            UserRole.ADMIN,
+            UserRole.PROCUREMENT_OFFICER,
+          ],
+        },
         status: UserStatus.ACTIVE,
       },
       include: {
         adminProfile: true,
+        procurementOfficerProfile: true,
       },
     });
 
     if (
       !admin ||
-      (admin.role !== UserRole.SUPER_ADMIN && admin.role !== UserRole.ADMIN)
+      (admin.role !== UserRole.SUPER_ADMIN &&
+        admin.role !== UserRole.ADMIN &&
+        admin.role !== UserRole.PROCUREMENT_OFFICER)
     ) {
       await this.logAdminAuditEvent(
         'unknown',
@@ -79,9 +88,29 @@ export class AdminAuthService {
         'ADMIN_AUTH',
         null,
         request,
-        { reason: 'Account not found' },
+        { reason: 'Account not found or insufficient privileges' },
       );
       throw new UnauthorizedException('Invalid admin credentials');
+    }
+
+    // Validate role matches expected role
+    if (admin.role !== expectedRole) {
+      await this.logAdminAuditEvent(
+        admin.id,
+        AdminAction.LOGIN_FAILED,
+        'ADMIN_AUTH',
+        admin.id,
+        request,
+        {
+          email,
+          reason: 'Role mismatch',
+          actualRole: admin.role,
+          expectedRole,
+        },
+      );
+      throw new UnauthorizedException(
+        `Access denied. This route is for ${expectedRole} role only. Your role is ${admin.role}.`,
+      );
     }
 
     // Check account status
