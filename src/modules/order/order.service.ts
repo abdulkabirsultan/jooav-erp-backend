@@ -227,7 +227,7 @@ export class OrderService {
     }
 
     // Generate simple draft order number (will be replaced during payment initiation)
-    const draftOrderNumber = `DRAFT-${Date.now()}-${userId.slice(-4)}`;
+    const draftOrderNumber = `DRAFT-${Date.now()}`;
 
     try {
       // Create order in database as DRAFT (no Monnify integration)
@@ -250,7 +250,24 @@ export class OrderService {
           items: {
             include: {
               product: {
-                select: { id: true, name: true, price: true },
+                select: {
+                  id: true,
+                  name: true,
+                  thumbnail: true,
+                  images: true,
+                  brand: { select: { name: true } },
+                  packSize: { select: { name: true } },
+                  packType: { select: { name: true } },
+                  price: true,
+                  discount: true,
+                  variant: { select: { id: true, name: true } },
+                  subcategory: {
+                    select: {
+                      name: true,
+                      category: { select: { name: true } },
+                    },
+                  },
+                },
               },
             },
           },
@@ -278,6 +295,7 @@ export class OrderService {
             orderNumber: order.orderNumber,
             totalAmount: Number(order.totalAmount),
             status: order.status,
+            items: order.items,
             itemsCount: order.items.length,
             canInitiatePayment:
               order.items.length > 0 && Number(order.totalAmount) > 0,
@@ -636,7 +654,7 @@ export class OrderService {
       // 5. Create new draft order
       const newDraftOrder = await this.prismaService.order.create({
         data: {
-          orderNumber: `DRAFT-${Date.now()}-${userId.slice(-4)}`,
+          orderNumber: `DRAFT-${Date.now()}}`,
           wholesalerId: orderData.wholesalerId,
           status: OrderStatus.DRAFT,
           subtotal: 0, // Will be recalculated during initiation
@@ -3047,7 +3065,25 @@ export class OrderService {
         items: {
           include: {
             product: {
-              select: { id: true, name: true, price: true, quantity: true },
+              select: {
+                id: true,
+                name: true,
+                thumbnail: true,
+                images: true,
+                brand: { select: { name: true } },
+                packSize: { select: { name: true } },
+                packType: { select: { name: true } },
+                price: true,
+                discount: true,
+                quantity: true,
+                variant: { select: { id: true, name: true } },
+                subcategory: {
+                  select: {
+                    name: true,
+                    category: { select: { name: true } },
+                  },
+                },
+              },
             },
           },
         },
@@ -3348,8 +3384,21 @@ export class OrderService {
                   select: {
                     id: true,
                     name: true,
+                    thumbnail: true,
+                    images: true,
+                    brand: { select: { name: true } },
+                    packSize: { select: { name: true } },
+                    packType: { select: { name: true } },
                     price: true,
+                    discount: true,
                     quantity: true,
+                    variant: { select: { id: true, name: true } },
+                    subcategory: {
+                      select: {
+                        name: true,
+                        category: { select: { name: true } },
+                      },
+                    },
                   },
                 },
               },
@@ -3444,7 +3493,7 @@ export class OrderService {
       totalRevenue,
       completedOrdersCount,
       liveProductsCount,
-      allOrdersCount,
+      allUsersCount,
     ] = await Promise.all([
       // 1. Get active orders (confirmed status upwards, excluding pending_payment)
       this.prismaService.order.findMany({
@@ -3542,8 +3591,8 @@ export class OrderService {
         },
       }),
 
-      // 6. Get all orders count
-      this.prismaService.order.count(),
+      // 6. Get all users count
+      this.prismaService.user.count(),
     ]);
 
     // Transform active orders to include procurement officer names
@@ -3564,7 +3613,7 @@ export class OrderService {
           totalRevenue: Number(totalRevenue._sum.totalAmount) || 0,
           completedOrders: completedOrdersCount,
           liveProducts: liveProductsCount,
-          allOrders: allOrdersCount,
+          allUsers: allUsersCount,
         },
       },
     };

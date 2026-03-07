@@ -61,9 +61,9 @@ export class AdminDashboardController {
                   type: 'number',
                   description: 'Total live products count',
                 },
-                allOrders: {
+                allUsers: {
                   type: 'number',
-                  description: 'Total orders count',
+                  description: 'Total users count',
                 },
               },
             },
