@@ -281,16 +281,9 @@ export class DraftOrderResponseDto {
   message: string;
 
   @ApiProperty({
-    description: 'Draft order data',
+    description: 'Complete order data with all relationships',
   })
   data: {
-    order: {
-      id: string;
-      orderNumber: string;
-      totalAmount: number;
-      status: string;
-      itemsCount: number;
-      canInitiatePayment: boolean;
-    };
+    order: any; // Using any for now since the structure matches the database model with all includes
   };
 }
