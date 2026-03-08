@@ -96,7 +96,6 @@ async function main() {
       },
       procurementOfficerProfile: {
         create: {
-          employeeId: 'PO001',
           specializations: ['Electronics', 'Industrial Equipment'],
           maxOrderValue: 100000.0,
           availabilityStatus: 'AVAILABLE', // Available PO
@@ -107,41 +106,6 @@ async function main() {
   });
 
   // Create regions
-  const regions = await Promise.all([
-    prisma.region.upsert({
-      where: { code: 'NG-LA' },
-      update: {},
-      create: {
-        name: 'Lagos',
-        code: 'NG-LA',
-        country: 'Nigeria',
-        state: 'Lagos State',
-        isActive: true,
-      },
-    }),
-    prisma.region.upsert({
-      where: { code: 'NG-AB' },
-      update: {},
-      create: {
-        name: 'Abuja',
-        code: 'NG-AB',
-        country: 'Nigeria',
-        state: 'FCT',
-        isActive: true,
-      },
-    }),
-    prisma.region.upsert({
-      where: { code: 'NG-KA' },
-      update: {},
-      create: {
-        name: 'Kano',
-        code: 'NG-KA',
-        country: 'Nigeria',
-        state: 'Kano State',
-        isActive: true,
-      },
-    }),
-  ]);
 
   // Create Wholesaler user
   const wholesalerUser = await prisma.user.upsert({
@@ -182,7 +146,6 @@ async function main() {
       },
       procurementOfficerProfile: {
         create: {
-          employeeId: 'PO002',
           specializations: ['Food & Beverages', 'Consumer Goods'],
           maxOrderValue: 75000.0,
           availabilityStatus: 'UNAVAILABLE', // This officer is unavailable
@@ -210,7 +173,6 @@ async function main() {
       },
       procurementOfficerProfile: {
         create: {
-          employeeId: 'PO003',
           specializations: ['Medical Equipment', 'Pharmaceuticals'],
           maxOrderValue: 100000.0,
           availabilityStatus: 'AVAILABLE',
@@ -830,21 +792,18 @@ async function main() {
   const wholesalerProfile1 = await prisma.wholesaler.create({
     data: {
       userId: wholesalerUser.id,
-      regionId: regions[0].id, // Lagos region
     },
   });
 
   const wholesalerProfile2 = await prisma.wholesaler.create({
     data: {
       userId: wholesaler2.id,
-      regionId: regions[1].id, // Abuja region
     },
   });
 
   const wholesalerProfile3 = await prisma.wholesaler.create({
     data: {
       userId: wholesaler3.id,
-      regionId: regions[2].id, // Kano region
     },
   });
 

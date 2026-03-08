@@ -189,8 +189,17 @@ export class AuthService {
             // Initialize empty profile
           },
         },
+        wholesalerProfile: {
+          create: {
+            totalOrders: 0,
+            totalSpent: 0,
+          },
+        },
       },
-      include: { profile: true },
+      include: {
+        profile: true,
+        wholesalerProfile: true,
+      },
     });
 
     const tokens = await this.generateTokens(user);
@@ -368,6 +377,7 @@ export class AuthService {
       sub: user.id,
       email: user.email,
       role: user.role,
+      // jti: jwtId,
     };
 
     const accessToken = this.jwtService.sign(payload as any);
@@ -375,6 +385,7 @@ export class AuthService {
     const refreshToken = this.jwtService.sign({
       sub: user.id,
       tokenType: 'refresh',
+      // jti: uuidv4(), // Separate JTI for refresh token
     } as any);
 
     return {
