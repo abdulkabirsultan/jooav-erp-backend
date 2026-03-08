@@ -248,7 +248,11 @@ export class OrderService {
         },
         include: {
           items: {
-            include: {
+            select: {
+              id: true,
+              quantity: true,
+              lineTotal: true,
+              status: true,
               product: {
                 select: {
                   id: true,
@@ -279,6 +283,13 @@ export class OrderService {
               email: true,
             },
           },
+          assignedProcurementOfficer: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
         },
       });
 
@@ -286,20 +297,19 @@ export class OrderService {
 
       this.logger.log(`Draft order ${draftOrderNumber} created successfully`);
 
+      // Transform order to match listOrders format
+      const transformedOrder = {
+        ...order,
+        procurementOfficerName: order.assignedProcurementOfficer
+          ? `${order.assignedProcurementOfficer.firstName} ${order.assignedProcurementOfficer.lastName}`
+          : null,
+      };
+
       return {
         success: true,
         message: 'Draft order created successfully',
         data: {
-          order: {
-            id: order.id,
-            orderNumber: order.orderNumber,
-            totalAmount: Number(order.totalAmount),
-            status: order.status,
-            items: order.items,
-            itemsCount: order.items.length,
-            canInitiatePayment:
-              order.items.length > 0 && Number(order.totalAmount) > 0,
-          },
+          order: transformedOrder,
         },
       };
     } catch (error) {
