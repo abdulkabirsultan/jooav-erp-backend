@@ -530,7 +530,6 @@ model AdminProfile {
 model Region {
   id       String  @id @default(cuid())
   name     String  @unique
-  code     String  @unique // e.g., "NG-LA" for Lagos, Nigeria
   country  String
   state    String?
   isActive Boolean @default(true)
@@ -605,7 +604,7 @@ model Brand {
 model Wholesaler {
   id       String @id @default(cuid())
   userId   String @unique
-  regionId String? // Optional for now, no impact on logic
+  regionId String? // Optional for now
 
   // Business metrics
   totalOrders Int     @default(0)
@@ -627,7 +626,7 @@ model ProcurementOfficerProfile {
   id         String  @id @default(cuid())
   userId     String  @unique
   regionId   String? // Optional - no impact on logic for now
-  employeeId String  @unique
+ 
 
   // Procurement officer details
   specializations String[] // e.g., ["Electronics", "Food & Beverages"]

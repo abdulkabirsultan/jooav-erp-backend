@@ -269,9 +269,36 @@ export class UsersService {
       };
     }
 
+    // Auto-create procurement officer profile
+    if (createUserDto.role === UserRole.PROCUREMENT_OFFICER) {
+      userData.procurementOfficerProfile = {
+        create: {
+          availabilityStatus: 'AVAILABLE',
+          maxActiveOrders: 5, // Default max orders
+          specializations: [], // Can be updated later
+          ordersProcessed: 0,
+        },
+      };
+    }
+
+    // Auto-create wholesaler profile
+    if (createUserDto.role === UserRole.WHOLESALER) {
+      userData.wholesalerProfile = {
+        create: {
+          totalOrders: 0,
+          totalSpent: 0,
+        },
+      };
+    }
+
     const user = await this.prisma.user.create({
       data: userData,
-      include: { profile: true, adminProfile: true },
+      include: {
+        profile: true,
+        adminProfile: true,
+        procurementOfficerProfile: true,
+        wholesalerProfile: true,
+      },
     });
 
     // Generate password reset token
