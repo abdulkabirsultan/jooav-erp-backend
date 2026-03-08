@@ -274,11 +274,21 @@ export class AdminAuthService {
       where: { id: adminId },
       include: {
         adminProfile: true,
+        procurementOfficerProfile: true,
       },
     });
 
     if (!admin) {
       throw new NotFoundException('Admin not found');
+    }
+
+    // Validate admin privileges
+    if (
+      admin.role !== UserRole.SUPER_ADMIN &&
+      admin.role !== UserRole.ADMIN &&
+      admin.role !== UserRole.PROCUREMENT_OFFICER
+    ) {
+      throw new UnauthorizedException('Admin privileges required');
     }
 
     return this.transformToAdminProfile(admin);
@@ -292,6 +302,7 @@ export class AdminAuthService {
       where: { id: adminId },
       include: {
         adminProfile: true,
+        procurementOfficerProfile: true,
       },
     });
 
@@ -299,8 +310,18 @@ export class AdminAuthService {
       throw new NotFoundException('Admin not found');
     }
 
+    // Validate admin privileges
+    if (
+      admin.role !== UserRole.SUPER_ADMIN &&
+      admin.role !== UserRole.ADMIN &&
+      admin.role !== UserRole.PROCUREMENT_OFFICER
+    ) {
+      throw new UnauthorizedException('Admin privileges required');
+    }
+
     const isSuperAdmin = admin.role === UserRole.SUPER_ADMIN;
     const isAdmin = admin.role === UserRole.ADMIN;
+    const isProcurementOfficer = admin.role === UserRole.PROCUREMENT_OFFICER;
 
     // Simplified permissions based on actual usage
     return {
@@ -404,11 +425,18 @@ export class AdminAuthService {
     const admin = await this.prisma.user.findUnique({
       where: {
         id: adminId,
-        role: { in: [UserRole.SUPER_ADMIN, UserRole.ADMIN] },
+        role: {
+          in: [
+            UserRole.SUPER_ADMIN,
+            UserRole.ADMIN,
+            UserRole.PROCUREMENT_OFFICER,
+          ],
+        },
         status: UserStatus.ACTIVE,
       },
       include: {
         adminProfile: true,
+        procurementOfficerProfile: true,
       },
     });
 
