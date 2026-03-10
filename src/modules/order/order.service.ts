@@ -452,8 +452,7 @@ export class OrderService {
         expiryDate: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
         paymentMethods: ['ACCOUNT_TRANSFER', 'CARD'],
         redirectUrl:
-          this.configService.get('APP_BASE_URL') +
-          `/order/${paymentOrderNumber}/payment/success`,
+          this.configService.get('APP_BASE_URL') + `/payment-verification`,
       };
 
       const monnifyInvoice =
