@@ -60,6 +60,12 @@ export class AdminProfileDto {
   assignedRegions: string[];
 
   @ApiProperty({
+    description: 'Availability status for procurement officers',
+    example: 'AVAILABLE',
+  })
+  availabilityStatus: string;
+
+  @ApiProperty({
     description: 'Platform permissions',
     example: {
       canModifySystemConfig: false,
