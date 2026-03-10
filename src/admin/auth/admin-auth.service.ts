@@ -543,6 +543,8 @@ export class AdminAuthService {
       emailVerified: admin.emailVerified,
       lastLogin: admin.lastLogin,
       assignedRegions: [], // Admins don't have regional assignments
+      availabilityStatus:
+        admin.procurementOfficerProfile?.availabilityStatus || null,
       permissions: {
         canModifySystemConfig:
           admin.adminProfile?.canModifySystemConfig ?? false,
