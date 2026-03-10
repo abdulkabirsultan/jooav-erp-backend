@@ -65,24 +65,34 @@ export class OrderService {
         OrderItemStatus.READY,
         OrderItemStatus.CANCELLED,
         OrderItemStatus.UNAVAILABLE,
+        OrderItemStatus.DELIVERED,
       ],
       [OrderItemStatus.READY]: [
         OrderItemStatus.PAID,
         OrderItemStatus.SHIPPED,
+        OrderItemStatus.SOURCING,
         OrderItemStatus.CANCELLED,
+        OrderItemStatus.DELIVERED,
         OrderItemStatus.UNAVAILABLE,
       ],
       [OrderItemStatus.SHIPPED]: [
         OrderItemStatus.PAID,
         OrderItemStatus.DELIVERED,
         OrderItemStatus.CANCELLED,
+        OrderItemStatus.SOURCING,
       ],
       [OrderItemStatus.DELIVERED]: [
         OrderItemStatus.SOURCING,
         OrderItemStatus.READY,
       ],
-      [OrderItemStatus.UNAVAILABLE]: [OrderItemStatus.CANCELLED],
-      [OrderItemStatus.CANCELLED]: [OrderItemStatus.PENDING],
+      [OrderItemStatus.UNAVAILABLE]: [
+        OrderItemStatus.CANCELLED,
+        OrderItemStatus.PAID,
+      ],
+      [OrderItemStatus.CANCELLED]: [
+        OrderItemStatus.PENDING,
+        OrderItemStatus.PAID,
+      ],
     };
   }
 
