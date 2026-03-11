@@ -938,7 +938,7 @@ export class OrderService {
 
       if (!allowedPreviousStatuses.includes(orderItem.status)) {
         throw new BadRequestException(
-          `Cannot mark item as delivered. Item must first be in progress (SOURCING, READY, or SHIPPED) before it can be marked as completed.`,
+          `Item must first be in progress before it can be marked as delivered.`,
         );
       }
     }
@@ -1141,7 +1141,7 @@ export class OrderService {
               itemId: updateItem.itemId,
               success: false,
               message:
-                'Cannot mark item as delivered. Item must first be in progress (SOURCING, READY, or SHIPPED) before it can be marked as completed.',
+                'Item must first be in progress before it can be marked as delivered.',
             });
             continue;
           }
@@ -1769,65 +1769,55 @@ export class OrderService {
 
     const items = order.items;
 
-    // Auto-transition to IN_PROGRESS when any item status changes from PENDING
-    // (regardless of assignment acceptance status - admins can start working on items)
+    // Analyze all item statuses
+    const allDelivered = items.every(
+      (item) => item.status === OrderItemStatus.DELIVERED,
+    );
+    const allCancelled = items.every(
+      (item) => item.status === OrderItemStatus.CANCELLED,
+    );
     const hasNonPendingItems = items.some(
       (item) => item.status !== OrderItemStatus.PENDING,
     );
 
-    if (order.status === OrderStatus.CONFIRMED && hasNonPendingItems) {
-      await this.prismaService.order.update({
-        where: { id: orderId },
-        data: { status: OrderStatus.IN_PROGRESS },
-      });
-      this.logger.log(
-        `Order ${order.orderNumber} auto-transitioned to IN_PROGRESS (item status changed)`,
-      );
-      return;
+    let newOrderStatus: OrderStatus | null = null;
+    let logMessage = '';
+
+    // Determine new order status based on comprehensive item analysis
+    if (allDelivered && items.length > 0) {
+      // All items delivered → COMPLETED
+      newOrderStatus = OrderStatus.COMPLETED;
+      logMessage = 'all items delivered';
+    } else if (allCancelled && items.length > 0) {
+      // All items cancelled → CANCELLED
+      newOrderStatus = OrderStatus.CANCELLED;
+      logMessage = 'all items cancelled';
+    } else if (hasNonPendingItems) {
+      // Any item has non-PENDING status → IN_PROGRESS
+      // This handles both forward progress and backward changes (e.g., DELIVERED → SOURCING)
+      newOrderStatus = OrderStatus.IN_PROGRESS;
+      logMessage = 'items in progress (mixed or non-pending statuses)';
     }
 
-    // Also handle transition from ASSIGNED to IN_PROGRESS
-    if (order.status === OrderStatus.ASSIGNED && hasNonPendingItems) {
-      await this.prismaService.order.update({
-        where: { id: orderId },
-        data: { status: OrderStatus.IN_PROGRESS },
-      });
-      this.logger.log(
-        `Order ${order.orderNumber} auto-transitioned to IN_PROGRESS`,
-      );
-      return;
-    }
+    // Update order status if it needs to change
+    if (newOrderStatus && order.status !== newOrderStatus) {
+      const updateData: any = {
+        status: newOrderStatus,
+        updatedAt: new Date(),
+      };
 
-    // Auto-transition to COMPLETED when all items are delivered
-    const allDelivered = items.every(
-      (item) => item.status === OrderItemStatus.DELIVERED,
-    );
-    if (allDelivered && order.status === OrderStatus.IN_PROGRESS) {
-      await this.prismaService.order.update({
-        where: { id: orderId },
-        data: { status: OrderStatus.COMPLETED },
-      });
-      this.logger.log(
-        `Order ${order.orderNumber} auto-completed - all items delivered`,
-      );
-      return;
-    }
+      // Clear assignment if order is being cancelled
+      if (newOrderStatus === OrderStatus.CANCELLED) {
+        updateData.assignedProcurementOfficerId = null;
+      }
 
-    // Auto-transition to CANCELLED when all items are cancelled
-    const allCancelled = items.every(
-      (item) => item.status === OrderItemStatus.CANCELLED,
-    );
-    if (allCancelled && order.status !== OrderStatus.CANCELLED) {
       await this.prismaService.order.update({
         where: { id: orderId },
-        data: {
-          status: OrderStatus.CANCELLED,
-          assignedProcurementOfficerId: null, // Remove assignment
-          updatedAt: new Date(),
-        },
+        data: updateData,
       });
+
       this.logger.log(
-        `Order ${order.orderNumber} auto-cancelled - all items cancelled`,
+        `Order ${order.orderNumber} status updated from ${order.status} to ${newOrderStatus} - ${logMessage}`,
       );
     }
   }

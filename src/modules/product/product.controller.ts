@@ -241,6 +241,7 @@ export class ProductController {
   @ApiQuery({ name: 'search', required: false, example: '' })
   @ApiQuery({ name: 'brandId', required: false })
   @ApiQuery({ name: 'categoryId', required: false })
+  @ApiQuery({ name: 'subcategoryId', required: false })
   @ApiQuery({ name: 'variant', required: false, example: '' })
   @ApiQuery({
     name: 'status',
