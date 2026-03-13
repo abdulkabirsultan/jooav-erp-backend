@@ -1,5 +1,45 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { UserRole, UserStatus } from '@prisma/client';
+
+class WholesalerProfileDto {
+  @ApiProperty({
+    description: 'Wholesaler profile ID',
+    example: 'clk1x2y3z4a5b6c7d8e9f0',
+  })
+  id: string;
+
+  @ApiProperty({
+    description: 'Wholesaler user ID',
+    example: 'clk1x2y3z4a5b6c7d8e9f0',
+  })
+  userId: string;
+
+  @ApiProperty({
+    description: 'Total orders count',
+    example: 0,
+  })
+  totalOrders: number;
+
+  @ApiProperty({
+    description: 'Total spend amount',
+    example: 0,
+  })
+  totalSpent: any;
+
+  @ApiPropertyOptional({
+    description: 'Active draft cart order number',
+    example: 'DRAFT-1234567001',
+    nullable: true,
+  })
+  draftCart?: string | null;
+
+  @ApiProperty({
+    description: 'Wholesaler addresses',
+    example: ['No 1 Admiralty Way, Lekki', '12 Broad Street, Lagos Island'],
+    type: [String],
+  })
+  address: string[];
+}
 
 export class UserProfileDto {
   @ApiProperty({
@@ -81,6 +121,12 @@ export class UserProfileDto {
     example: '2023-12-08T10:30:00Z',
   })
   updatedAt: Date;
+
+  @ApiPropertyOptional({
+    description: 'Wholesaler profile details for wholesaler users',
+    type: () => WholesalerProfileDto,
+  })
+  wholesalerProfile?: WholesalerProfileDto | null;
 }
 
 export class AuthResponseDto {

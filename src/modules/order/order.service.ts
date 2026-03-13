@@ -336,9 +336,39 @@ export class OrderService {
    * Converts DRAFT order to PENDING_PAYMENT with Monnify integration
    */
   async initiatePayment(orderNumber: string, userId: string) {
-    // Get order and validate
-    const order = await this.prismaService.order.findUnique({
-      where: { orderNumber },
+    // Get user and validate permissions
+    const user = await this.prismaService.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        role: true,
+        wholesalerProfile: {
+          select: {
+            draftCart: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const isWholesaler = user.role === UserRole.WHOLESALER;
+    const sourceOrderNumber =
+      isWholesaler && user.wholesalerProfile?.draftCart
+        ? user.wholesalerProfile.draftCart
+        : orderNumber;
+
+    if (isWholesaler && !sourceOrderNumber) {
+      throw new BadRequestException(
+        'No draft cart found for wholesaler account',
+      );
+    }
+
+    // Get source order and validate
+    const sourceOrder = await this.prismaService.order.findUnique({
+      where: { orderNumber: sourceOrderNumber },
       include: {
         items: {
           include: {
@@ -358,23 +388,13 @@ export class OrderService {
       },
     });
 
-    if (!order) {
+    if (!sourceOrder) {
       throw new NotFoundException('Order not found');
     }
 
-    // Get user and validate permissions
-    const user = await this.prismaService.user.findUnique({
-      where: { id: userId },
-      select: { id: true, role: true },
-    });
-
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-
     // Validate permissions to initiate payment
-    if (user.role === UserRole.WHOLESALER) {
-      if (order.wholesalerId !== userId) {
+    if (isWholesaler) {
+      if (sourceOrder.wholesalerId !== userId) {
         throw new ForbiddenException(
           'You can only initiate payment for your own orders',
         );
@@ -383,14 +403,14 @@ export class OrderService {
     // Admins can initiate payment for any order
 
     // Validate order status
-    if (order.status !== OrderStatus.DRAFT) {
+    if (sourceOrder.status !== OrderStatus.DRAFT) {
       throw new BadRequestException(
         'Only DRAFT orders can be initiated for payment',
       );
     }
 
     // Validate items exist and meet requirements
-    if (!order.items || order.items.length === 0) {
+    if (!sourceOrder.items || sourceOrder.items.length === 0) {
       throw new BadRequestException(
         'Cannot initiate payment for order with no items',
       );
@@ -398,7 +418,7 @@ export class OrderService {
 
     // Validate each item meets minimum quantity and check inventory
     const inventoryErrors: string[] = [];
-    for (const item of order.items) {
+    for (const item of sourceOrder.items) {
       if (item.quantity < 10) {
         throw new BadRequestException(
           `Item ${item.product.name} quantity (${item.quantity}) is below minimum required (10)`,
@@ -421,17 +441,21 @@ export class OrderService {
 
     // Recalculate totals with current prices
     let totalAmount = 0;
-    const updatedItems: any[] = [];
+    const paymentOrderItemsData: any[] = [];
 
-    for (const item of order.items) {
-      const currentPrice = item.product.price;
+    for (const item of sourceOrder.items) {
+      const currentPrice = item.product.price ?? item.unitPrice;
       const lineTotal = item.quantity * Number(currentPrice);
       totalAmount += lineTotal;
 
-      updatedItems.push({
-        id: item.id,
+      paymentOrderItemsData.push({
+        productId: item.productId,
+        quantity: item.quantity,
         unitPrice: currentPrice,
-        lineTotal: lineTotal,
+        lineTotal,
+        status: item.status,
+        statusUpdatedBy: userId,
+        processingNotes: item.processingNotes,
       });
     }
 
@@ -440,7 +464,7 @@ export class OrderService {
     }
 
     // Validate delivery address is provided
-    if (!order.deliveryAddress) {
+    if (!sourceOrder.deliveryAddress) {
       throw new BadRequestException(
         'Delivery address is required for payment initiation',
       );
@@ -454,8 +478,8 @@ export class OrderService {
       const invoiceData = {
         amount: totalAmount,
         invoiceReference: paymentOrderNumber,
-        customerName: `${order.wholesaler.firstName} ${order.wholesaler.lastName}`,
-        customerEmail: order.wholesaler.email,
+        customerName: `${sourceOrder.wholesaler.firstName} ${sourceOrder.wholesaler.lastName}`,
+        customerEmail: sourceOrder.wholesaler.email,
         description: `Payment for Order ${paymentOrderNumber}`,
         contractCode: this.configService.get('MONNIFY_CONTRACT_CODE'),
         currencyCode: 'NGN',
@@ -484,36 +508,84 @@ export class OrderService {
       );
 
       // Update order with payment details in transaction
-      await this.prismaService.$transaction(async (prisma) => {
-        // Update order
-        await prisma.order.update({
-          where: { id: order.id },
-          data: {
-            orderNumber: paymentOrderNumber,
-            status: OrderStatus.PENDING_PAYMENT,
-            subtotal: totalAmount,
-            totalAmount: totalAmount,
-            monnifyInvoiceRef: monnifyInvoice.responseBody.transactionReference,
-            virtualAccounts: virtualAccounts,
-            checkoutUrl: monnifyInvoice.responseBody.checkoutUrl,
-            paymentExpiresAt: expiryDate,
-          },
-        });
+      const paymentOrder = await this.prismaService.$transaction(
+        async (prisma) => {
+          if (!isWholesaler) {
+            await prisma.order.update({
+              where: { id: sourceOrder.id },
+              data: {
+                orderNumber: paymentOrderNumber,
+                status: OrderStatus.PENDING_PAYMENT,
+                subtotal: totalAmount,
+                totalAmount: totalAmount,
+                monnifyInvoiceRef:
+                  monnifyInvoice.responseBody.transactionReference,
+                virtualAccounts: virtualAccounts,
+                checkoutUrl: monnifyInvoice.responseBody.checkoutUrl,
+                paymentExpiresAt: expiryDate,
+              },
+            });
 
-        // Update item prices and totals
-        for (const item of updatedItems) {
-          await prisma.orderItem.update({
-            where: { id: item.id },
+            for (const item of sourceOrder.items) {
+              const currentPrice = item.product.price ?? item.unitPrice;
+              const lineTotal = item.quantity * Number(currentPrice);
+
+              await prisma.orderItem.update({
+                where: { id: item.id },
+                data: {
+                  unitPrice: currentPrice,
+                  lineTotal,
+                },
+              });
+            }
+
+            return { id: sourceOrder.id, orderNumber: paymentOrderNumber };
+          }
+
+          const createdPaymentOrder = await prisma.order.create({
             data: {
-              unitPrice: item.unitPrice,
-              lineTotal: item.lineTotal,
+              orderNumber: paymentOrderNumber,
+              wholesalerId: sourceOrder.wholesalerId,
+              createdById: userId,
+              status: OrderStatus.PENDING_PAYMENT,
+              subtotal: totalAmount,
+              totalAmount: totalAmount,
+              ...(sourceOrder.deliveryAddress
+                ? { deliveryAddress: sourceOrder.deliveryAddress }
+                : {}),
+              customerNotes: sourceOrder.customerNotes,
+              monnifyInvoiceRef:
+                monnifyInvoice.responseBody.transactionReference,
+              virtualAccounts: virtualAccounts,
+              checkoutUrl: monnifyInvoice.responseBody.checkoutUrl,
+              paymentExpiresAt: expiryDate,
+              items: {
+                create: paymentOrderItemsData,
+              },
             },
           });
-        }
-      });
+
+          await prisma.orderItem.deleteMany({
+            where: { orderId: sourceOrder.id },
+          });
+
+          await prisma.order.update({
+            where: { id: sourceOrder.id },
+            data: {
+              subtotal: 0,
+              totalAmount: 0,
+            },
+          });
+
+          return {
+            id: createdPaymentOrder.id,
+            orderNumber: createdPaymentOrder.orderNumber,
+          };
+        },
+      );
 
       // Reserve inventory
-      await this.reserveInventoryForOrder(order.items);
+      await this.reserveInventoryForOrder(sourceOrder.items);
 
       this.logger.log(
         `Payment initiated for order ${paymentOrderNumber} with Monnify invoice ${monnifyInvoice.responseBody.transactionReference}`,
@@ -524,8 +596,8 @@ export class OrderService {
         message: 'Payment initiated successfully',
         data: {
           order: {
-            id: order.id,
-            orderNumber: paymentOrderNumber,
+            id: paymentOrder.id,
+            orderNumber: paymentOrder.orderNumber,
             totalAmount: totalAmount,
             status: OrderStatus.PENDING_PAYMENT,
           },
@@ -537,7 +609,7 @@ export class OrderService {
       };
     } catch (error) {
       this.logger.error(
-        `Failed to initiate payment for order ${orderNumber}: ${error.message}`,
+        `Failed to initiate payment for order ${sourceOrderNumber}: ${error.message}`,
         error.stack,
       );
       throw new BadRequestException('Failed to initiate payment');
