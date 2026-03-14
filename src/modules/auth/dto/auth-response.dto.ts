@@ -34,11 +34,25 @@ class WholesalerProfileDto {
   draftCart?: string | null;
 
   @ApiProperty({
-    description: 'Wholesaler addresses',
-    example: ['No 1 Admiralty Way, Lekki', '12 Broad Street, Lagos Island'],
-    type: [String],
+    description: 'Wholesaler user addresses',
+    example: [
+      {
+        address: 'No 1 Admiralty Way',
+        state: 'Lagos',
+        city: 'Lekki',
+        phone: '+2348012345678',
+        name: 'Main Store',
+      },
+    ],
+    type: [Object],
   })
-  address: string[];
+  userAddress: Array<{
+    address?: string;
+    state?: string;
+    city?: string;
+    phone?: string;
+    name?: string;
+  }>;
 }
 
 export class UserProfileDto {
