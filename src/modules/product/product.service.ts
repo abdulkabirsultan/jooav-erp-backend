@@ -383,6 +383,7 @@ export class ProductService {
       search,
       brandId,
       categoryId,
+      subcategoryId,
       variant,
       status,
       includeRelations = true,
@@ -395,7 +396,12 @@ export class ProductService {
       deletedAt: null,
       ...(status && { status }),
       ...(brandId && { brandId }),
-      ...(categoryId && { categoryId }),
+      ...(categoryId && {
+        subcategory: {
+          categoryId: categoryId,
+        },
+      }),
+      ...(subcategoryId && { subcategoryId }),
       ...(variant && {
         variant: {
           name: { contains: variant, mode: 'insensitive' as const },

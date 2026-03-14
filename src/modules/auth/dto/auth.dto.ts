@@ -12,7 +12,7 @@ import {
 export class LoginDto {
   @ApiProperty({
     description: 'Email address',
-    example: 'superadmin@jooav.com',
+    example: 'wholesaler@jooav.com',
   })
   @IsEmail({}, { message: 'Please provide a valid email address' })
   email: string;

@@ -48,7 +48,7 @@ import { UserRole } from '@prisma/client';
 import { SuccessResponse } from '../../common/dto/api-response.dto';
 import type { User } from '@prisma/client';
 
-@ApiTags('Authentication')
+@ApiTags('User Authentication')
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}

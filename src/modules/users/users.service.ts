@@ -4,7 +4,7 @@ import {
   ConflictException,
   BadRequestException,
 } from '@nestjs/common';
-import { UserRole, UserStatus, User } from '@prisma/client';
+import { UserRole, UserStatus, User, OrderStatus } from '@prisma/client';
 import * as argon2 from 'argon2';
 
 import { PrismaService } from '../prisma/prisma.service';
@@ -21,6 +21,8 @@ import {
   UpdateUserRoleDto,
   UpdateUserProfileDto,
   UpdateAdminPermissionsDto,
+  AddWholesalerUserAddressDto,
+  WholesalerUserAddressListDto,
 } from './dto/user.dto';
 import { BulkDeleteUserDto } from './dto/bulk-delete-user.dto';
 import { UserProfileDto } from '../auth/dto/auth-response.dto';
@@ -129,6 +131,7 @@ export class UsersService {
           createdAt: true,
           updatedAt: true,
           profile: true,
+          wholesalerProfile: true,
         },
         orderBy: { createdAt: 'desc' },
         skip: ((page || 1) - 1) * (limit || 10),
@@ -167,6 +170,7 @@ export class UsersService {
         createdAt: true,
         updatedAt: true,
         profile: true,
+        wholesalerProfile: true,
       },
     });
 
@@ -291,7 +295,7 @@ export class UsersService {
       };
     }
 
-    const user = await this.prisma.user.create({
+    let user = await this.prisma.user.create({
       data: userData,
       include: {
         profile: true,
@@ -300,6 +304,24 @@ export class UsersService {
         wholesalerProfile: true,
       },
     });
+
+    if (createUserDto.role === UserRole.WHOLESALER) {
+      await this.ensureWholesalerDraftCart(user.id);
+
+      const refreshedUser = await this.prisma.user.findUnique({
+        where: { id: user.id },
+        include: {
+          profile: true,
+          adminProfile: true,
+          procurementOfficerProfile: true,
+          wholesalerProfile: true,
+        },
+      });
+
+      if (refreshedUser) {
+        user = refreshedUser;
+      }
+    }
 
     // Generate password reset token
     const { token: resetToken, expiresAt } = generatePasswordResetToken(72); // 72 hours validity for initial password setup
@@ -641,6 +663,87 @@ export class UsersService {
     );
 
     return updatedUser as UserProfileDto;
+  }
+
+  async addMyUserAddress(
+    userId: string,
+    addAddressDto: AddWholesalerUserAddressDto,
+  ): Promise<WholesalerUserAddressListDto> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { wholesalerProfile: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.role !== UserRole.WHOLESALER) {
+      throw new BadRequestException(
+        'Only wholesalers can manage user addresses',
+      );
+    }
+
+    if (!user.wholesalerProfile) {
+      throw new NotFoundException('Wholesaler profile not found');
+    }
+
+    const existingAddresses = Array.isArray(user.wholesalerProfile.userAddress)
+      ? (user.wholesalerProfile.userAddress as any[])
+      : [];
+
+    const sanitizedAddress = {
+      ...(addAddressDto.address ? { address: addAddressDto.address } : {}),
+      ...(addAddressDto.state ? { state: addAddressDto.state } : {}),
+      ...(addAddressDto.city ? { city: addAddressDto.city } : {}),
+      ...(addAddressDto.phone ? { phone: addAddressDto.phone } : {}),
+      ...(addAddressDto.name ? { name: addAddressDto.name } : {}),
+    };
+
+    const updatedWholesalerProfile = await this.prisma.wholesaler.update({
+      where: { userId },
+      data: {
+        userAddress: [...existingAddresses, sanitizedAddress],
+      },
+      select: {
+        userAddress: true,
+      },
+    });
+
+    return {
+      userAddress: Array.isArray(updatedWholesalerProfile.userAddress)
+        ? (updatedWholesalerProfile.userAddress as any[])
+        : [],
+    };
+  }
+
+  async getMyUserAddresses(
+    userId: string,
+  ): Promise<WholesalerUserAddressListDto> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { wholesalerProfile: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.role !== UserRole.WHOLESALER) {
+      throw new BadRequestException(
+        'Only wholesalers can access user addresses',
+      );
+    }
+
+    if (!user.wholesalerProfile) {
+      throw new NotFoundException('Wholesaler profile not found');
+    }
+
+    return {
+      userAddress: Array.isArray(user.wholesalerProfile.userAddress)
+        ? (user.wholesalerProfile.userAddress as any[])
+        : [],
+    };
   }
 
   /**
@@ -995,6 +1098,86 @@ export class UsersService {
     }
 
     return result;
+  }
+
+  private async ensureWholesalerDraftCart(
+    wholesalerUserId: string,
+  ): Promise<string | null> {
+    const wholesalerUser = await this.prisma.user.findUnique({
+      where: { id: wholesalerUserId },
+      include: { wholesalerProfile: true },
+    });
+
+    if (
+      !wholesalerUser ||
+      wholesalerUser.role !== UserRole.WHOLESALER ||
+      !wholesalerUser.wholesalerProfile
+    ) {
+      return null;
+    }
+
+    const existingDraftCart = wholesalerUser.wholesalerProfile.draftCart;
+    if (existingDraftCart) {
+      const existingDraftOrder = await this.prisma.order.findFirst({
+        where: {
+          orderNumber: existingDraftCart,
+          wholesalerId: wholesalerUserId,
+          status: OrderStatus.DRAFT,
+        },
+      });
+
+      if (existingDraftOrder) {
+        return existingDraftCart;
+      }
+    }
+
+    const reusableDraftOrder = await this.prisma.order.findFirst({
+      where: {
+        wholesalerId: wholesalerUserId,
+        status: OrderStatus.DRAFT,
+        items: { none: {} },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (reusableDraftOrder) {
+      await this.prisma.wholesaler.update({
+        where: { userId: wholesalerUserId },
+        data: { draftCart: reusableDraftOrder.orderNumber },
+      });
+      return reusableDraftOrder.orderNumber;
+    }
+
+    const draftOrderNumber = await this.generateOrderNumber('DRAFT-');
+
+    await this.prisma.order.create({
+      data: {
+        orderNumber: draftOrderNumber,
+        wholesalerId: wholesalerUserId,
+        createdById: wholesalerUserId,
+        status: OrderStatus.DRAFT,
+        subtotal: 0,
+        totalAmount: 0,
+        items: {
+          create: [], // Start with empty items, can be added to later
+        },
+      },
+    });
+
+    await this.prisma.wholesaler.update({
+      where: { userId: wholesalerUserId },
+      data: { draftCart: draftOrderNumber },
+    });
+
+    return draftOrderNumber;
+  }
+
+  private async generateOrderNumber(prefix: string = 'JOO-'): Promise<string> {
+    const timestamp = Date.now().toString().slice(-7);
+    const random = Math.floor(Math.random() * 1000)
+      .toString()
+      .padStart(3, '0');
+    return `${prefix}${timestamp}${random}`;
   }
 
   /**

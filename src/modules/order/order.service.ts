@@ -336,9 +336,39 @@ export class OrderService {
    * Converts DRAFT order to PENDING_PAYMENT with Monnify integration
    */
   async initiatePayment(orderNumber: string, userId: string) {
-    // Get order and validate
-    const order = await this.prismaService.order.findUnique({
-      where: { orderNumber },
+    // Get user and validate permissions
+    const user = await this.prismaService.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        role: true,
+        wholesalerProfile: {
+          select: {
+            draftCart: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const isWholesaler = user.role === UserRole.WHOLESALER;
+    const sourceOrderNumber =
+      isWholesaler && user.wholesalerProfile?.draftCart
+        ? user.wholesalerProfile.draftCart
+        : orderNumber;
+
+    if (isWholesaler && !sourceOrderNumber) {
+      throw new BadRequestException(
+        'No draft cart found for wholesaler account',
+      );
+    }
+
+    // Get source order and validate
+    const sourceOrder = await this.prismaService.order.findUnique({
+      where: { orderNumber: sourceOrderNumber },
       include: {
         items: {
           include: {
@@ -358,23 +388,13 @@ export class OrderService {
       },
     });
 
-    if (!order) {
+    if (!sourceOrder) {
       throw new NotFoundException('Order not found');
     }
 
-    // Get user and validate permissions
-    const user = await this.prismaService.user.findUnique({
-      where: { id: userId },
-      select: { id: true, role: true },
-    });
-
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-
     // Validate permissions to initiate payment
-    if (user.role === UserRole.WHOLESALER) {
-      if (order.wholesalerId !== userId) {
+    if (isWholesaler) {
+      if (sourceOrder.wholesalerId !== userId) {
         throw new ForbiddenException(
           'You can only initiate payment for your own orders',
         );
@@ -383,14 +403,14 @@ export class OrderService {
     // Admins can initiate payment for any order
 
     // Validate order status
-    if (order.status !== OrderStatus.DRAFT) {
+    if (sourceOrder.status !== OrderStatus.DRAFT) {
       throw new BadRequestException(
         'Only DRAFT orders can be initiated for payment',
       );
     }
-
+    
     // Validate items exist and meet requirements
-    if (!order.items || order.items.length === 0) {
+    if (!sourceOrder.items || sourceOrder.items.length === 0) {
       throw new BadRequestException(
         'Cannot initiate payment for order with no items',
       );
@@ -398,7 +418,7 @@ export class OrderService {
 
     // Validate each item meets minimum quantity and check inventory
     const inventoryErrors: string[] = [];
-    for (const item of order.items) {
+    for (const item of sourceOrder.items) {
       if (item.quantity < 10) {
         throw new BadRequestException(
           `Item ${item.product.name} quantity (${item.quantity}) is below minimum required (10)`,
@@ -421,17 +441,21 @@ export class OrderService {
 
     // Recalculate totals with current prices
     let totalAmount = 0;
-    const updatedItems: any[] = [];
+    const paymentOrderItemsData: any[] = [];
 
-    for (const item of order.items) {
-      const currentPrice = item.product.price;
+    for (const item of sourceOrder.items) {
+      const currentPrice = item.product.price ?? item.unitPrice;
       const lineTotal = item.quantity * Number(currentPrice);
       totalAmount += lineTotal;
 
-      updatedItems.push({
-        id: item.id,
+      paymentOrderItemsData.push({
+        productId: item.productId,
+        quantity: item.quantity,
         unitPrice: currentPrice,
-        lineTotal: lineTotal,
+        lineTotal,
+        status: item.status,
+        statusUpdatedBy: userId,
+        processingNotes: item.processingNotes,
       });
     }
 
@@ -440,7 +464,7 @@ export class OrderService {
     }
 
     // Validate delivery address is provided
-    if (!order.deliveryAddress) {
+    if (!sourceOrder.deliveryAddress) {
       throw new BadRequestException(
         'Delivery address is required for payment initiation',
       );
@@ -454,8 +478,8 @@ export class OrderService {
       const invoiceData = {
         amount: totalAmount,
         invoiceReference: paymentOrderNumber,
-        customerName: `${order.wholesaler.firstName} ${order.wholesaler.lastName}`,
-        customerEmail: order.wholesaler.email,
+        customerName: `${sourceOrder.wholesaler.firstName} ${sourceOrder.wholesaler.lastName}`,
+        customerEmail: sourceOrder.wholesaler.email,
         description: `Payment for Order ${paymentOrderNumber}`,
         contractCode: this.configService.get('MONNIFY_CONTRACT_CODE'),
         currencyCode: 'NGN',
@@ -484,36 +508,84 @@ export class OrderService {
       );
 
       // Update order with payment details in transaction
-      await this.prismaService.$transaction(async (prisma) => {
-        // Update order
-        await prisma.order.update({
-          where: { id: order.id },
-          data: {
-            orderNumber: paymentOrderNumber,
-            status: OrderStatus.PENDING_PAYMENT,
-            subtotal: totalAmount,
-            totalAmount: totalAmount,
-            monnifyInvoiceRef: monnifyInvoice.responseBody.transactionReference,
-            virtualAccounts: virtualAccounts,
-            checkoutUrl: monnifyInvoice.responseBody.checkoutUrl,
-            paymentExpiresAt: expiryDate,
-          },
-        });
+      const paymentOrder = await this.prismaService.$transaction(
+        async (prisma) => {
+          if (!isWholesaler) {
+            await prisma.order.update({
+              where: { id: sourceOrder.id },
+              data: {
+                orderNumber: paymentOrderNumber,
+                status: OrderStatus.PENDING_PAYMENT,
+                subtotal: totalAmount,
+                totalAmount: totalAmount,
+                monnifyInvoiceRef:
+                  monnifyInvoice.responseBody.transactionReference,
+                virtualAccounts: virtualAccounts,
+                checkoutUrl: monnifyInvoice.responseBody.checkoutUrl,
+                paymentExpiresAt: expiryDate,
+              },
+            });
 
-        // Update item prices and totals
-        for (const item of updatedItems) {
-          await prisma.orderItem.update({
-            where: { id: item.id },
+            for (const item of sourceOrder.items) {
+              const currentPrice = item.product.price ?? item.unitPrice;
+              const lineTotal = item.quantity * Number(currentPrice);
+
+              await prisma.orderItem.update({
+                where: { id: item.id },
+                data: {
+                  unitPrice: currentPrice,
+                  lineTotal,
+                },
+              });
+            }
+
+            return { id: sourceOrder.id, orderNumber: paymentOrderNumber };
+          }
+
+          const createdPaymentOrder = await prisma.order.create({
             data: {
-              unitPrice: item.unitPrice,
-              lineTotal: item.lineTotal,
+              orderNumber: paymentOrderNumber,
+              wholesalerId: sourceOrder.wholesalerId,
+              createdById: userId,
+              status: OrderStatus.PENDING_PAYMENT,
+              subtotal: totalAmount,
+              totalAmount: totalAmount,
+              ...(sourceOrder.deliveryAddress
+                ? { deliveryAddress: sourceOrder.deliveryAddress }
+                : {}),
+              customerNotes: sourceOrder.customerNotes,
+              monnifyInvoiceRef:
+                monnifyInvoice.responseBody.transactionReference,
+              virtualAccounts: virtualAccounts,
+              checkoutUrl: monnifyInvoice.responseBody.checkoutUrl,
+              paymentExpiresAt: expiryDate,
+              items: {
+                create: paymentOrderItemsData,
+              },
             },
           });
-        }
-      });
+
+          await prisma.orderItem.deleteMany({
+            where: { orderId: sourceOrder.id },
+          });
+
+          await prisma.order.update({
+            where: { id: sourceOrder.id },
+            data: {
+              subtotal: 0,
+              totalAmount: 0,
+            },
+          });
+
+          return {
+            id: createdPaymentOrder.id,
+            orderNumber: createdPaymentOrder.orderNumber,
+          };
+        },
+      );
 
       // Reserve inventory
-      await this.reserveInventoryForOrder(order.items);
+      await this.reserveInventoryForOrder(sourceOrder.items);
 
       this.logger.log(
         `Payment initiated for order ${paymentOrderNumber} with Monnify invoice ${monnifyInvoice.responseBody.transactionReference}`,
@@ -524,8 +596,8 @@ export class OrderService {
         message: 'Payment initiated successfully',
         data: {
           order: {
-            id: order.id,
-            orderNumber: paymentOrderNumber,
+            id: paymentOrder.id,
+            orderNumber: paymentOrder.orderNumber,
             totalAmount: totalAmount,
             status: OrderStatus.PENDING_PAYMENT,
           },
@@ -537,7 +609,7 @@ export class OrderService {
       };
     } catch (error) {
       this.logger.error(
-        `Failed to initiate payment for order ${orderNumber}: ${error.message}`,
+        `Failed to initiate payment for order ${sourceOrderNumber}: ${error.message}`,
         error.stack,
       );
       throw new BadRequestException('Failed to initiate payment');
@@ -938,7 +1010,7 @@ export class OrderService {
 
       if (!allowedPreviousStatuses.includes(orderItem.status)) {
         throw new BadRequestException(
-          `Cannot mark item as delivered. Item must first be in progress (SOURCING, READY, or SHIPPED) before it can be marked as completed.`,
+          `Item must first be in progress before it can be marked as delivered.`,
         );
       }
     }
@@ -1141,7 +1213,7 @@ export class OrderService {
               itemId: updateItem.itemId,
               success: false,
               message:
-                'Cannot mark item as delivered. Item must first be in progress (SOURCING, READY, or SHIPPED) before it can be marked as completed.',
+                'Item must first be in progress before it can be marked as delivered.',
             });
             continue;
           }
@@ -1769,65 +1841,55 @@ export class OrderService {
 
     const items = order.items;
 
-    // Auto-transition to IN_PROGRESS when any item status changes from PENDING
-    // (regardless of assignment acceptance status - admins can start working on items)
+    // Analyze all item statuses
+    const allDelivered = items.every(
+      (item) => item.status === OrderItemStatus.DELIVERED,
+    );
+    const allCancelled = items.every(
+      (item) => item.status === OrderItemStatus.CANCELLED,
+    );
     const hasNonPendingItems = items.some(
       (item) => item.status !== OrderItemStatus.PENDING,
     );
 
-    if (order.status === OrderStatus.CONFIRMED && hasNonPendingItems) {
-      await this.prismaService.order.update({
-        where: { id: orderId },
-        data: { status: OrderStatus.IN_PROGRESS },
-      });
-      this.logger.log(
-        `Order ${order.orderNumber} auto-transitioned to IN_PROGRESS (item status changed)`,
-      );
-      return;
+    let newOrderStatus: OrderStatus | null = null;
+    let logMessage = '';
+
+    // Determine new order status based on comprehensive item analysis
+    if (allDelivered && items.length > 0) {
+      // All items delivered → COMPLETED
+      newOrderStatus = OrderStatus.COMPLETED;
+      logMessage = 'all items delivered';
+    } else if (allCancelled && items.length > 0) {
+      // All items cancelled → CANCELLED
+      newOrderStatus = OrderStatus.CANCELLED;
+      logMessage = 'all items cancelled';
+    } else if (hasNonPendingItems) {
+      // Any item has non-PENDING status → IN_PROGRESS
+      // This handles both forward progress and backward changes (e.g., DELIVERED → SOURCING)
+      newOrderStatus = OrderStatus.IN_PROGRESS;
+      logMessage = 'items in progress (mixed or non-pending statuses)';
     }
 
-    // Also handle transition from ASSIGNED to IN_PROGRESS
-    if (order.status === OrderStatus.ASSIGNED && hasNonPendingItems) {
-      await this.prismaService.order.update({
-        where: { id: orderId },
-        data: { status: OrderStatus.IN_PROGRESS },
-      });
-      this.logger.log(
-        `Order ${order.orderNumber} auto-transitioned to IN_PROGRESS`,
-      );
-      return;
-    }
+    // Update order status if it needs to change
+    if (newOrderStatus && order.status !== newOrderStatus) {
+      const updateData: any = {
+        status: newOrderStatus,
+        updatedAt: new Date(),
+      };
 
-    // Auto-transition to COMPLETED when all items are delivered
-    const allDelivered = items.every(
-      (item) => item.status === OrderItemStatus.DELIVERED,
-    );
-    if (allDelivered && order.status === OrderStatus.IN_PROGRESS) {
-      await this.prismaService.order.update({
-        where: { id: orderId },
-        data: { status: OrderStatus.COMPLETED },
-      });
-      this.logger.log(
-        `Order ${order.orderNumber} auto-completed - all items delivered`,
-      );
-      return;
-    }
+      // Clear assignment if order is being cancelled
+      if (newOrderStatus === OrderStatus.CANCELLED) {
+        updateData.assignedProcurementOfficerId = null;
+      }
 
-    // Auto-transition to CANCELLED when all items are cancelled
-    const allCancelled = items.every(
-      (item) => item.status === OrderItemStatus.CANCELLED,
-    );
-    if (allCancelled && order.status !== OrderStatus.CANCELLED) {
       await this.prismaService.order.update({
         where: { id: orderId },
-        data: {
-          status: OrderStatus.CANCELLED,
-          assignedProcurementOfficerId: null, // Remove assignment
-          updatedAt: new Date(),
-        },
+        data: updateData,
       });
+
       this.logger.log(
-        `Order ${order.orderNumber} auto-cancelled - all items cancelled`,
+        `Order ${order.orderNumber} status updated from ${order.status} to ${newOrderStatus} - ${logMessage}`,
       );
     }
   }
@@ -3127,8 +3189,16 @@ export class OrderService {
 
     // Define role-based edit permissions
     const editPermissions = {
-      [UserRole.WHOLESALER]: ['item', 'deliveryAddress'],
-      [UserRole.PROCUREMENT_OFFICER]: ['item', 'deliveryAddress'],
+      [UserRole.WHOLESALER]: [
+        'item',
+        'deliveryAddress',
+        'assignedProcurementOfficerId',
+      ],
+      [UserRole.PROCUREMENT_OFFICER]: [
+        'item',
+        'deliveryAddress',
+        'assignedProcurementOfficerId',
+      ],
       [UserRole.ADMIN]: [
         'item',
         'deliveryAddress',

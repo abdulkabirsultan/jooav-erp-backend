@@ -605,6 +605,8 @@ model Wholesaler {
   id       String @id @default(cuid())
   userId   String @unique
   regionId String? // Optional for now
+  draftCart String?
+  userAddress Json @default("[]")
 
   // Business metrics
   totalOrders Int     @default(0)

@@ -31,6 +31,16 @@ export class ProductQueryDto extends PaginationDto {
   categoryId?: string;
 
   @ApiPropertyOptional({
+    description: 'Filter by subcategory ID',
+    example: '',
+  })
+  @IsOptional()
+  @Matches(/^c[a-z0-9]{24}$/, {
+    message: 'subcategoryId must be a valid ObjectId',
+  })
+  subcategoryId?: string;
+
+  @ApiPropertyOptional({
     description: 'Filter by product variant',
     example: '',
   })
