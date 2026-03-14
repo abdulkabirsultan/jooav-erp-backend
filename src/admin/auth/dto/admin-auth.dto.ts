@@ -32,7 +32,7 @@ export class AdminLoginDto {
   @ApiProperty({
     description: 'Expected user role for this login attempt',
     enum: UserRole,
-    example: UserRole.ADMIN,
+    example: UserRole.SUPER_ADMIN,
   })
   @IsEnum(UserRole, { message: 'Invalid role specified' })
   @IsNotEmpty({ message: 'Role is required' })
