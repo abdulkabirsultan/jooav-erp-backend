@@ -42,6 +42,8 @@ import {
   UpdateUserRoleDto,
   UpdateUserProfileDto,
   UpdateAdminPermissionsDto,
+  AddWholesalerUserAddressDto,
+  WholesalerUserAddressListDto,
 } from './dto/user.dto';
 import {
   CreateUserResponseDto,
@@ -485,6 +487,55 @@ export class UsersController {
       updateProfileDto,
       userId,
       req,
+    );
+  }
+
+  @Post('me/user-address')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.WHOLESALER)
+  @ApiOperation({ summary: 'Add user address (Wholesaler only)' })
+  @ApiBody({ type: AddWholesalerUserAddressDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Wholesaler address added successfully',
+    type: WholesalerUserAddressListDto,
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Wholesaler only' })
+  @AuditLog({
+    action: 'ADD_WHOLESALER_USER_ADDRESS',
+    resource: 'WHOLESALER_PROFILE',
+    includeRequestBody: true,
+  })
+  async addMyUserAddress(
+    @CurrentUserId() userId: string,
+    @Body() addAddressDto: AddWholesalerUserAddressDto,
+  ): Promise<SuccessResponse<WholesalerUserAddressListDto>> {
+    const result = await this.usersService.addMyUserAddress(
+      userId,
+      addAddressDto,
+    );
+    return new SuccessResponse('Wholesaler address added successfully', result);
+  }
+
+  @Get('me/user-address')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.WHOLESALER)
+  @ApiOperation({ summary: 'Get all user addresses (Wholesaler only)' })
+  @ApiResponse({
+    status: 200,
+    description: 'Wholesaler addresses retrieved successfully',
+    type: WholesalerUserAddressListDto,
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Wholesaler only' })
+  async getMyUserAddresses(
+    @CurrentUserId() userId: string,
+  ): Promise<SuccessResponse<WholesalerUserAddressListDto>> {
+    const result = await this.usersService.getMyUserAddresses(userId);
+    return new SuccessResponse(
+      'Wholesaler addresses retrieved successfully',
+      result,
     );
   }
 
