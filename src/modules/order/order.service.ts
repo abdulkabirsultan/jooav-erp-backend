@@ -408,7 +408,7 @@ export class OrderService {
         'Only DRAFT orders can be initiated for payment',
       );
     }
-
+    
     // Validate items exist and meet requirements
     if (!sourceOrder.items || sourceOrder.items.length === 0) {
       throw new BadRequestException(
@@ -3189,8 +3189,16 @@ export class OrderService {
 
     // Define role-based edit permissions
     const editPermissions = {
-      [UserRole.WHOLESALER]: ['item', 'deliveryAddress'],
-      [UserRole.PROCUREMENT_OFFICER]: ['item', 'deliveryAddress'],
+      [UserRole.WHOLESALER]: [
+        'item',
+        'deliveryAddress',
+        'assignedProcurementOfficerId',
+      ],
+      [UserRole.PROCUREMENT_OFFICER]: [
+        'item',
+        'deliveryAddress',
+        'assignedProcurementOfficerId',
+      ],
       [UserRole.ADMIN]: [
         'item',
         'deliveryAddress',

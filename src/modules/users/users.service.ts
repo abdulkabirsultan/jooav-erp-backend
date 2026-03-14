@@ -21,6 +21,8 @@ import {
   UpdateUserRoleDto,
   UpdateUserProfileDto,
   UpdateAdminPermissionsDto,
+  AddWholesalerUserAddressDto,
+  WholesalerUserAddressListDto,
 } from './dto/user.dto';
 import { BulkDeleteUserDto } from './dto/bulk-delete-user.dto';
 import { UserProfileDto } from '../auth/dto/auth-response.dto';
@@ -661,6 +663,87 @@ export class UsersService {
     );
 
     return updatedUser as UserProfileDto;
+  }
+
+  async addMyUserAddress(
+    userId: string,
+    addAddressDto: AddWholesalerUserAddressDto,
+  ): Promise<WholesalerUserAddressListDto> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { wholesalerProfile: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.role !== UserRole.WHOLESALER) {
+      throw new BadRequestException(
+        'Only wholesalers can manage user addresses',
+      );
+    }
+
+    if (!user.wholesalerProfile) {
+      throw new NotFoundException('Wholesaler profile not found');
+    }
+
+    const existingAddresses = Array.isArray(user.wholesalerProfile.userAddress)
+      ? (user.wholesalerProfile.userAddress as any[])
+      : [];
+
+    const sanitizedAddress = {
+      ...(addAddressDto.address ? { address: addAddressDto.address } : {}),
+      ...(addAddressDto.state ? { state: addAddressDto.state } : {}),
+      ...(addAddressDto.city ? { city: addAddressDto.city } : {}),
+      ...(addAddressDto.phone ? { phone: addAddressDto.phone } : {}),
+      ...(addAddressDto.name ? { name: addAddressDto.name } : {}),
+    };
+
+    const updatedWholesalerProfile = await this.prisma.wholesaler.update({
+      where: { userId },
+      data: {
+        userAddress: [...existingAddresses, sanitizedAddress],
+      },
+      select: {
+        userAddress: true,
+      },
+    });
+
+    return {
+      userAddress: Array.isArray(updatedWholesalerProfile.userAddress)
+        ? (updatedWholesalerProfile.userAddress as any[])
+        : [],
+    };
+  }
+
+  async getMyUserAddresses(
+    userId: string,
+  ): Promise<WholesalerUserAddressListDto> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { wholesalerProfile: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.role !== UserRole.WHOLESALER) {
+      throw new BadRequestException(
+        'Only wholesalers can access user addresses',
+      );
+    }
+
+    if (!user.wholesalerProfile) {
+      throw new NotFoundException('Wholesaler profile not found');
+    }
+
+    return {
+      userAddress: Array.isArray(user.wholesalerProfile.userAddress)
+        ? (user.wholesalerProfile.userAddress as any[])
+        : [],
+    };
   }
 
   /**
