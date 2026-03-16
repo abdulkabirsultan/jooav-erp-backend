@@ -115,7 +115,15 @@ export class OrderService {
     // Get user and their role
     const user = await this.prismaService.user.findUnique({
       where: { id: userId },
-      select: { id: true, role: true },
+      select: {
+        id: true,
+        role: true,
+        wholesalerProfile: {
+          select: {
+            draftCart: true,
+          },
+        },
+      },
     });
 
     if (!user) {
@@ -335,7 +343,11 @@ export class OrderService {
    * Initiate payment for draft order
    * Converts DRAFT order to PENDING_PAYMENT with Monnify integration
    */
-  async initiatePayment(orderNumber: string, userId: string) {
+  async initiatePayment(
+    orderNumber: string,
+    userId: string,
+    options?: { bypassWholesalerDraftCart?: boolean },
+  ) {
     // Get user and validate permissions
     const user = await this.prismaService.user.findUnique({
       where: { id: userId },
@@ -356,7 +368,9 @@ export class OrderService {
 
     const isWholesaler = user.role === UserRole.WHOLESALER;
     const sourceOrderNumber =
-      isWholesaler && user.wholesalerProfile?.draftCart
+      isWholesaler &&
+      !options?.bypassWholesalerDraftCart &&
+      user.wholesalerProfile?.draftCart
         ? user.wholesalerProfile.draftCart
         : orderNumber;
 
@@ -408,7 +422,7 @@ export class OrderService {
         'Only DRAFT orders can be initiated for payment',
       );
     }
-    
+
     // Validate items exist and meet requirements
     if (!sourceOrder.items || sourceOrder.items.length === 0) {
       throw new BadRequestException(
@@ -650,7 +664,15 @@ export class OrderService {
     // Get user and validate permissions
     const user = await this.prismaService.user.findUnique({
       where: { id: userId },
-      select: { id: true, role: true },
+      select: {
+        id: true,
+        role: true,
+        wholesalerProfile: {
+          select: {
+            draftCart: true,
+          },
+        },
+      },
     });
 
     if (!user) {
@@ -668,10 +690,121 @@ export class OrderService {
     // Admins can reinitiate payment for any order
 
     // Validate order status
-    if (order.status !== OrderStatus.PENDING_PAYMENT) {
+    if (
+      order.status !== OrderStatus.PENDING_PAYMENT &&
+      order.status !== OrderStatus.COMPLETED
+    ) {
       throw new BadRequestException(
-        'Only PENDING_PAYMENT orders can be reinitiated',
+        'Only PENDING_PAYMENT and COMPLETED orders can be reinitiated',
       );
+    }
+
+    // COMPLETED orders: buy again path
+    if (order.status === OrderStatus.COMPLETED) {
+      if (!order.items || order.items.length === 0) {
+        throw new BadRequestException(
+          'Cannot buy again for order with no items',
+        );
+      }
+
+      // Validate product quantities for the new purchase
+      const inventoryErrors: string[] = [];
+      for (const item of order.items) {
+        if (item.quantity < 10) {
+          throw new BadRequestException(
+            `Item ${item.product.name} quantity (${item.quantity}) is below minimum required (10)`,
+          );
+        }
+
+        if (item.product.quantity < item.quantity) {
+          inventoryErrors.push(
+            `Insufficient stock for ${item.product.name}. Available: ${item.product.quantity}, Requested: ${item.quantity}`,
+          );
+        }
+      }
+
+      if (inventoryErrors.length > 0) {
+        throw new BadRequestException(
+          `Inventory validation failed: ${inventoryErrors.join('; ')}`,
+        );
+      }
+
+      const orderData = {
+        items: order.items.map((item) => ({
+          productId: item.productId,
+          quantity: item.quantity,
+          unitPrice: item.product.price ?? item.unitPrice,
+        })),
+        deliveryAddress: order.deliveryAddress,
+        customerNotes: order.customerNotes,
+        wholesalerId: order.wholesalerId,
+      };
+
+      this.logger.log(
+        `Completed order ${orderNumber} requested for buy-again by user ${userId}`,
+      );
+
+      // Wholesalers should use a fresh standalone draft for buy-again
+      if (user.role === UserRole.WHOLESALER) {
+        const draftOrderNumber = await this.generateOrderNumber('DRAFT-');
+        const newDraftOrder = await this.prismaService.order.create({
+          data: {
+            orderNumber: draftOrderNumber,
+            wholesalerId: orderData.wholesalerId,
+            status: OrderStatus.DRAFT,
+            subtotal: 0,
+            totalAmount: 0,
+            ...(orderData.deliveryAddress
+              ? { deliveryAddress: orderData.deliveryAddress as any }
+              : {}),
+            customerNotes: orderData.customerNotes,
+            createdById: userId,
+            items: {
+              create: orderData.items.map((item) => ({
+                productId: item.productId,
+                quantity: item.quantity,
+                unitPrice: item.unitPrice,
+                lineTotal: item.quantity * Number(item.unitPrice),
+                status: OrderItemStatus.PENDING,
+                statusUpdatedBy: userId,
+              })),
+            },
+          },
+        });
+
+        return await this.initiatePayment(newDraftOrder.orderNumber, userId, {
+          bypassWholesalerDraftCart: true,
+        });
+      }
+
+      // Admin/others: create a dedicated draft clone, then initiate payment
+      const draftOrderNumber = await this.generateOrderNumber('DRAFT-');
+      const newDraftOrder = await this.prismaService.order.create({
+        data: {
+          orderNumber: draftOrderNumber,
+          wholesalerId: orderData.wholesalerId,
+          status: OrderStatus.DRAFT,
+          subtotal: 0,
+          totalAmount: 0,
+          ...(orderData.deliveryAddress
+            ? { deliveryAddress: orderData.deliveryAddress as any }
+            : {}),
+          customerNotes: orderData.customerNotes,
+          createdById: userId,
+          items: {
+            create: orderData.items.map((item) => ({
+              productId: item.productId,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              lineTotal: item.quantity * Number(item.unitPrice),
+              status: OrderItemStatus.PENDING,
+              statusUpdatedBy: userId,
+            })),
+          },
+        },
+      });
+
+      return await this.initiatePayment(newDraftOrder.orderNumber, userId);
     }
 
     // Check if payment has expired using Monnify's expiry date
@@ -741,16 +874,51 @@ export class OrderService {
       await this.prismaService.order.delete({
         where: { id: order.id },
       });
+
+      // 5. Recreate as fresh standalone draft for wholesaler reinitiation
+      if (user.role === UserRole.WHOLESALER) {
+        const draftOrderNumber = await this.generateOrderNumber('DRAFT-');
+        const newDraftOrder = await this.prismaService.order.create({
+          data: {
+            orderNumber: draftOrderNumber,
+            wholesalerId: orderData.wholesalerId,
+            status: OrderStatus.DRAFT,
+            subtotal: 0,
+            totalAmount: 0,
+            ...(orderData.deliveryAddress
+              ? { deliveryAddress: orderData.deliveryAddress as any }
+              : {}),
+            customerNotes: orderData.customerNotes,
+            createdById: userId,
+            items: {
+              create: orderData.items.map((item) => ({
+                productId: item.productId,
+                quantity: item.quantity,
+                unitPrice: item.unitPrice,
+                lineTotal: item.quantity * Number(item.unitPrice),
+                status: OrderItemStatus.PENDING,
+                statusUpdatedBy: userId,
+              })),
+            },
+          },
+        });
+
+        return await this.initiatePayment(newDraftOrder.orderNumber, userId, {
+          bypassWholesalerDraftCart: true,
+        });
+      }
+
       const draftOrderNumber = await this.generateOrderNumber('DRAFT-');
-      // 5. Create new draft order
       const newDraftOrder = await this.prismaService.order.create({
         data: {
-          orderNumber: draftOrderNumber, // New draft order number}`,
+          orderNumber: draftOrderNumber,
           wholesalerId: orderData.wholesalerId,
           status: OrderStatus.DRAFT,
-          subtotal: 0, // Will be recalculated during initiation
-          totalAmount: 0, // Will be recalculated during initiation
-          deliveryAddress: orderData.deliveryAddress as any,
+          subtotal: 0,
+          totalAmount: 0,
+          ...(orderData.deliveryAddress
+            ? { deliveryAddress: orderData.deliveryAddress as any }
+            : {}),
           customerNotes: orderData.customerNotes,
           createdById: userId,
           items: {
@@ -764,26 +932,9 @@ export class OrderService {
             })),
           },
         },
-        include: {
-          items: {
-            include: {
-              product: {
-                select: { id: true, name: true, quantity: true, price: true },
-              },
-            },
-          },
-          wholesaler: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-            },
-          },
-        },
       });
 
-      // 6. Immediately initiate payment for new order
+      // 6. Immediately initiate payment for recreated order
       return await this.initiatePayment(newDraftOrder.orderNumber, userId);
     } catch (error) {
       this.logger.error(
