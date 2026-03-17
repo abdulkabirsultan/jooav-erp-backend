@@ -184,7 +184,13 @@ export class CategoryService {
     createCategoryDto: CreateCategoryDto,
     userId: string,
   ): Promise<CategoryResponseDto> {
-    const { name, description, subcategories = [] } = createCategoryDto;
+    const { name, description, subcategories } = createCategoryDto;
+
+    if (!subcategories || subcategories.length === 0) {
+      throw new BadRequestException(
+        'At least one subcategory is required to create a category',
+      );
+    }
 
     // Sanitize and validate input
     const sanitizedName = this.sanitizeCategoryName(name);
@@ -765,6 +771,20 @@ export class CategoryService {
             });
             operationsSummary.created++;
           }
+        }
+
+        // Ensure category always has at least one active subcategory after update
+        const remainingSubcategoriesCount = await tx.subcategory.count({
+          where: {
+            categoryId: id,
+            deletedAt: null,
+          },
+        });
+
+        if (remainingSubcategoriesCount === 0) {
+          throw new BadRequestException(
+            'Category must have at least one subcategory',
+          );
         }
 
         // Log comprehensive audit trail
