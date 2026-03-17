@@ -2,7 +2,6 @@ import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance } from 'axios';
 import * as crypto from 'crypto';
-import { MonnifyConfig } from '../../config/monnify.config';
 
 export interface CreateInvoiceRequest {
   amount: number;
@@ -95,6 +94,7 @@ export class MonnifyService {
   private readonly httpClient: AxiosInstance;
   private accessToken: string | null = null;
   private tokenExpiry: Date | null = null;
+  private authenticationPromise: Promise<string> | null = null;
 
   constructor(private readonly configService: ConfigService) {
     const baseURL = this.configService.get<string>('MONNIFY_BASE_URL');
@@ -111,19 +111,24 @@ export class MonnifyService {
     this.httpClient.interceptors.response.use(
       (response) => response,
       async (error) => {
-        const originalRequest = error.config;
+        const originalRequest = error.config || {};
 
         // If it's an authentication error and we haven't already retried
-        if (error.response?.status === 401 && !originalRequest._retry) {
+        if (
+          this.isTokenAuthError(error) &&
+          !originalRequest._retry &&
+          !this.isAuthEndpoint(originalRequest.url)
+        ) {
           originalRequest._retry = true;
 
           try {
             // Force re-authentication
             this.accessToken = null;
             this.tokenExpiry = null;
-            const newToken = await this.authenticate();
+            const newToken = await this.authenticate(true);
 
             // Retry the original request with new token
+            originalRequest.headers = originalRequest.headers || {};
             originalRequest.headers.Authorization = `Bearer ${newToken}`;
             return this.httpClient(originalRequest);
           } catch (authError) {
@@ -150,14 +155,19 @@ export class MonnifyService {
   /**
    * Get or refresh access token
    */
-  private async authenticate(): Promise<string> {
+  private async authenticate(forceRefresh = false): Promise<string> {
     // Check if token is still valid (add 1 minute buffer)
     if (
+      !forceRefresh &&
       this.accessToken &&
       this.tokenExpiry &&
-      new Date() < new Date(this.tokenExpiry.getTime() - 60000)
+      new Date() < this.tokenExpiry
     ) {
       return this.accessToken;
+    }
+
+    if (this.authenticationPromise) {
+      return this.authenticationPromise;
     }
 
     const apiKey = this.configService.get<string>('MONNIFY_API_KEY');
@@ -170,47 +180,121 @@ export class MonnifyService {
       );
     }
 
-    try {
-      this.logger.debug('Authenticating with Monnify...');
-      const credentials = Buffer.from(`${apiKey}:${secretKey}`).toString(
-        'base64',
-      );
+    this.authenticationPromise = (async () => {
+      try {
+        this.logger.debug('Authenticating with Monnify...');
+        const credentials = Buffer.from(`${apiKey}:${secretKey}`).toString(
+          'base64',
+        );
 
-      const response = await this.httpClient.post<AuthResponse>(
-        '/api/v1/auth/login',
-        {},
-        {
-          headers: {
-            Authorization: `Basic ${credentials}`,
+        const response = await this.httpClient.post<AuthResponse>(
+          '/api/v1/auth/login',
+          {},
+          {
+            headers: {
+              Authorization: `Basic ${credentials}`,
+            },
+            timeout: 10000,
           },
-          timeout: 10000, // 10 second timeout for auth
-        },
-      );
+        );
 
-      if (!response.data.requestSuccessful) {
+        if (!response.data.requestSuccessful) {
+          this.logger.error(
+            'Monnify authentication failed:',
+            response.data.responseMessage,
+          );
+          throw new HttpException(
+            response.data.responseMessage,
+            HttpStatus.UNAUTHORIZED,
+          );
+        }
+
+        this.accessToken = response.data.responseBody.accessToken;
+
+        const expiresInSeconds = Number(response.data.responseBody.expiresIn);
+        const expiryFromResponse = new Date(
+          Date.now() + expiresInSeconds * 1000,
+        );
+        const expiryFromToken = this.getTokenExpiryFromJwt(this.accessToken);
+
+        const effectiveExpiry =
+          expiryFromToken && expiryFromToken < expiryFromResponse
+            ? expiryFromToken
+            : expiryFromResponse;
+
+        // Keep a 2-minute safety margin to avoid edge expirations in-flight
+        const bufferedExpiry = new Date(effectiveExpiry.getTime() - 120000);
+        this.tokenExpiry =
+          bufferedExpiry > new Date()
+            ? bufferedExpiry
+            : new Date(Date.now() + 30000);
+
+        this.logger.log('Successfully authenticated with Monnify');
+        return this.accessToken;
+      } catch (error) {
+        this.accessToken = null;
+        this.tokenExpiry = null;
         this.logger.error(
-          'Monnify authentication failed:',
-          response.data.responseMessage,
+          'Failed to authenticate with Monnify:',
+          error.message,
         );
         throw new HttpException(
-          response.data.responseMessage,
+          'Authentication failed',
           HttpStatus.UNAUTHORIZED,
         );
+      } finally {
+        this.authenticationPromise = null;
+      }
+    })();
+
+    return this.authenticationPromise;
+  }
+
+  private isAuthEndpoint(url?: string): boolean {
+    return typeof url === 'string' && url.includes('/api/v1/auth/login');
+  }
+
+  private isTokenAuthError(error: any): boolean {
+    const status = error?.response?.status;
+    const responseMessage =
+      error?.response?.data?.responseMessage?.toLowerCase?.() || '';
+    const errorMessage = error?.message?.toLowerCase?.() || '';
+
+    if (status === 401 || status === 403) {
+      return true;
+    }
+
+    return (
+      responseMessage.includes('token') ||
+      responseMessage.includes('unauthorized') ||
+      errorMessage.includes('token') ||
+      errorMessage.includes('unauthorized')
+    );
+  }
+
+  private getTokenExpiryFromJwt(token: string): Date | null {
+    try {
+      const parts = token.split('.');
+      if (parts.length < 2) {
+        return null;
       }
 
-      this.accessToken = response.data.responseBody.accessToken;
-      // Set expiry to 5 minutes before actual expiry for safety
-      this.tokenExpiry = new Date(
-        Date.now() + (response.data.responseBody.expiresIn - 300) * 1000,
+      const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+      const padded = base64.padEnd(
+        base64.length + ((4 - (base64.length % 4)) % 4),
+        '=',
+      );
+      const payload = JSON.parse(
+        Buffer.from(padded, 'base64').toString('utf8'),
       );
 
-      this.logger.log('Successfully authenticated with Monnify');
-      return this.accessToken;
-    } catch (error) {
-      this.accessToken = null;
-      this.tokenExpiry = null;
-      this.logger.error('Failed to authenticate with Monnify:', error.message);
-      throw new HttpException('Authentication failed', HttpStatus.UNAUTHORIZED);
+      if (!payload?.exp) {
+        return null;
+      }
+
+      return new Date(payload.exp * 1000);
+    } catch {
+      return null;
     }
   }
 
@@ -231,10 +315,6 @@ export class MonnifyService {
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
-
-    // Default expiry to 24 hours from now
-    const defaultExpiryDate = new Date();
-    defaultExpiryDate.setHours(defaultExpiryDate.getHours() + 24);
 
     const payload = {
       amount: invoiceData.amount,

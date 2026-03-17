@@ -7,6 +7,7 @@ import {
   IsArray,
   ValidateNested,
   MaxLength,
+  ArrayMinSize,
 } from 'class-validator';
 
 export class CreateSubcategoryInput {
@@ -48,7 +49,7 @@ export class CreateCategoryDto {
   @IsOptional()
   description?: string;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
     description: 'Array of subcategories to create along with the category',
     type: [CreateSubcategoryInput],
     example: [
@@ -62,9 +63,11 @@ export class CreateCategoryDto {
       },
     ],
   })
-  @IsOptional()
   @IsArray()
+  @ArrayMinSize(1, {
+    message: 'At least one subcategory is required to create a category',
+  })
   @ValidateNested({ each: true })
   @Type(() => CreateSubcategoryInput)
-  subcategories?: CreateSubcategoryInput[];
+  subcategories: CreateSubcategoryInput[];
 }
