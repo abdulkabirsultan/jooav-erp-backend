@@ -1181,7 +1181,7 @@ export class OrderService {
       )
     ) {
       throw new BadRequestException(
-        `Invalid status transition from ${orderItem.status} to ${updateDto.status}. Backward status transitions are not allowed.`,
+        `Invalid status transition from ${orderItem.status} to ${updateDto.status}. Status transition should be done accordingly.`,
       );
     }
 
@@ -1380,7 +1380,7 @@ export class OrderService {
           results.push({
             itemId: updateItem.itemId,
             success: false,
-            message: `Invalid status transition from ${existingItem.status} to ${updateItem.status}. Backward status transitions are not allowed.`,
+            message: `Invalid status transition from ${existingItem.status} to ${updateItem.status}. Status transition should be done accordingly.`,
           });
           continue;
         }
