@@ -384,10 +384,19 @@ export class ProductService {
       brandId,
       categoryId,
       subcategoryId,
+      subcategoryIds,
       variant,
       status,
+      priceSort,
       includeRelations = true,
     } = query;
+
+    const normalizedSubcategoryIds =
+      subcategoryIds && subcategoryIds.length > 0
+        ? subcategoryIds
+        : subcategoryId
+          ? [subcategoryId]
+          : [];
 
     const skip = (page - 1) * limit;
 
@@ -401,7 +410,9 @@ export class ProductService {
           categoryId: categoryId,
         },
       }),
-      ...(subcategoryId && { subcategoryId }),
+      ...(normalizedSubcategoryIds.length > 0 && {
+        subcategoryId: { in: normalizedSubcategoryIds },
+      }),
       ...(variant && {
         variant: {
           name: { contains: variant, mode: 'insensitive' as const },
@@ -455,7 +466,9 @@ export class ProductService {
       this.prisma.product.findMany({
         where,
         include,
-        orderBy: [{ status: 'desc' }, { createdAt: 'desc' }],
+        orderBy: priceSort
+          ? [{ price: priceSort }, { createdAt: 'desc' }]
+          : [{ status: 'desc' }, { createdAt: 'desc' }],
         skip,
         take: limit,
       }),

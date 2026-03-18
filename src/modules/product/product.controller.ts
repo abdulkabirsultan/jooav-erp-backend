@@ -242,11 +242,26 @@ export class ProductController {
   @ApiQuery({ name: 'brandId', required: false })
   @ApiQuery({ name: 'categoryId', required: false })
   @ApiQuery({ name: 'subcategoryId', required: false })
+  @ApiQuery({
+    name: 'subcategoryIds',
+    required: false,
+    isArray: true,
+    type: String,
+    description:
+      'Filter by multiple subcategory IDs (comma-separated or repeated query params)',
+  })
   @ApiQuery({ name: 'variant', required: false, example: '' })
   @ApiQuery({
     name: 'status',
     required: false,
     enum: ['DRAFT', 'QUEUE', 'LIVE', 'ARCHIVED'],
+  })
+  @ApiQuery({
+    name: 'priceSort',
+    required: false,
+    enum: ['asc', 'desc'],
+    description:
+      'Sort by price (asc = least price first, desc = highest price first)',
   })
   @ApiQuery({ name: 'includeRelations', required: false, type: Boolean })
   async findAll(
