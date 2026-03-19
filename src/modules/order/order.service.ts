@@ -11,6 +11,7 @@ import {
   CreateOrderDto,
   UpdateOrderItemStatusDto,
 } from './dto/create-order.dto';
+import { CreateOutOfStockReportDto } from './dto/out-of-stock.dto';
 import {
   AssignOrderDto,
   AssignmentResponseDto,
@@ -29,6 +30,7 @@ import {
   UserRole,
   AssignmentStatus,
   ProcurementOfficerStatus,
+  OutOfStockReportStatus,
 } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 
@@ -1699,6 +1701,411 @@ export class OrderService {
           hasPrev: page > 1,
         },
       },
+    };
+  }
+
+  async createOutOfStockReport(
+    createDto: CreateOutOfStockReportDto,
+    userId: string,
+  ) {
+    const user = await this.prismaService.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.role !== UserRole.WHOLESALER) {
+      throw new ForbiddenException(
+        'Only wholesalers can report out-of-stock items',
+      );
+    }
+
+    if (!createDto.items?.length) {
+      throw new BadRequestException('At least one item is required');
+    }
+
+    const uniqueOrderItemIds = [
+      ...new Set(createDto.items.map((i) => i.orderItemId)),
+    ];
+    if (uniqueOrderItemIds.length !== createDto.items.length) {
+      throw new BadRequestException(
+        'Duplicate orderItemId entries are not allowed in a single report',
+      );
+    }
+
+    const orderItems = await this.prismaService.orderItem.findMany({
+      where: { id: { in: uniqueOrderItemIds } },
+      include: {
+        order: {
+          select: {
+            id: true,
+            orderNumber: true,
+            wholesalerId: true,
+            status: true,
+          },
+        },
+        product: {
+          select: {
+            id: true,
+            name: true,
+            sku: true,
+          },
+        },
+      },
+    });
+
+    if (orderItems.length !== uniqueOrderItemIds.length) {
+      throw new NotFoundException('One or more order items were not found');
+    }
+
+    const itemMap = new Map(orderItems.map((item) => [item.id, item]));
+
+    for (const inputItem of createDto.items) {
+      const item = itemMap.get(inputItem.orderItemId);
+
+      if (!item) {
+        throw new NotFoundException(
+          `Order item ${inputItem.orderItemId} was not found`,
+        );
+      }
+
+      if (item.orderId !== inputItem.orderId) {
+        throw new BadRequestException(
+          `Order item ${inputItem.orderItemId} does not belong to order ${inputItem.orderId}`,
+        );
+      }
+
+      if (item.order.wholesalerId !== userId) {
+        throw new ForbiddenException(
+          'You can only report items from your own orders',
+        );
+      }
+
+      if (item.order.status !== OrderStatus.COMPLETED) {
+        throw new BadRequestException(
+          `Order ${item.order.orderNumber} is not completed`,
+        );
+      }
+
+      const quantityAffected = inputItem.quantityAffected ?? item.quantity;
+      if (quantityAffected < 1 || quantityAffected > item.quantity) {
+        throw new BadRequestException(
+          `Invalid quantityAffected for item ${item.id}. Must be between 1 and ${item.quantity}`,
+        );
+      }
+    }
+
+    const existingOpenItems =
+      await this.prismaService.outOfStockReportItem.findMany({
+        where: {
+          orderItemId: { in: uniqueOrderItemIds },
+          report: {
+            status: OutOfStockReportStatus.OPEN,
+          },
+        },
+        select: {
+          orderItemId: true,
+          product: { select: { name: true } },
+        },
+      });
+
+    if (existingOpenItems.length > 0) {
+      const existingItemNames = existingOpenItems.map(
+        (item) => item.product.name,
+      );
+      throw new BadRequestException(
+        `Some items already exist in an open out-of-stock report: ${existingItemNames.join(', ')}`,
+      );
+    }
+
+    const report = await this.prismaService.outOfStockReport.create({
+      data: {
+        wholesalerId: userId,
+        items: {
+          create: createDto.items.map((inputItem) => {
+            const item = itemMap.get(inputItem.orderItemId)!;
+            return {
+              orderId: inputItem.orderId,
+              orderItemId: inputItem.orderItemId,
+              productId: item.productId,
+              quantityAffected: inputItem.quantityAffected ?? item.quantity,
+            };
+          }),
+        },
+      },
+      include: {
+        wholesaler: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phone: true,
+          },
+        },
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Out-of-stock request created successfully',
+      data: report,
+    };
+  }
+
+  async listOpenOutOfStockReports(userId: string) {
+    const user = await this.prismaService.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.role !== UserRole.ADMIN && user.role !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException('Only admins can view out-of-stock reports');
+    }
+
+    const reports = await this.prismaService.outOfStockReport.findMany({
+      where: {
+        status: OutOfStockReportStatus.OPEN,
+      },
+      include: {
+        wholesaler: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phone: true,
+            role: true,
+            status: true,
+            createdAt: true,
+          },
+        },
+        items: {
+          include: {
+            order: {
+              select: {
+                id: true,
+                orderNumber: true,
+                status: true,
+                orderDate: true,
+                submittedAt: true,
+                confirmedAt: true,
+                totalAmount: true,
+              },
+            },
+            orderItem: {
+              select: {
+                id: true,
+                quantity: true,
+                status: true,
+                unitPrice: true,
+                lineTotal: true,
+              },
+            },
+            product: {
+              select: {
+                id: true,
+                name: true,
+                sku: true,
+                thumbnail: true,
+                images: true,
+                price: true,
+                quantity: true,
+                brand: { select: { id: true, name: true } },
+                variant: { select: { id: true, name: true } },
+                packSize: { select: { id: true, name: true } },
+                packType: { select: { id: true, name: true } },
+              },
+            },
+          },
+          orderBy: {
+            createdAt: 'desc',
+          },
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Open out-of-stock reports retrieved successfully',
+      data: {
+        reports,
+      },
+    };
+  }
+
+  async resolveOutOfStockReport(reportId: string, userId: string) {
+    const user = await this.prismaService.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.role !== UserRole.ADMIN && user.role !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException(
+        'Only admins can resolve out-of-stock reports',
+      );
+    }
+
+    const existingReport = await this.prismaService.outOfStockReport.findUnique(
+      {
+        where: { id: reportId },
+        select: {
+          id: true,
+          status: true,
+        },
+      },
+    );
+
+    if (!existingReport) {
+      throw new NotFoundException('Out-of-stock report not found');
+    }
+
+    if (existingReport.status === OutOfStockReportStatus.RESOLVED) {
+      const resolvedReport =
+        await this.prismaService.outOfStockReport.findUnique({
+          where: { id: reportId },
+          include: {
+            wholesaler: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                phone: true,
+                wholesalerProfile: {
+                  select: {
+                    id: true,
+                    regionId: true,
+                    totalOrders: true,
+                    totalSpent: true,
+                    userAddress: true,
+                  },
+                },
+              },
+            },
+            resolver: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+              },
+            },
+            items: {
+              include: {
+                order: {
+                  select: {
+                    id: true,
+                    orderNumber: true,
+                    status: true,
+                  },
+                },
+                orderItem: {
+                  select: {
+                    id: true,
+                    quantity: true,
+                    status: true,
+                  },
+                },
+                product: {
+                  select: {
+                    id: true,
+                    name: true,
+                    sku: true,
+                  },
+                },
+              },
+            },
+          },
+        });
+
+      return {
+        success: true,
+        message: 'Out-of-stock report is already resolved',
+        data: resolvedReport,
+      };
+    }
+
+    const report = await this.prismaService.outOfStockReport.update({
+      where: { id: reportId },
+      data: {
+        status: OutOfStockReportStatus.RESOLVED,
+        resolvedAt: new Date(),
+        resolvedBy: userId,
+      },
+      include: {
+        wholesaler: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phone: true,
+            wholesalerProfile: {
+              select: {
+                id: true,
+                regionId: true,
+                totalOrders: true,
+                totalSpent: true,
+                userAddress: true,
+              },
+            },
+          },
+        },
+        resolver: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+          },
+        },
+        items: {
+          include: {
+            order: {
+              select: {
+                id: true,
+                orderNumber: true,
+                status: true,
+              },
+            },
+            orderItem: {
+              select: {
+                id: true,
+                quantity: true,
+                status: true,
+              },
+            },
+            product: {
+              select: {
+                id: true,
+                name: true,
+                sku: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Out-of-stock report resolved successfully',
+      data: report,
     };
   }
 
@@ -3806,7 +4213,7 @@ export class OrderService {
           createdAt: true,
         },
         orderBy: { createdAt: 'desc' },
-        take: 20,
+        take: 10,
       }),
 
       // 3. Get total revenue from completed orders
