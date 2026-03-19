@@ -46,6 +46,8 @@ model User {
   assignedOrders Order[]       @relation("AssignedProcurementOfficer")
   wholesalerOrders Order[]     @relation("WholesalerUser")
   itemStatusUpdates OrderItem[] @relation("ItemStatusUpdatedBy")
+  outOfStockReports OutOfStockReport[] @relation("OutOfStockReportedBy")
+  resolvedOutOfStockReports OutOfStockReport[] @relation("OutOfStockResolvedBy")
 
   // JooavERP specific relations
   adminProfile              AdminProfile?
@@ -333,6 +335,7 @@ model Product {
   // Relations to other models
   orderItems      OrderItem[]
   stockMovements  StockMovement[]
+  outOfStockReportItems OutOfStockReportItem[]
   
   @@map("products")
 }
@@ -381,6 +384,7 @@ model Order {
   createdBy          User                @relation("CreatedBy", fields: [createdById], references: [id])
   items              OrderItem[]
   payments           Payment[]
+  outOfStockReportItems OutOfStockReportItem[]
 
   @@map("orders")
 }
@@ -409,6 +413,7 @@ model OrderItem {
   order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id])
   statusUpdatedByUser User? @relation("ItemStatusUpdatedBy", fields: [statusUpdatedBy], references: [id])
+  outOfStockReportItems OutOfStockReportItem[]
 
   @@unique([orderId, productId])
   @@map("order_items")
@@ -446,6 +451,48 @@ model Payment {
   updatedAt DateTime @updatedAt
 
   @@map("payments")
+}
+
+model OutOfStockReport {
+  id          String                 @id @default(cuid())
+  wholesalerId String
+  status      OutOfStockReportStatus @default(OPEN)
+  resolvedAt  DateTime?
+  resolvedBy  String?
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+
+  // Relations
+  wholesaler  User                   @relation("OutOfStockReportedBy", fields: [wholesalerId], references: [id], onDelete: Cascade)
+  resolver    User?                  @relation("OutOfStockResolvedBy", fields: [resolvedBy], references: [id])
+  items       OutOfStockReportItem[]
+
+  @@index([wholesalerId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("out_of_stock_reports")
+}
+
+model OutOfStockReportItem {
+  id               String           @id @default(cuid())
+  reportId         String
+  orderId          String
+  orderItemId      String
+  productId        String
+  quantityAffected Int
+  createdAt        DateTime         @default(now())
+
+  // Relations
+  report           OutOfStockReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  order            Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItem        OrderItem        @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  product          Product          @relation(fields: [productId], references: [id])
+
+  @@index([reportId])
+  @@index([orderItemId])
+  @@index([orderId])
+  @@index([productId])
+  @@map("out_of_stock_report_items")
 }
 
 model StockMovement {
@@ -801,6 +848,11 @@ enum PaymentStatus {
 enum PaymentMethod {
   BANK_TRANSFER
   CHECKOUT_URL
+}
+
+enum OutOfStockReportStatus {
+  OPEN
+  RESOLVED
 }
 
 enum StockMovementType {

@@ -45,6 +45,11 @@ import {
   PaymentResponseDto,
   DraftOrderResponseDto,
 } from './dto/create-order.dto';
+import {
+  CreateOutOfStockReportDto,
+  OutOfStockReportListResponseDto,
+  OutOfStockReportResponseDto,
+} from './dto/out-of-stock.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { WebhookResponseDto } from './dto/webhook.dto';
 import { SuccessResponse } from '../../common/dto/api-response.dto';
@@ -326,6 +331,63 @@ export class OrderController {
     );
 
     return new SuccessResponse(result.message, result.data);
+  }
+
+  @Post('out-of-stock-reports')
+  @Roles(UserRole.WHOLESALER)
+  @ApiOperation({
+    summary: 'Report out-of-stock items',
+    description:
+      'Wholesaler marks one or more items from completed orders as out of stock',
+  })
+  @ApiResponse({
+    status: HttpStatus.CREATED,
+    description: 'Out-of-stock report created successfully',
+    type: OutOfStockReportResponseDto,
+  })
+  async createOutOfStockReport(
+    @Body() createDto: CreateOutOfStockReportDto,
+    @CurrentUserId() userId: string,
+  ): Promise<OutOfStockReportResponseDto> {
+    return this.orderService.createOutOfStockReport(createDto, userId);
+  }
+
+  @Get('out-of-stock-reports')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'List open out-of-stock reports',
+    description:
+      'Admin retrieves all open out-of-stock reports with full wholesaler and item details (no pagination)',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Open out-of-stock reports retrieved successfully',
+    type: OutOfStockReportListResponseDto,
+  })
+  async listOpenOutOfStockReports(
+    @CurrentUserId() userId: string,
+  ): Promise<OutOfStockReportListResponseDto> {
+    return this.orderService.listOpenOutOfStockReports(userId);
+  }
+
+  @Patch('out-of-stock-reports/:reportId/resolve')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'Resolve out-of-stock report',
+    description:
+      'Admin marks an out-of-stock report as resolved so it no longer appears in open list',
+  })
+  @ApiParam({ name: 'reportId', description: 'Out-of-stock report ID' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Out-of-stock report resolved successfully',
+    type: OutOfStockReportResponseDto,
+  })
+  async resolveOutOfStockReport(
+    @Param('reportId') reportId: string,
+    @CurrentUserId() userId: string,
+  ): Promise<OutOfStockReportResponseDto> {
+    return this.orderService.resolveOutOfStockReport(reportId, userId);
   }
 
   @Get(':orderNumber')
