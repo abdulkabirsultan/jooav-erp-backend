@@ -4213,7 +4213,7 @@ export class OrderService {
           createdAt: true,
         },
         orderBy: { createdAt: 'desc' },
-        take: 20,
+        take: 10,
       }),
 
       // 3. Get total revenue from completed orders
