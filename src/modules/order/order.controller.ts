@@ -24,7 +24,9 @@ import {
   ApiQuery,
   ApiNotFoundResponse,
   ApiForbiddenResponse,
+  ApiBadRequestResponse,
 } from '@nestjs/swagger';
+
 import { OrderService } from './order.service';
 import { MonnifyService } from '../payment/monnify.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -102,11 +104,20 @@ export class OrderController {
   @ApiOperation({
     summary: 'Initiate payment for draft order',
     description:
-      'Converts a DRAFT order to PENDING_PAYMENT with Monnify integration and virtual account generation',
+      'Converts a DRAFT order to PENDING_PAYMENT and generates a Monnify virtual account. ' +
+      '\n\n**Address rules:**' +
+      '\n- `deliveryAddress` is strictly required for all users. Only the `address` sub-field is mandatory; all others (city, state, contactName, contactPhone) are optional.' +
+      "\n\n**Phone fallback**: If `contactPhone` is omitted from the address, it will be auto-filled from the wholesaler's user profile." +
+      '\n\n**Items**: Always sourced from the draft order in the database — do not include items in this request.',
   })
   @ApiParam({
     name: 'orderNumber',
-    description: 'Order number to initiate payment for',
+    description: 'Draft order number to initiate payment for',
+    example: 'DRAFT-1536724985',
+  })
+  @ApiBadRequestResponse({
+    description:
+      'Validation failed — e.g. deliveryAddress missing for wholesaler, empty order, or zero total',
   })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -123,8 +134,15 @@ export class OrderController {
     @Param('orderNumber') orderNumber: string,
     @Body() initiatePaymentDto: InitiatePaymentDto,
     @CurrentUserId() userId: string,
+    @Headers('origin') requestOrigin?: string,
   ): Promise<PaymentResponseDto> {
-    return this.orderService.initiatePayment(orderNumber, userId);
+    return this.orderService.initiatePayment(
+      orderNumber,
+      userId,
+      initiatePaymentDto,
+      undefined,
+      requestOrigin,
+    );
   }
 
   @Post(':orderNumber/reinitiate-payment')
@@ -153,8 +171,13 @@ export class OrderController {
   async reinitiatePayment(
     @Param('orderNumber') orderNumber: string,
     @CurrentUserId() userId: string,
+    @Headers('origin') requestOrigin?: string,
   ): Promise<PaymentResponseDto> {
-    return this.orderService.reinitiatePayment(orderNumber, userId);
+    return this.orderService.reinitiatePayment(
+      orderNumber,
+      userId,
+      requestOrigin,
+    );
   }
 
   @Get('stats')

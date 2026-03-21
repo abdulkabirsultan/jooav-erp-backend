@@ -10,6 +10,8 @@ import { MonnifyService } from '../payment/monnify.service';
 import {
   CreateOrderDto,
   UpdateOrderItemStatusDto,
+  InitiatePaymentDto,
+  PaymentResponseDto,
 } from './dto/create-order.dto';
 import { CreateOutOfStockReportDto } from './dto/out-of-stock.dto';
 import {
@@ -107,6 +109,85 @@ export class OrderService {
   ): boolean {
     const validTransitions = this.getValidOrderItemStatusTransitions();
     return validTransitions[currentStatus]?.includes(newStatus) || false;
+  }
+
+  private normalizeOrigin(origin?: string | null): string | null {
+    if (!origin) {
+      return null;
+    }
+
+    const trimmedOrigin = origin.trim();
+    if (!trimmedOrigin) {
+      return null;
+    }
+
+    try {
+      return new URL(trimmedOrigin).origin;
+    } catch {
+      return trimmedOrigin.replace(/\/+$/, '');
+    }
+  }
+
+  private getAllowedOrigins(): string[] {
+    const configuredOrigins = [
+      this.configService.get<string>('ORIGIN'),
+      this.configService.get<string>('CORS_ORIGIN'),
+    ]
+      .filter((value): value is string => Boolean(value))
+      .flatMap((value) => value.split(','))
+      .map((value) => this.normalizeOrigin(value))
+      .filter((value): value is string => Boolean(value));
+
+    return [...new Set(configuredOrigins)];
+  }
+
+  private getPaymentRedirectPath(role: UserRole): string {
+    if (role === UserRole.WHOLESALER) {
+      return '/order-processing';
+    }
+
+    if (role === UserRole.ADMIN || role === UserRole.SUPER_ADMIN) {
+      return '/payment-verification';
+    }
+
+    return '/payment-verification';
+  }
+
+  private buildPaymentRedirectUrl(
+    role: UserRole,
+    requestOrigin?: string,
+  ): string {
+    const allowedOrigins = this.getAllowedOrigins();
+    const normalizedRequestOrigin = this.normalizeOrigin(requestOrigin);
+
+    let redirectBaseUrl: string | null = null;
+
+    if (
+      normalizedRequestOrigin &&
+      allowedOrigins.includes(normalizedRequestOrigin)
+    ) {
+      redirectBaseUrl = normalizedRequestOrigin;
+    } else if (normalizedRequestOrigin) {
+      this.logger.warn(
+        `Origin ${normalizedRequestOrigin} is not allowlisted for redirects; falling back to configured base URL`,
+      );
+    }
+
+    if (!redirectBaseUrl) {
+      redirectBaseUrl = this.normalizeOrigin(
+        this.configService.get<string>('APP_BASE_URL'),
+      );
+    }
+
+    if (!redirectBaseUrl && allowedOrigins.length > 0) {
+      redirectBaseUrl = allowedOrigins[0];
+    }
+
+    if (!redirectBaseUrl) {
+      throw new BadRequestException('No valid redirect base URL configured');
+    }
+
+    return `${redirectBaseUrl}${this.getPaymentRedirectPath(role)}`;
   }
 
   /**
@@ -348,7 +429,9 @@ export class OrderService {
   async initiatePayment(
     orderNumber: string,
     userId: string,
+    initiatePaymentDto?: InitiatePaymentDto,
     options?: { bypassWholesalerDraftCart?: boolean },
+    requestOrigin?: string,
   ) {
     // Get user and validate permissions
     const user = await this.prismaService.user.findUnique({
@@ -399,6 +482,7 @@ export class OrderService {
             firstName: true,
             lastName: true,
             email: true,
+            phone: true,
           },
         },
       },
@@ -479,12 +563,48 @@ export class OrderService {
       throw new BadRequestException('Order total must be greater than 0');
     }
 
-    // Validate delivery address is provided
-    if (!sourceOrder.deliveryAddress) {
+    // Process delivery address from DTO if provided
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let deliveryAddress: any =
+      initiatePaymentDto?.deliveryAddress || sourceOrder.deliveryAddress;
+
+    // Apply requirements for address (Required for all users including admins)
+    if (!deliveryAddress) {
       throw new BadRequestException(
         'Delivery address is required for payment initiation',
       );
     }
+
+    // Phone number fallback logic: if address exists but phone is missing, use profile phone
+    if (
+      deliveryAddress &&
+      typeof deliveryAddress === 'object' &&
+      !deliveryAddress.contactPhone &&
+      sourceOrder.wholesaler?.phone
+    ) {
+      deliveryAddress = {
+        ...deliveryAddress,
+        contactPhone: sourceOrder.wholesaler.phone,
+      };
+    }
+
+    // Update draft order if a physical address was provided in the initiation payload
+    if (initiatePaymentDto?.deliveryAddress) {
+      await this.prismaService.order.update({
+        where: { id: sourceOrder.id },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: { deliveryAddress: deliveryAddress as any },
+      });
+      // Synchronize back to the local sourceOrder object for subsequent processing
+      sourceOrder.deliveryAddress = deliveryAddress;
+    }
+
+    // // Validate delivery address is provided (COMMENTED OUT AS PER REQUEST - NOW Bypassed for ADMINS)
+    // if (!sourceOrder.deliveryAddress) {
+    //   throw new BadRequestException(
+    //     'Delivery address is required for payment initiation',
+    //   );
+    // }
 
     try {
       // Generate new order number for payment
@@ -501,8 +621,7 @@ export class OrderService {
         currencyCode: 'NGN',
         expiryDate: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
         paymentMethods: ['ACCOUNT_TRANSFER', 'CARD'],
-        redirectUrl:
-          this.configService.get('APP_BASE_URL') + `/payment-verification`,
+        redirectUrl: this.buildPaymentRedirectUrl(user.role, requestOrigin),
       };
 
       const monnifyInvoice =
@@ -636,7 +755,11 @@ export class OrderService {
    * Reinitiate payment for expired PENDING_PAYMENT orders
    * Returns existing details if not expired, recreates order if expired
    */
-  async reinitiatePayment(orderNumber: string, userId: string) {
+  async reinitiatePayment(
+    orderNumber: string,
+    userId: string,
+    requestOrigin?: string,
+  ) {
     // Get order and validate
     const order = await this.prismaService.order.findUnique({
       where: { orderNumber },
@@ -774,9 +897,15 @@ export class OrderService {
           },
         });
 
-        return await this.initiatePayment(newDraftOrder.orderNumber, userId, {
-          bypassWholesalerDraftCart: true,
-        });
+        return await this.initiatePayment(
+          newDraftOrder.orderNumber,
+          userId,
+          undefined,
+          {
+            bypassWholesalerDraftCart: true,
+          },
+          requestOrigin,
+        );
       }
 
       // Admin/others: create a dedicated draft clone, then initiate payment
@@ -806,7 +935,13 @@ export class OrderService {
         },
       });
 
-      return await this.initiatePayment(newDraftOrder.orderNumber, userId);
+      return await this.initiatePayment(
+        newDraftOrder.orderNumber,
+        userId,
+        undefined,
+        undefined,
+        requestOrigin,
+      );
     }
 
     // Check if payment has expired using Monnify's expiry date
@@ -905,9 +1040,15 @@ export class OrderService {
           },
         });
 
-        return await this.initiatePayment(newDraftOrder.orderNumber, userId, {
-          bypassWholesalerDraftCart: true,
-        });
+        return await this.initiatePayment(
+          newDraftOrder.orderNumber,
+          userId,
+          undefined,
+          {
+            bypassWholesalerDraftCart: true,
+          },
+          requestOrigin,
+        );
       }
 
       const draftOrderNumber = await this.generateOrderNumber('DRAFT-');
@@ -937,7 +1078,13 @@ export class OrderService {
       });
 
       // 6. Immediately initiate payment for recreated order
-      return await this.initiatePayment(newDraftOrder.orderNumber, userId);
+      return await this.initiatePayment(
+        newDraftOrder.orderNumber,
+        userId,
+        undefined,
+        undefined,
+        requestOrigin,
+      );
     } catch (error) {
       this.logger.error(
         `Failed to reinitiate payment for order ${orderNumber}: ${error.message}`,
@@ -2265,7 +2412,7 @@ export class OrderService {
         data: {
           status: OrderItemStatus.PAID,
           statusUpdatedAt: new Date(),
-          statusUpdatedBy: 'webhook', // Use 'webhook' identifier for webhook updates
+          statusUpdatedBy: null,
         },
       });
     });
@@ -3822,246 +3969,252 @@ export class OrderService {
     }
 
     try {
-      const result = await this.prismaService.$transaction(async (tx) => {
-        let needsRecalculation = false;
-        const orderUpdateData: any = {
-          updatedAt: new Date(),
-        };
+      const result = await this.prismaService.$transaction(
+        async (tx) => {
+          let needsRecalculation = false;
+          const orderUpdateData: any = {
+            updatedAt: new Date(),
+          };
 
-        // Handle item modification if provided
-        if (updateOrderDto.item) {
-          const itemData = updateOrderDto.item;
+          // Handle item modification if provided
+          if (updateOrderDto.item) {
+            const itemData = updateOrderDto.item;
 
-          // Validate action is provided
-          if (!itemData.action) {
-            throw new BadRequestException(
-              'Action is required when updating an item',
-            );
-          }
-
-          needsRecalculation = true;
-
-          switch (itemData.action) {
-            case 'UPDATE':
-              if (!itemData.itemId) {
-                throw new BadRequestException(
-                  'Item ID is required for UPDATE action',
-                );
-              }
-              if (itemData.quantity === undefined) {
-                throw new BadRequestException(
-                  'Quantity is required for UPDATE action',
-                );
-              }
-
-              // Find the specific item to update
-              const existingItem = order.items.find(
-                (item) => item.id === itemData.itemId,
-              );
-
-              if (!existingItem) {
-                throw new NotFoundException(
-                  `Order item ${itemData.itemId} not found in order`,
-                );
-              }
-
-              // Validate minimum quantity
-              if (itemData.quantity < 10) {
-                throw new BadRequestException(
-                  `Minimum quantity is 10. Requested: ${itemData.quantity}`,
-                );
-              }
-
-              // Validate quantity against product stock
-              if (itemData.quantity > existingItem.product.quantity) {
-                throw new BadRequestException(
-                  `Insufficient stock for product ${existingItem.product.name}. Available: ${existingItem.product.quantity}, Requested: ${itemData.quantity}`,
-                );
-              }
-
-              // Update the item quantity and recalculate line total
-              const currentPrice =
-                existingItem.product.price || existingItem.unitPrice;
-              await tx.orderItem.update({
-                where: { id: itemData.itemId },
-                data: {
-                  quantity: itemData.quantity,
-                  unitPrice: currentPrice,
-                  lineTotal: itemData.quantity * Number(currentPrice),
-                },
-              });
-              break;
-
-            case 'ADD':
-              if (!itemData.productId) {
-                throw new BadRequestException(
-                  'Product ID is required for ADD action',
-                );
-              }
-              if (itemData.quantity === undefined) {
-                throw new BadRequestException(
-                  'Quantity is required for ADD action',
-                );
-              }
-
-              // Check if product already exists in order
-              const duplicateItem = order.items.find(
-                (item) => item.productId === itemData.productId,
-              );
-              if (duplicateItem) {
-                throw new BadRequestException(
-                  'Product already exists in order. Use UPDATE action instead.',
-                );
-              }
-
-              // Validate product exists and is available
-              const product = await tx.product.findUnique({
-                where: { id: itemData.productId },
-                select: {
-                  id: true,
-                  name: true,
-                  price: true,
-                  quantity: true,
-                  status: true,
-                },
-              });
-
-              if (!product) {
-                throw new BadRequestException(
-                  `Product ${itemData.productId} not found`,
-                );
-              }
-
-              if (product.status !== 'LIVE') {
-                throw new BadRequestException(
-                  `Product ${product.name} is not available for ordering`,
-                );
-              }
-
-              // Validate minimum quantity
-              if (itemData.quantity < 10) {
-                throw new BadRequestException(
-                  `Minimum quantity is 10. Requested: ${itemData.quantity}`,
-                );
-              }
-
-              // Validate quantity against product stock
-              if (itemData.quantity > product.quantity) {
-                throw new BadRequestException(
-                  `Insufficient stock for product ${product.name}. Available: ${product.quantity}, Requested: ${itemData.quantity}`,
-                );
-              }
-
-              // Create new order item
-              const productPrice = product.price || 0;
-              await tx.orderItem.create({
-                data: {
-                  orderId: order.id,
-                  productId: itemData.productId,
-                  quantity: itemData.quantity,
-                  unitPrice: productPrice,
-                  lineTotal: itemData.quantity * Number(productPrice),
-                  status: OrderItemStatus.PENDING,
-                  statusUpdatedBy: userId,
-                },
-              });
-              break;
-
-            case 'REMOVE':
-              if (!itemData.itemId) {
-                throw new BadRequestException(
-                  'Item ID is required for REMOVE action',
-                );
-              }
-
-              // Find the item to remove
-              const itemToRemove = order.items.find(
-                (item) => item.id === itemData.itemId,
-              );
-
-              if (!itemToRemove) {
-                throw new NotFoundException(
-                  `Order item ${itemData.itemId} not found in order`,
-                );
-              }
-
-              // Delete the item
-              await tx.orderItem.delete({
-                where: { id: itemData.itemId },
-              });
-              break;
-
-            default:
+            // Validate action is provided
+            if (!itemData.action) {
               throw new BadRequestException(
-                `Invalid action: ${itemData.action}. Must be ADD, UPDATE, or REMOVE.`,
+                'Action is required when updating an item',
               );
-          }
-        }
+            }
 
-        // If item was modified, recalculate order totals
-        if (needsRecalculation) {
-          const updatedItems = await tx.orderItem.findMany({
-            where: { orderId: order.id },
-          });
+            needsRecalculation = true;
 
-          const newSubtotal = updatedItems.reduce(
-            (sum, item) => sum + Number(item.lineTotal),
-            0,
-          );
+            switch (itemData.action) {
+              case 'UPDATE':
+                if (!itemData.itemId) {
+                  throw new BadRequestException(
+                    'Item ID is required for UPDATE action',
+                  );
+                }
+                if (itemData.quantity === undefined) {
+                  throw new BadRequestException(
+                    'Quantity is required for UPDATE action',
+                  );
+                }
 
-          orderUpdateData.subtotal = newSubtotal;
-          orderUpdateData.totalAmount = newSubtotal;
-        }
+                // Find the specific item to update
+                const existingItem = order.items.find(
+                  (item) => item.id === itemData.itemId,
+                );
 
-        // Add other field updates (excluding item)
-        const { item, ...otherUpdates } = updateOrderDto;
-        if (Object.keys(otherUpdates).length > 0) {
-          Object.assign(orderUpdateData, otherUpdates);
-        }
+                if (!existingItem) {
+                  throw new NotFoundException(
+                    `Order item ${itemData.itemId} not found in order`,
+                  );
+                }
 
-        // Update the order with all changes
-        const updatedOrder = await tx.order.update({
-          where: { id: order.id },
-          data: orderUpdateData,
-          include: {
-            items: {
-              include: {
-                product: {
+                // Validate minimum quantity
+                if (itemData.quantity < 10) {
+                  throw new BadRequestException(
+                    `Minimum quantity is 10. Requested: ${itemData.quantity}`,
+                  );
+                }
+
+                // Validate quantity against product stock
+                if (itemData.quantity > existingItem.product.quantity) {
+                  throw new BadRequestException(
+                    `Insufficient stock for product ${existingItem.product.name}. Available: ${existingItem.product.quantity}, Requested: ${itemData.quantity}`,
+                  );
+                }
+
+                // Update the item quantity and recalculate line total
+                const currentPrice =
+                  existingItem.product.price || existingItem.unitPrice;
+                await tx.orderItem.update({
+                  where: { id: itemData.itemId },
+                  data: {
+                    quantity: itemData.quantity,
+                    unitPrice: currentPrice,
+                    lineTotal: itemData.quantity * Number(currentPrice),
+                  },
+                });
+                break;
+
+              case 'ADD':
+                if (!itemData.productId) {
+                  throw new BadRequestException(
+                    'Product ID is required for ADD action',
+                  );
+                }
+                if (itemData.quantity === undefined) {
+                  throw new BadRequestException(
+                    'Quantity is required for ADD action',
+                  );
+                }
+
+                // Check if product already exists in order
+                const duplicateItem = order.items.find(
+                  (item) => item.productId === itemData.productId,
+                );
+                if (duplicateItem) {
+                  throw new BadRequestException(
+                    'Product already exists in order. Use UPDATE action instead.',
+                  );
+                }
+
+                // Validate product exists and is available
+                const product = await tx.product.findUnique({
+                  where: { id: itemData.productId },
                   select: {
                     id: true,
                     name: true,
-                    thumbnail: true,
-                    images: true,
-                    brand: { select: { name: true } },
-                    packSize: { select: { name: true } },
-                    packType: { select: { name: true } },
                     price: true,
-                    discount: true,
                     quantity: true,
-                    variant: { select: { id: true, name: true } },
-                    subcategory: {
-                      select: {
-                        name: true,
-                        category: { select: { name: true } },
+                    status: true,
+                  },
+                });
+
+                if (!product) {
+                  throw new BadRequestException(
+                    `Product ${itemData.productId} not found`,
+                  );
+                }
+
+                if (product.status !== 'LIVE') {
+                  throw new BadRequestException(
+                    `Product ${product.name} is not available for ordering`,
+                  );
+                }
+
+                // Validate minimum quantity
+                if (itemData.quantity < 10) {
+                  throw new BadRequestException(
+                    `Minimum quantity is 10. Requested: ${itemData.quantity}`,
+                  );
+                }
+
+                // Validate quantity against product stock
+                if (itemData.quantity > product.quantity) {
+                  throw new BadRequestException(
+                    `Insufficient stock for product ${product.name}. Available: ${product.quantity}, Requested: ${itemData.quantity}`,
+                  );
+                }
+
+                // Create new order item
+                const productPrice = product.price || 0;
+                await tx.orderItem.create({
+                  data: {
+                    orderId: order.id,
+                    productId: itemData.productId,
+                    quantity: itemData.quantity,
+                    unitPrice: productPrice,
+                    lineTotal: itemData.quantity * Number(productPrice),
+                    status: OrderItemStatus.PENDING,
+                    statusUpdatedBy: userId,
+                  },
+                });
+                break;
+
+              case 'REMOVE':
+                if (!itemData.itemId) {
+                  throw new BadRequestException(
+                    'Item ID is required for REMOVE action',
+                  );
+                }
+
+                // Find the item to remove
+                const itemToRemove = order.items.find(
+                  (item) => item.id === itemData.itemId,
+                );
+
+                if (!itemToRemove) {
+                  throw new NotFoundException(
+                    `Order item ${itemData.itemId} not found in order`,
+                  );
+                }
+
+                // Delete the item
+                await tx.orderItem.delete({
+                  where: { id: itemData.itemId },
+                });
+                break;
+
+              default:
+                throw new BadRequestException(
+                  `Invalid action: ${itemData.action}. Must be ADD, UPDATE, or REMOVE.`,
+                );
+            }
+          }
+
+          // If item was modified, recalculate order totals
+          if (needsRecalculation) {
+            const updatedItems = await tx.orderItem.findMany({
+              where: { orderId: order.id },
+            });
+
+            const newSubtotal = updatedItems.reduce(
+              (sum, item) => sum + Number(item.lineTotal),
+              0,
+            );
+
+            orderUpdateData.subtotal = newSubtotal;
+            orderUpdateData.totalAmount = newSubtotal;
+          }
+
+          // Add other field updates (excluding item)
+          const { item, ...otherUpdates } = updateOrderDto;
+          if (Object.keys(otherUpdates).length > 0) {
+            Object.assign(orderUpdateData, otherUpdates);
+          }
+
+          // Update the order with all changes
+          const updatedOrder = await tx.order.update({
+            where: { id: order.id },
+            data: orderUpdateData,
+            include: {
+              items: {
+                include: {
+                  product: {
+                    select: {
+                      id: true,
+                      name: true,
+                      thumbnail: true,
+                      images: true,
+                      brand: { select: { name: true } },
+                      packSize: { select: { name: true } },
+                      packType: { select: { name: true } },
+                      price: true,
+                      discount: true,
+                      quantity: true,
+                      variant: { select: { id: true, name: true } },
+                      subcategory: {
+                        select: {
+                          name: true,
+                          category: { select: { name: true } },
+                        },
                       },
                     },
                   },
                 },
               },
-            },
-            wholesaler: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                email: true,
+              wholesaler: {
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                  email: true,
+                },
               },
             },
-          },
-        });
+          });
 
-        return updatedOrder;
-      });
+          return updatedOrder;
+        },
+        {
+          maxWait: 5000,
+          timeout: 20000,
+        },
+      );
 
       // Create audit log
       const auditLog = {
@@ -4104,11 +4257,31 @@ export class OrderService {
         },
       };
     } catch (error) {
-      this.logger.error(
-        `Failed to update order ${orderNumber}:`,
-        error.message,
-      );
-      throw new BadRequestException(`Failed to update order: ${error.message}`);
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException ||
+        error instanceof ForbiddenException
+      ) {
+        throw error;
+      }
+
+      this.logger.error(`Failed to update order ${orderNumber}:`, error);
+
+      let errorMessage =
+        'An unexpected error occurred while updating the order.';
+      if (error.message && error.message.includes('expired transaction')) {
+        errorMessage =
+          'The operation timed out while communicating with the database. Please try again.';
+      } else if (error.message) {
+        // Strip out Prisma raw code dumps for safe user-facing client errors
+        errorMessage =
+          error.message
+            .split('\\n')[0]
+            .replace('Invalid `tx.order.update()` invocation', '')
+            .trim() || errorMessage;
+      }
+
+      throw new BadRequestException(`Failed to update order: ${errorMessage}`);
     }
   }
 

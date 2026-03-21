@@ -11,6 +11,7 @@ import {
   IsEnum,
   IsInt,
   Min,
+  Max,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
@@ -140,6 +141,7 @@ export class CreateProductDto {
   @Transform(({ value }) => parseInt(value, 10))
   @IsInt()
   @Min(0)
+  @Max(2147483647)
   quantity: number;
 
   @ApiPropertyOptional({
