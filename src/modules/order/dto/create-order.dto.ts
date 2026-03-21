@@ -229,7 +229,28 @@ export class ListOrdersQueryDto {
 // New DTOs for payment initiation
 
 export class InitiatePaymentDto {
-  // Currently empty - could be extended in future for payment preferences
+  /**
+   * Delivery address for this order.
+   * - Required for all users (`address` is the only mandatory sub-field).
+   * `contactPhone` is auto-filled from user profile when not provided.
+   */
+  @ApiProperty({
+    description:
+      'Delivery address. Required for all users. ' +
+      'Only the `address` sub-field is mandatory; city, state, contactName, contactPhone are optional. ' +
+      'contactPhone is auto-filled from user profile if missing.',
+    required: true,
+    example: { address: '45 Broad Street, Lagos Island' },
+  })
+  @IsOptional()
+  deliveryAddress?: {
+    address: string;
+    city?: string;
+    state?: string;
+    contactName?: string;
+    contactPhone?: string;
+    [key: string]: any;
+  };
 }
 
 export class PaymentResponseDto {

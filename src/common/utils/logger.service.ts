@@ -12,22 +12,51 @@ export class LoggerService {
     const logFormat = configService.get('logging.format', 'json');
     const nodeEnv = configService.get('app.nodeEnv', 'development');
 
+    const LEVEL_COLORS: Record<string, string> = {
+      error: '\x1b[31m', // red
+      warn:  '\x1b[33m', // yellow
+      info:  '\x1b[32m', // green
+      debug: '\x1b[36m', // cyan
+      verbose: '\x1b[35m', // magenta
+    };
+    const DIM = '\x1b[2m';
+    const BOLD = '\x1b[1m';
+    const RESET = '\x1b[0m';
+    const CYAN = '\x1b[36m';
+    const GRAY = '\x1b[90m';
+
+    const prettyDevFormat = winston.format.printf(
+      ({ timestamp, level, message, context, ms, stack, ...meta }) => {
+        const rawLevel = level.replace(/\u001b\[.*?m/g, '').toUpperCase().padEnd(5);
+        const color = LEVEL_COLORS[level.replace(/\u001b\[.*?m/g, '')] || RESET;
+        const time = DIM + String(timestamp).split('T')[1]?.replace('Z', '') + RESET;
+        const ctx = context ? `${CYAN}${BOLD}[${context}]${RESET}` : '';
+        const elapsed = ms ? ` ${GRAY}${ms}${RESET}` : '';
+        const levelBadge = `${color}${BOLD}${rawLevel}${RESET}`;
+
+        let out = `${time} ${levelBadge} ${ctx} ${message}${elapsed}`;
+
+        if (stack) {
+          out += `\n${GRAY}${stack}${RESET}`;
+        } else if (Object.keys(meta).length > 0) {
+          const filtered = Object.fromEntries(
+            Object.entries(meta).filter(([k]) => !['splat', 'service'].includes(k))
+          );
+          if (Object.keys(filtered).length > 0) {
+            out += `\n${GRAY}${JSON.stringify(filtered, null, 2)}${RESET}`;
+          }
+        }
+        return out;
+      },
+    );
+
     // Define log format based on environment
     const loggerFormat = winston.format.combine(
       winston.format.timestamp(),
       winston.format.ms(),
       winston.format.errors({ stack: true }),
       nodeEnv === 'development'
-        ? winston.format.combine(
-            winston.format.colorize({ all: true }),
-            winston.format.printf(
-              ({ timestamp, level, message, context, trace, ...meta }) => {
-                return `${timestamp} [${context || 'Application'}] ${level}: ${message}${
-                  trace ? `\n${trace}` : ''
-                }${Object.keys(meta).length ? `\n${JSON.stringify(meta, null, 2)}` : ''}`;
-              },
-            ),
-          )
+        ? prettyDevFormat
         : winston.format.combine(
             winston.format.json(),
             winston.format.printf(
