@@ -3,6 +3,7 @@ import {
   IsString,
   IsBoolean,
   IsEnum,
+  IsArray,
   Matches,
 } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
@@ -31,6 +32,55 @@ export class ProductQueryDto extends PaginationDto {
   categoryId?: string;
 
   @ApiPropertyOptional({
+    description: 'Filter by subcategory ID',
+    example: '',
+  })
+  @IsOptional()
+  @Matches(/^c[a-z0-9]{24}$/, {
+    message: 'subcategoryId must be a valid ObjectId',
+  })
+  subcategoryId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Filter by multiple subcategory IDs (supports comma-separated string or repeated query params)',
+    example: [],
+    type: [String],
+  })
+  @IsOptional()
+  @IsArray()
+  @Matches(/^c[a-z0-9]{24}$/, {
+    message: 'Each subcategoryId must be a valid ObjectId',
+    each: true,
+  })
+  @Transform(({ value }) => {
+    if (!value) {
+      return undefined;
+    }
+
+    if (Array.isArray(value)) {
+      return value.flatMap((item) =>
+        typeof item === 'string'
+          ? item
+              .split(',')
+              .map((v) => v.trim())
+              .filter(Boolean)
+          : [],
+      );
+    }
+
+    if (typeof value === 'string') {
+      return value
+        .split(',')
+        .map((v) => v.trim())
+        .filter(Boolean);
+    }
+
+    return undefined;
+  })
+  subcategoryIds?: string[];
+
+  @ApiPropertyOptional({
     description: 'Filter by product variant',
     example: '',
   })
@@ -48,6 +98,21 @@ export class ProductQueryDto extends PaginationDto {
     message: 'status must be one of: DRAFT, QUEUE, LIVE, ARCHIVED',
   })
   status?: 'DRAFT' | 'QUEUE' | 'LIVE' | 'ARCHIVED';
+
+  @ApiPropertyOptional({
+    description:
+      'Sort by price (asc = least price first, desc = highest price first)',
+    example: 'asc',
+    enum: ['asc', 'desc'],
+  })
+  @IsOptional()
+  @IsEnum(['asc', 'desc'], {
+    message: 'priceSort must be either asc or desc',
+  })
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.toLowerCase() : value,
+  )
+  priceSort?: 'asc' | 'desc';
 
   @ApiPropertyOptional({
     description: 'Include related data (brand, category, manufacturer)',

@@ -55,23 +55,32 @@ export class AdminAuthService {
     loginDto: AdminLoginDto,
     request: any,
   ): Promise<AdminAuthResponseDto> {
-    const { email, password } = loginDto;
+    const { email, password, role: expectedRole } = loginDto;
 
-    // Find admin user with profile
+    // Find admin user with profile (now includes procurement officers)
     const admin = await this.prisma.user.findUnique({
       where: {
         email,
-        role: { in: [UserRole.SUPER_ADMIN, UserRole.ADMIN] },
+        role: {
+          in: [
+            UserRole.SUPER_ADMIN,
+            UserRole.ADMIN,
+            UserRole.PROCUREMENT_OFFICER,
+          ],
+        },
         status: UserStatus.ACTIVE,
       },
       include: {
         adminProfile: true,
+        procurementOfficerProfile: true,
       },
     });
 
     if (
       !admin ||
-      (admin.role !== UserRole.SUPER_ADMIN && admin.role !== UserRole.ADMIN)
+      (admin.role !== UserRole.SUPER_ADMIN &&
+        admin.role !== UserRole.ADMIN &&
+        admin.role !== UserRole.PROCUREMENT_OFFICER)
     ) {
       await this.logAdminAuditEvent(
         'unknown',
@@ -79,9 +88,29 @@ export class AdminAuthService {
         'ADMIN_AUTH',
         null,
         request,
-        { reason: 'Account not found' },
+        { reason: 'Account not found or insufficient privileges' },
       );
       throw new UnauthorizedException('Invalid admin credentials');
+    }
+
+    // Validate role matches expected role
+    if (admin.role !== expectedRole) {
+      await this.logAdminAuditEvent(
+        admin.id,
+        AdminAction.LOGIN_FAILED,
+        'ADMIN_AUTH',
+        admin.id,
+        request,
+        {
+          email,
+          reason: 'Role mismatch',
+          actualRole: admin.role,
+          expectedRole,
+        },
+      );
+      throw new UnauthorizedException(
+        `Access denied. This route is for ${expectedRole} role only. Your role is ${admin.role}.`,
+      );
     }
 
     // Check account status
@@ -245,11 +274,21 @@ export class AdminAuthService {
       where: { id: adminId },
       include: {
         adminProfile: true,
+        procurementOfficerProfile: true,
       },
     });
 
     if (!admin) {
       throw new NotFoundException('Admin not found');
+    }
+
+    // Validate admin privileges
+    if (
+      admin.role !== UserRole.SUPER_ADMIN &&
+      admin.role !== UserRole.ADMIN &&
+      admin.role !== UserRole.PROCUREMENT_OFFICER
+    ) {
+      throw new UnauthorizedException('Admin privileges required');
     }
 
     return this.transformToAdminProfile(admin);
@@ -263,6 +302,7 @@ export class AdminAuthService {
       where: { id: adminId },
       include: {
         adminProfile: true,
+        procurementOfficerProfile: true,
       },
     });
 
@@ -270,8 +310,18 @@ export class AdminAuthService {
       throw new NotFoundException('Admin not found');
     }
 
+    // Validate admin privileges
+    if (
+      admin.role !== UserRole.SUPER_ADMIN &&
+      admin.role !== UserRole.ADMIN &&
+      admin.role !== UserRole.PROCUREMENT_OFFICER
+    ) {
+      throw new UnauthorizedException('Admin privileges required');
+    }
+
     const isSuperAdmin = admin.role === UserRole.SUPER_ADMIN;
     const isAdmin = admin.role === UserRole.ADMIN;
+    const isProcurementOfficer = admin.role === UserRole.PROCUREMENT_OFFICER;
 
     // Simplified permissions based on actual usage
     return {
@@ -285,8 +335,8 @@ export class AdminAuthService {
           delete: isSuperAdmin, // Only super admin can delete
           approve: true,
         },
-        smeUsers: {
-          create: false, // SMEs register themselves
+        wholesalers: {
+          create: false, // Wholesalers register themselves
           read: true,
           update: true,
           delete: isSuperAdmin,
@@ -375,11 +425,18 @@ export class AdminAuthService {
     const admin = await this.prisma.user.findUnique({
       where: {
         id: adminId,
-        role: { in: [UserRole.SUPER_ADMIN, UserRole.ADMIN] },
+        role: {
+          in: [
+            UserRole.SUPER_ADMIN,
+            UserRole.ADMIN,
+            UserRole.PROCUREMENT_OFFICER,
+          ],
+        },
         status: UserStatus.ACTIVE,
       },
       include: {
         adminProfile: true,
+        procurementOfficerProfile: true,
       },
     });
 
@@ -486,6 +543,8 @@ export class AdminAuthService {
       emailVerified: admin.emailVerified,
       lastLogin: admin.lastLogin,
       assignedRegions: [], // Admins don't have regional assignments
+      availabilityStatus:
+        admin.procurementOfficerProfile?.availabilityStatus || null,
       permissions: {
         canModifySystemConfig:
           admin.adminProfile?.canModifySystemConfig ?? false,

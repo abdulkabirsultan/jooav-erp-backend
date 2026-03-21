@@ -4,17 +4,30 @@ import {
   IsDecimal,
   IsDateString,
   IsArray,
-  IsUrl,
   IsNotEmpty,
   MaxLength,
   MinLength,
   Matches,
+  IsEnum,
+  IsInt,
+  Min,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import { Decimal } from '@prisma/client/runtime/library';
+import { ProductStatus } from '@prisma/client';
 
 export class CreateProductDto {
+  @ApiProperty({
+    description: 'Product name',
+    example: 'Indomie Chicken Noodles 70g',
+    maxLength: 255,
+  })
+  @IsNotEmpty()
+  @IsString()
+  @MaxLength(255)
+  name: string;
+
   @ApiProperty({
     description: 'Product description',
     example:
@@ -29,6 +42,17 @@ export class CreateProductDto {
   @IsOptional()
   @IsString()
   barcode?: string;
+
+  @ApiPropertyOptional({
+    description: 'Product status',
+    example: 'ACTIVE',
+    enum: ProductStatus,
+    enumName: 'ProductStatus',
+    default: 'ACTIVE',
+  })
+  @IsOptional()
+  @IsEnum(ProductStatus)
+  status?: ProductStatus;
 
   @ApiProperty({
     description: 'Brand ID that this product belongs to',
@@ -52,7 +76,7 @@ export class CreateProductDto {
 
   @ApiProperty({
     description: 'Variant ID that this product belongs to',
-    example: 'cmj123456789',
+    example: '',
   })
   @IsNotEmpty()
   @Matches(/^c[a-z0-9]{24}$/, {
@@ -62,7 +86,7 @@ export class CreateProductDto {
 
   @ApiProperty({
     description: 'Pack size ID',
-    example: 'cuid_example_pack_size_id',
+    example: '',
   })
   @IsNotEmpty()
   @IsString()
@@ -70,7 +94,7 @@ export class CreateProductDto {
 
   @ApiProperty({
     description: 'Pack type ID',
-    example: 'cuid_example_pack_type_id',
+    example: '',
   })
   @IsNotEmpty()
   @IsString()
@@ -107,24 +131,33 @@ export class CreateProductDto {
   )
   discount?: Decimal;
 
-  @ApiPropertyOptional({
-    description: 'Primary thumbnail image URL',
-    example: 'https://example.com/indomie-chicken-thumb.jpg',
+  @ApiProperty({
+    description: 'Available stock quantity',
+    example: 100,
+    minimum: 0,
+    type: 'string',
   })
-  @IsOptional()
-  @IsUrl()
-  thumbnail?: string;
+  @Transform(({ value }) => parseInt(value, 10))
+  @IsInt()
+  @Min(0)
+  quantity: number;
 
   @ApiPropertyOptional({
-    description: 'Array of product image URLs (first one becomes primary)',
-    example: [
-      'https://example.com/indomie-chicken.jpg',
-      'https://example.com/indomie-chicken-back.jpg',
-    ],
-    type: [String],
+    description: 'Primary thumbnail image file',
+    type: 'string',
+    format: 'binary',
   })
   @IsOptional()
-  @IsArray()
-  @IsUrl({}, { each: true })
-  images?: string[];
+  thumbnail?: Express.Multer.File;
+
+  @ApiPropertyOptional({
+    description: 'Array of product image files',
+    type: 'array',
+    items: {
+      type: 'string',
+      format: 'binary',
+    },
+  })
+  @IsOptional()
+  images?: Express.Multer.File[];
 }

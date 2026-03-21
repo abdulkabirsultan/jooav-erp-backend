@@ -6,10 +6,11 @@ import {
   IsEnum,
   MinLength,
   MaxLength,
-  IsPhoneNumber,
-  IsDateString,
   IsBoolean,
+  IsArray,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { UserRole, UserStatus } from '@prisma/client';
 
 export class CreateUserDto {
@@ -61,7 +62,7 @@ export class CreateUserDto {
   @ApiProperty({
     description: 'User role',
     enum: UserRole,
-    example: UserRole.SME_USER,
+    example: UserRole.WHOLESALER,
   })
   @IsEnum(UserRole)
   role: UserRole;
@@ -144,7 +145,7 @@ export class UpdateUserRoleDto {
   @ApiProperty({
     description: 'User role',
     enum: UserRole,
-    example: UserRole.SME_USER,
+    example: UserRole.WHOLESALER,
   })
   @IsEnum(UserRole)
   role: UserRole;
@@ -232,4 +233,64 @@ export class UpdateAdminPermissionsDto {
   })
   @IsOptional()
   assignedRegions?: string[];
+}
+
+export class WholesalerUserAddressDto {
+  @ApiProperty({
+    description: 'Address line',
+    example: 'No 1 Admiralty Way',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  address?: string;
+
+  @ApiProperty({
+    description: 'State',
+    example: 'Lagos',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  state?: string;
+
+  @ApiProperty({
+    description: 'City',
+    example: 'Lekki',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  city?: string;
+
+  @ApiProperty({
+    description: 'Phone for this address',
+    example: '+2348012345678',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @ApiProperty({
+    description: 'Label/Contact name for this address',
+    example: 'Main Store',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  name?: string;
+}
+
+export class AddWholesalerUserAddressDto extends WholesalerUserAddressDto {}
+
+export class WholesalerUserAddressListDto {
+  @ApiProperty({
+    description: 'List of wholesaler user addresses',
+    type: [WholesalerUserAddressDto],
+  })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => WholesalerUserAddressDto)
+  userAddress: WholesalerUserAddressDto[];
 }

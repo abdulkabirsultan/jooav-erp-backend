@@ -5,6 +5,7 @@ export interface CacheOptions {
   ttl?: number; // Time To Live in seconds
   includeParams?: boolean; // Include query parameters in cache key
   includeUserId?: boolean; // Include user ID in cache key (for user-specific caches)
+  tags?: string[]; // Cache tags for smart invalidation
 }
 
 export const CACHE_OPTIONS_KEY = 'cache:options';

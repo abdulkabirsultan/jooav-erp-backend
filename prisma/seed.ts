@@ -83,8 +83,8 @@ async function main() {
     update: {},
     create: {
       email: 'subadmin@jooav.com',
-      firstName: 'Procurement',
-      lastName: 'Officer',
+      firstName: 'John',
+      lastName: 'Smith',
       password: await hashPassword('password123'), // Argon2 hashed
       role: UserRole.PROCUREMENT_OFFICER,
       status: UserStatus.ACTIVE,
@@ -96,25 +96,27 @@ async function main() {
       },
       procurementOfficerProfile: {
         create: {
-          employeeId: 'SUB001',
-          // regionId: undefined, // Optional - can be assigned later for scalability
           specializations: ['Electronics', 'Industrial Equipment'],
-          maxOrderValue: 50000.0,
+          maxOrderValue: 100000.0,
+          availabilityStatus: 'AVAILABLE', // Available PO
+          maxActiveOrders: 10,
         },
       },
     },
   });
 
-  // Create SME user
-  const smeUser = await prisma.user.upsert({
-    where: { email: 'sme@jooav.com' },
+  // Create regions
+
+  // Create Wholesaler user
+  const wholesalerUser = await prisma.user.upsert({
+    where: { email: 'wholesaler@jooav.com' },
     update: {},
     create: {
-      email: 'sme@jooav.com',
-      firstName: 'Small Business',
+      email: 'wholesaler@jooav.com',
+      firstName: 'Wholesale Business',
       lastName: 'Owner',
       password: await hashPassword('password123'), // Argon2 hashed
-      role: UserRole.SME_USER,
+      role: UserRole.WHOLESALER,
       status: UserStatus.ACTIVE,
       emailVerified: true,
       profile: {
@@ -125,8 +127,120 @@ async function main() {
     },
   });
 
+  // Create additional procurement officers
+  const procurementOfficer2 = await prisma.user.upsert({
+    where: { email: 'po2@jooav.com' },
+    update: {},
+    create: {
+      email: 'po2@jooav.com',
+      firstName: 'Sarah',
+      lastName: 'Johnson',
+      password: await hashPassword('password123'),
+      role: UserRole.PROCUREMENT_OFFICER,
+      status: UserStatus.ACTIVE,
+      emailVerified: true,
+      profile: {
+        create: {
+          country: 'Nigeria',
+        },
+      },
+      procurementOfficerProfile: {
+        create: {
+          specializations: ['Food & Beverages', 'Consumer Goods'],
+          maxOrderValue: 75000.0,
+          availabilityStatus: 'UNAVAILABLE', // This officer is unavailable
+          maxActiveOrders: 8,
+        },
+      },
+    },
+  });
+
+  const procurementOfficer3 = await prisma.user.upsert({
+    where: { email: 'po3@jooav.com' },
+    update: {},
+    create: {
+      email: 'po3@jooav.com',
+      firstName: 'Michael',
+      lastName: 'Chen',
+      password: await hashPassword('password123'),
+      role: UserRole.PROCUREMENT_OFFICER,
+      status: UserStatus.ACTIVE,
+      emailVerified: true,
+      profile: {
+        create: {
+          country: 'Nigeria',
+        },
+      },
+      procurementOfficerProfile: {
+        create: {
+          specializations: ['Medical Equipment', 'Pharmaceuticals'],
+          maxOrderValue: 100000.0,
+          availabilityStatus: 'AVAILABLE',
+          maxActiveOrders: 6,
+        },
+      },
+    },
+  });
+
+  // Create additional wholesaler users
+  const wholesaler2 = await prisma.user.upsert({
+    where: { email: 'wholesaler2@jooav.com' },
+    update: {},
+    create: {
+      email: 'wholesaler2@jooav.com',
+      firstName: 'Jane',
+      lastName: 'Smith',
+      password: await hashPassword('password123'),
+      role: UserRole.WHOLESALER,
+      status: UserStatus.ACTIVE,
+      emailVerified: true,
+      profile: {
+        create: {
+          country: 'Nigeria',
+        },
+      },
+    },
+  });
+
+  const wholesaler3 = await prisma.user.upsert({
+    where: { email: 'wholesaler3@jooav.com' },
+    update: {},
+    create: {
+      email: 'wholesaler3@jooav.com',
+      firstName: 'David',
+      lastName: 'Brown',
+      password: await hashPassword('password123'),
+      role: UserRole.WHOLESALER,
+      status: UserStatus.ACTIVE,
+      emailVerified: true,
+      profile: {
+        create: {
+          country: 'Nigeria',
+        },
+      },
+    },
+  });
+
+  // Update existing PO to have proper availability status
+  await prisma.procurementOfficerProfile.update({
+    where: { userId: subAdmin.id },
+    data: {
+      availabilityStatus: 'AVAILABLE',
+      maxActiveOrders: 5,
+    },
+  });
+
   // Collect users for easy reference
-  const users = [superAdmin, admin, subAdmin, smeUser];
+  const users = [
+    superAdmin,
+    admin,
+    subAdmin,
+    procurementOfficer2,
+    procurementOfficer3,
+    wholesalerUser,
+    wholesaler2,
+    wholesaler3,
+  ];
 
   // Create sample manufacturers
   const manufacturers = await Promise.all([
@@ -455,8 +569,12 @@ async function main() {
         packTypeId: packTypes[0].id, // Single Pack
         price: 120.0,
         discount: 5.0,
-        thumbnail: 'indomie-chicken-70g-single-thumb.jpg',
-        images: ['indomie-chicken-70g-single.jpg'],
+        thumbnail:
+          'https://images.unsplash.com/photo-1623341214825-9f4f963727da?w=300&h=300&fit=crop',
+        images: [
+          'https://images.unsplash.com/photo-1623341214825-9f4f963727da?w=800&h=600&fit=crop',
+        ],
+        quantity: 500,
         createdBy: users[0].id,
         updatedBy: users[0].id,
       },
@@ -477,8 +595,12 @@ async function main() {
         packTypeId: packTypes[1].id, // Twin Pack
         price: 220.0,
         discount: 8.0,
-        thumbnail: 'indomie-chicken-120g-twin-thumb.jpg',
-        images: ['indomie-chicken-120g-twin.jpg'],
+        thumbnail:
+          'https://images.unsplash.com/photo-1585032226651-759b368d7246?w=300&h=300&fit=crop',
+        images: [
+          'https://images.unsplash.com/photo-1585032226651-759b368d7246?w=800&h=600&fit=crop',
+        ],
+        quantity: 300,
         createdBy: users[0].id,
         updatedBy: users[0].id,
       },
@@ -499,8 +621,12 @@ async function main() {
         packTypeId: packTypes[2].id, // Family Pack
         price: 350.0,
         discount: 12.0,
-        thumbnail: 'indomie-chicken-200g-family-thumb.jpg',
-        images: ['indomie-chicken-200g-family.jpg'],
+        thumbnail:
+          'https://images.unsplash.com/photo-1612852098516-55d01c75769a?w=300&h=300&fit=crop',
+        images: [
+          'https://images.unsplash.com/photo-1612852098516-55d01c75769a?w=800&h=600&fit=crop',
+        ],
+        quantity: 200,
         createdBy: users[0].id,
         updatedBy: users[0].id,
       },
@@ -522,8 +648,12 @@ async function main() {
         packTypeId: packTypes[3].id, // Glass Bottle
         price: 180.0,
         discount: 5.0,
-        thumbnail: 'coca-cola-350ml-glass-thumb.jpg',
-        images: ['coca-cola-350ml-glass.jpg'],
+        thumbnail:
+          'https://images.unsplash.com/photo-1561758033-d89a9ad46330?w=300&h=300&fit=crop',
+        images: [
+          'https://images.unsplash.com/photo-1561758033-d89a9ad46330?w=800&h=600&fit=crop',
+        ],
+        quantity: 250,
         createdBy: users[0].id,
         updatedBy: users[0].id,
       },
@@ -543,8 +673,12 @@ async function main() {
         packTypeId: packTypes[4].id, // PET Bottle
         price: 200.0,
         discount: 10.0,
-        thumbnail: 'coca-cola-500ml-pet-thumb.jpg',
-        images: ['coca-cola-500ml-pet.jpg'],
+        thumbnail:
+          'https://images.unsplash.com/photo-1629203851122-3726ecdf080e?w=300&h=300&fit=crop',
+        images: [
+          'https://images.unsplash.com/photo-1629203851122-3726ecdf080e?w=800&h=600&fit=crop',
+        ],
+        quantity: 300,
         createdBy: users[0].id,
         updatedBy: users[0].id,
       },
@@ -564,8 +698,12 @@ async function main() {
         packTypeId: packTypes[4].id, // PET Bottle
         price: 450.0,
         discount: 15.0,
-        thumbnail: 'coca-cola-1-5l-pet-thumb.jpg',
-        images: ['coca-cola-1-5l-pet.jpg'],
+        thumbnail:
+          'https://images.unsplash.com/photo-1622543925917-763c34d1a86e?w=300&h=300&fit=crop',
+        images: [
+          'https://images.unsplash.com/photo-1622543925917-763c34d1a86e?w=800&h=600&fit=crop',
+        ],
+        quantity: 120,
         createdBy: users[0].id,
         updatedBy: users[0].id,
       },
@@ -587,8 +725,12 @@ async function main() {
         packTypeId: packTypes[6].id, // Tin
         price: 1500.0,
         discount: 10.0,
-        thumbnail: 'peak-milk-400g-tin-thumb.jpg',
-        images: ['peak-milk-400g-tin.jpg'],
+        thumbnail:
+          'https://images.unsplash.com/photo-1563636619-e9143da7973b?w=300&h=300&fit=crop',
+        images: [
+          'https://images.unsplash.com/photo-1563636619-e9143da7973b?w=800&h=600&fit=crop',
+        ],
+        quantity: 180,
         createdBy: users[0].id,
         updatedBy: users[0].id,
       },
@@ -609,8 +751,12 @@ async function main() {
         packTypeId: packTypes[7].id, // Pouch
         price: 3200.0,
         discount: 12.0,
-        thumbnail: 'peak-milk-900g-pouch-thumb.jpg',
-        images: ['peak-milk-900g-pouch.jpg'],
+        thumbnail:
+          'https://images.unsplash.com/photo-1550583724-b2692b85b150?w=300&h=300&fit=crop',
+        images: [
+          'https://images.unsplash.com/photo-1550583724-b2692b85b150?w=800&h=600&fit=crop',
+        ],
+        quantity: 100,
         createdBy: users[0].id,
         updatedBy: users[0].id,
       },
@@ -630,13 +776,36 @@ async function main() {
         packTypeId: packTypes[8].id, // Carton
         price: 6000.0,
         discount: 20.0,
-        thumbnail: 'peak-milk-1-8kg-carton-thumb.jpg',
-        images: ['peak-milk-1-8kg-carton.jpg'],
+        thumbnail:
+          'https://images.unsplash.com/photo-1559181567-c3190ca9959b?w=300&h=300&fit=crop',
+        images: [
+          'https://images.unsplash.com/photo-1559181567-c3190ca9959b?w=800&h=600&fit=crop',
+        ],
+        quantity: 60,
         createdBy: users[0].id,
         updatedBy: users[0].id,
       },
     }),
   ]);
+
+  // Create wholesaler profiles
+  const wholesalerProfile1 = await prisma.wholesaler.create({
+    data: {
+      userId: wholesalerUser.id,
+    },
+  });
+
+  const wholesalerProfile2 = await prisma.wholesaler.create({
+    data: {
+      userId: wholesaler2.id,
+    },
+  });
+
+  const wholesalerProfile3 = await prisma.wholesaler.create({
+    data: {
+      userId: wholesaler3.id,
+    },
+  });
 
   // Create system configurations
   await prisma.systemConfig.createMany({
@@ -667,7 +836,7 @@ async function main() {
   console.log('✅ Database seeding completed successfully!');
   console.log('📊 Seeded data:');
   console.log(
-    `   - ${4} Users (1 Super Admin, 1 Admin, 1 Sub-Admin, 1 SME User)`,
+    `   - ${4} Users (1 Super Admin, 1 Admin, 1 Sub-Admin, 1 Wholesaler User)`,
   );
   console.log(`   - ${manufacturers.length} Manufacturers`);
   console.log(`   - ${brands.length} Brands`);

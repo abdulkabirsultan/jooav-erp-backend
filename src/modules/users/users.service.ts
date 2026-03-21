@@ -4,13 +4,14 @@ import {
   ConflictException,
   BadRequestException,
 } from '@nestjs/common';
-import { UserRole, UserStatus, User } from '@prisma/client';
+import { UserRole, UserStatus, User, OrderStatus } from '@prisma/client';
 import * as argon2 from 'argon2';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { generatePasswordResetToken } from '../../common/utils/token.util';
 import { AuditService } from '../audit/audit.service';
-import { EmailService } from '../email/email.service';
+import { EmailService } from '../email/services/email.service';
+import { CacheService } from '../cache/cache.service';
 import { ConfigService } from '@nestjs/config';
 import { PaginationDto, PaginatedResponse } from '../../common/dto';
 import {
@@ -20,8 +21,12 @@ import {
   UpdateUserRoleDto,
   UpdateUserProfileDto,
   UpdateAdminPermissionsDto,
+  AddWholesalerUserAddressDto,
+  WholesalerUserAddressListDto,
 } from './dto/user.dto';
+import { BulkDeleteUserDto } from './dto/bulk-delete-user.dto';
 import { UserProfileDto } from '../auth/dto/auth-response.dto';
+import { BulkDeleteResultDto } from '../../common/dto';
 
 @Injectable()
 export class UsersService {
@@ -37,6 +42,7 @@ export class UsersService {
     private auditService: AuditService,
     private emailService: EmailService,
     private configService: ConfigService,
+    private cacheService: CacheService,
   ) {}
 
   // ================================
@@ -125,6 +131,7 @@ export class UsersService {
           createdAt: true,
           updatedAt: true,
           profile: true,
+          wholesalerProfile: true,
         },
         orderBy: { createdAt: 'desc' },
         skip: ((page || 1) - 1) * (limit || 10),
@@ -163,6 +170,7 @@ export class UsersService {
         createdAt: true,
         updatedAt: true,
         profile: true,
+        wholesalerProfile: true,
       },
     });
 
@@ -229,7 +237,6 @@ export class UsersService {
       temporaryPassword,
       this.argon2Options,
     );
-    console.log(temporaryPassword);
 
     // Create user
     const userData: any = {
@@ -266,13 +273,58 @@ export class UsersService {
       };
     }
 
-    const user = await this.prisma.user.create({
+    // Auto-create procurement officer profile
+    if (createUserDto.role === UserRole.PROCUREMENT_OFFICER) {
+      userData.procurementOfficerProfile = {
+        create: {
+          availabilityStatus: 'AVAILABLE',
+          maxActiveOrders: 5, // Default max orders
+          specializations: [], // Can be updated later
+          ordersProcessed: 0,
+        },
+      };
+    }
+
+    // Auto-create wholesaler profile
+    if (createUserDto.role === UserRole.WHOLESALER) {
+      userData.wholesalerProfile = {
+        create: {
+          totalOrders: 0,
+          totalSpent: 0,
+        },
+      };
+    }
+
+    let user = await this.prisma.user.create({
       data: userData,
-      include: { profile: true, adminProfile: true },
+      include: {
+        profile: true,
+        adminProfile: true,
+        procurementOfficerProfile: true,
+        wholesalerProfile: true,
+      },
     });
 
+    if (createUserDto.role === UserRole.WHOLESALER) {
+      await this.ensureWholesalerDraftCart(user.id);
+
+      const refreshedUser = await this.prisma.user.findUnique({
+        where: { id: user.id },
+        include: {
+          profile: true,
+          adminProfile: true,
+          procurementOfficerProfile: true,
+          wholesalerProfile: true,
+        },
+      });
+
+      if (refreshedUser) {
+        user = refreshedUser;
+      }
+    }
+
     // Generate password reset token
-    const { token: resetToken, expiresAt } = generatePasswordResetToken(24);
+    const { token: resetToken, expiresAt } = generatePasswordResetToken(72); // 72 hours validity for initial password setup
 
     // Store password reset token
     await this.prisma.passwordReset.create({
@@ -283,14 +335,19 @@ export class UsersService {
       },
     });
 
+    // Generate reset URL
+    const resetUrl = `${this.configService.get('email.baseUrl')}/reset-password?token=${resetToken}`;
+
     // Send password setup email
     try {
-      const resetUrl = `${this.configService.get('email.baseUrl')}/reset-password?token=${resetToken}`;
-
-      await this.emailService.sendTemplatedEmail(user.email, 'passwordSetup', {
-        firstName: user.firstName || 'User',
-        resetUrl,
-        platformName: 'JOOAV ERP',
+      await this.emailService.sendTemplateEmail({
+        to: user.email,
+        templateAlias: 'password-reset',
+        variables: {
+          firstName: user.firstName || 'User',
+          resetUrl,
+          platformName: 'JOOAV ERP',
+        },
       });
     } catch (error) {
       // Log email error but don't fail user creation
@@ -311,7 +368,11 @@ export class UsersService {
     );
 
     const { password, ...userWithoutPassword } = user;
-    return userWithoutPassword as UserProfileDto;
+    return {
+      ...userWithoutPassword,
+      resetUrl,
+      resetTokenExpiry: expiresAt,
+    } as UserProfileDto & { resetUrl: string; resetTokenExpiry: Date };
   }
 
   /**
@@ -604,6 +665,87 @@ export class UsersService {
     return updatedUser as UserProfileDto;
   }
 
+  async addMyUserAddress(
+    userId: string,
+    addAddressDto: AddWholesalerUserAddressDto,
+  ): Promise<WholesalerUserAddressListDto> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { wholesalerProfile: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.role !== UserRole.WHOLESALER) {
+      throw new BadRequestException(
+        'Only wholesalers can manage user addresses',
+      );
+    }
+
+    if (!user.wholesalerProfile) {
+      throw new NotFoundException('Wholesaler profile not found');
+    }
+
+    const existingAddresses = Array.isArray(user.wholesalerProfile.userAddress)
+      ? (user.wholesalerProfile.userAddress as any[])
+      : [];
+
+    const sanitizedAddress = {
+      ...(addAddressDto.address ? { address: addAddressDto.address } : {}),
+      ...(addAddressDto.state ? { state: addAddressDto.state } : {}),
+      ...(addAddressDto.city ? { city: addAddressDto.city } : {}),
+      ...(addAddressDto.phone ? { phone: addAddressDto.phone } : {}),
+      ...(addAddressDto.name ? { name: addAddressDto.name } : {}),
+    };
+
+    const updatedWholesalerProfile = await this.prisma.wholesaler.update({
+      where: { userId },
+      data: {
+        userAddress: [...existingAddresses, sanitizedAddress],
+      },
+      select: {
+        userAddress: true,
+      },
+    });
+
+    return {
+      userAddress: Array.isArray(updatedWholesalerProfile.userAddress)
+        ? (updatedWholesalerProfile.userAddress as any[])
+        : [],
+    };
+  }
+
+  async getMyUserAddresses(
+    userId: string,
+  ): Promise<WholesalerUserAddressListDto> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { wholesalerProfile: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.role !== UserRole.WHOLESALER) {
+      throw new BadRequestException(
+        'Only wholesalers can access user addresses',
+      );
+    }
+
+    if (!user.wholesalerProfile) {
+      throw new NotFoundException('Wholesaler profile not found');
+    }
+
+    return {
+      userAddress: Array.isArray(user.wholesalerProfile.userAddress)
+        ? (user.wholesalerProfile.userAddress as any[])
+        : [],
+    };
+  }
+
   /**
    * Update admin permissions (Super Admin only)
    */
@@ -778,35 +920,132 @@ export class UsersService {
     );
   }
 
+  /**
+   * Bulk soft delete users
+   */
+  async bulkDelete(
+    userIds: string[],
+    deletedBy: string,
+    request?: any,
+  ): Promise<{
+    deletedCount: number;
+    deletedIds: string[];
+    failedIds: Array<{ id: string; error: string }>;
+  }> {
+    const deletedIds: string[] = [];
+    const failedIds: Array<{ id: string; error: string }> = [];
+
+    // Get current user to check permissions
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: deletedBy },
+      include: { adminProfile: true },
+    });
+
+    if (!currentUser) {
+      throw new NotFoundException('Current user not found');
+    }
+
+    // Process each user deletion individually to handle errors gracefully
+    for (const userId of userIds) {
+      try {
+        // Check if user exists and is not already deleted
+        const user = await this.prisma.user.findFirst({
+          where: {
+            id: userId,
+            status: { not: UserStatus.DEACTIVATED },
+          },
+        });
+
+        if (!user) {
+          failedIds.push({
+            id: userId,
+            error: 'User not found or already deleted',
+          });
+          continue;
+        }
+
+        // Check if user is trying to delete themselves
+        if (user.id === deletedBy) {
+          failedIds.push({
+            id: userId,
+            error: 'Cannot delete yourself',
+          });
+          continue;
+        }
+
+        // Check permissions for deleting admin accounts
+        if (
+          (user.role === UserRole.ADMIN ||
+            user.role === UserRole.SUPER_ADMIN) &&
+          !currentUser.adminProfile?.canSuspendAdmins
+        ) {
+          failedIds.push({
+            id: userId,
+            error: 'Insufficient permissions to delete admin accounts',
+          });
+          continue;
+        }
+
+        // Prevent deletion of super admin accounts by anyone
+        if (user.role === UserRole.SUPER_ADMIN) {
+          failedIds.push({
+            id: userId,
+            error: 'Super Admin accounts cannot be deleted',
+          });
+          continue;
+        }
+
+        // Perform soft delete
+        await this.prisma.user.update({
+          where: { id: userId },
+          data: {
+            status: UserStatus.DEACTIVATED,
+            updatedAt: new Date(),
+          },
+        });
+
+        // Invalidate all user sessions
+        await this.prisma.userSession.deleteMany({
+          where: { userId },
+        });
+
+        // Log user deletion for each user
+        await this.auditService.logUserAction(
+          deletedBy,
+          'BULK_DELETE_USER',
+          'USER',
+          userId,
+          {
+            email: user.email,
+            bulkOperation: true,
+          },
+          request,
+        );
+
+        deletedIds.push(userId);
+      } catch (error) {
+        failedIds.push({
+          id: userId,
+          error:
+            error instanceof Error ? error.message : 'Unknown error occurred',
+        });
+      }
+    }
+
+    return {
+      deletedCount: deletedIds.length,
+      deletedIds,
+      failedIds,
+    };
+  }
+
   // ================================
   // UTILITY METHODS
   // ================================
 
   /**
-   * Get user statistics
+   * Get user activity logs with pagination
    */
-  async getUserStats() {
-    const [totalUsers, activeUsers, deactivatedUsers, adminUsers] =
-      await Promise.all([
-        this.prisma.user.count(),
-        this.prisma.user.count({ where: { status: UserStatus.ACTIVE } }),
-        this.prisma.user.count({ where: { status: UserStatus.DEACTIVATED } }),
-        this.prisma.user.count({
-          where: {
-            role: { in: [UserRole.SUPER_ADMIN, UserRole.ADMIN] },
-          },
-        }),
-      ]);
-
-    return {
-      totalUsers,
-      activeUsers,
-      deactivatedUsers,
-      adminUsers,
-      usersByRole: await this.getUsersByRole(),
-      recentRegistrations: await this.getRecentRegistrations(),
-    };
-  }
 
   /**
    * Get users grouped by role
@@ -861,6 +1100,86 @@ export class UsersService {
     return result;
   }
 
+  private async ensureWholesalerDraftCart(
+    wholesalerUserId: string,
+  ): Promise<string | null> {
+    const wholesalerUser = await this.prisma.user.findUnique({
+      where: { id: wholesalerUserId },
+      include: { wholesalerProfile: true },
+    });
+
+    if (
+      !wholesalerUser ||
+      wholesalerUser.role !== UserRole.WHOLESALER ||
+      !wholesalerUser.wholesalerProfile
+    ) {
+      return null;
+    }
+
+    const existingDraftCart = wholesalerUser.wholesalerProfile.draftCart;
+    if (existingDraftCart) {
+      const existingDraftOrder = await this.prisma.order.findFirst({
+        where: {
+          orderNumber: existingDraftCart,
+          wholesalerId: wholesalerUserId,
+          status: OrderStatus.DRAFT,
+        },
+      });
+
+      if (existingDraftOrder) {
+        return existingDraftCart;
+      }
+    }
+
+    const reusableDraftOrder = await this.prisma.order.findFirst({
+      where: {
+        wholesalerId: wholesalerUserId,
+        status: OrderStatus.DRAFT,
+        items: { none: {} },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (reusableDraftOrder) {
+      await this.prisma.wholesaler.update({
+        where: { userId: wholesalerUserId },
+        data: { draftCart: reusableDraftOrder.orderNumber },
+      });
+      return reusableDraftOrder.orderNumber;
+    }
+
+    const draftOrderNumber = await this.generateOrderNumber('DRAFT-');
+
+    await this.prisma.order.create({
+      data: {
+        orderNumber: draftOrderNumber,
+        wholesalerId: wholesalerUserId,
+        createdById: wholesalerUserId,
+        status: OrderStatus.DRAFT,
+        subtotal: 0,
+        totalAmount: 0,
+        items: {
+          create: [], // Start with empty items, can be added to later
+        },
+      },
+    });
+
+    await this.prisma.wholesaler.update({
+      where: { userId: wholesalerUserId },
+      data: { draftCart: draftOrderNumber },
+    });
+
+    return draftOrderNumber;
+  }
+
+  private async generateOrderNumber(prefix: string = 'JOO-'): Promise<string> {
+    const timestamp = Date.now().toString().slice(-7);
+    const random = Math.floor(Math.random() * 1000)
+      .toString()
+      .padStart(3, '0');
+    return `${prefix}${timestamp}${random}`;
+  }
+
   /**
    * Get user activity log (Admin only)
    */
@@ -898,6 +1217,233 @@ export class UsersService {
         hasNextPage: page * limit < total,
         hasPreviousPage: page > 1,
       },
+    };
+  }
+
+  /**
+   * Regenerate password reset token for a user (Admin only)
+   */
+  async regenerateResetToken(
+    userId: string,
+    requestedBy: string,
+    request?: any,
+  ): Promise<{ resetUrl: string; resetTokenExpiry: Date }> {
+    // Verify user exists
+    const user = await this.findOne(userId);
+
+    // Get current user to check permissions
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: requestedBy },
+      include: { adminProfile: true },
+    });
+
+    if (!currentUser) {
+      throw new NotFoundException('Current user not found');
+    }
+
+    // Check permissions for regenerating reset tokens
+    if (
+      (user.role === UserRole.ADMIN || user.role === UserRole.SUPER_ADMIN) &&
+      !currentUser.adminProfile?.canSuspendAdmins
+    ) {
+      throw new BadRequestException(
+        'Insufficient permissions to regenerate reset token for admin accounts',
+      );
+    }
+
+    // Delete any existing reset tokens for this user
+    await this.prisma.passwordReset.deleteMany({
+      where: { email: user.email },
+    });
+
+    // Generate new password reset token
+    const { token: resetToken, expiresAt } = generatePasswordResetToken(24);
+
+    // Store password reset token
+    await this.prisma.passwordReset.create({
+      data: {
+        email: user.email,
+        token: resetToken,
+        expiresAt,
+      },
+    });
+
+    // Generate reset URL
+    const resetUrl = `${this.configService.get('email.baseUrl')}/reset-password?token=${resetToken}`;
+
+    // Log token regeneration
+    await this.auditService.logUserAction(
+      requestedBy,
+      'REGENERATE_RESET_TOKEN',
+      'USER',
+      userId,
+      {
+        email: user.email,
+        tokenExpiry: expiresAt,
+      },
+      request,
+    );
+
+    return {
+      resetUrl,
+      resetTokenExpiry: expiresAt,
+    };
+  }
+
+  /**
+   * Get user statistics
+   */
+  async getUserStats(): Promise<{
+    totalUsers: number;
+    archived: number;
+  }> {
+    const [totalUsers, archived] = await Promise.all([
+      this.prisma.user.count(),
+      this.prisma.user.count({
+        where: {
+          status: UserStatus.SUSPENDED, // Assuming SUSPENDED is "archived"
+        },
+      }),
+    ]);
+
+    return {
+      totalUsers,
+      archived,
+    };
+  }
+
+  /**
+   * Check for user dependencies before deletion
+   */
+  private async checkUserDependencies(userId: string): Promise<string[]> {
+    const dependencies: string[] = [];
+
+    try {
+      // Check for created orders
+      const ordersCount = await this.prisma.order.count({
+        where: { createdById: userId },
+      });
+      if (ordersCount > 0) {
+        dependencies.push(`${ordersCount} orders`);
+      }
+
+      // Check for other relations that might prevent deletion
+      // Add more dependency checks as needed based on your business logic
+    } catch (error) {
+      // If we can't check dependencies, assume there are some to be safe
+      dependencies.push('unknown dependencies');
+    }
+
+    return dependencies;
+  }
+
+  async removeMany(
+    userIds: string[],
+    currentUserId: string,
+  ): Promise<BulkDeleteResultDto> {
+    const results: Array<{ id: string; success: boolean; error?: string }> = [];
+
+    // Process each user deletion individually to handle errors gracefully
+    for (const userId of userIds) {
+      try {
+        // Check if user exists
+        const user = await this.prisma.user.findUnique({
+          where: { id: userId },
+        });
+
+        if (!user) {
+          results.push({
+            id: userId,
+            success: false,
+            error: 'User not found',
+          });
+          continue;
+        }
+
+        // Prevent user from deleting themselves
+        if (userId === currentUserId) {
+          results.push({
+            id: userId,
+            success: false,
+            error: 'Cannot delete your own account',
+          });
+          continue;
+        }
+
+        // Prevent deletion of SUPER_ADMIN users by non-SUPER_ADMINs
+        const currentUser = await this.prisma.user.findUnique({
+          where: { id: currentUserId },
+          select: { role: true },
+        });
+
+        if (
+          user.role === UserRole.SUPER_ADMIN &&
+          currentUser?.role !== UserRole.SUPER_ADMIN
+        ) {
+          results.push({
+            id: userId,
+            success: false,
+            error: 'Only SUPER_ADMIN can delete SUPER_ADMIN users',
+          });
+          continue;
+        }
+
+        // Check if this is the last SUPER_ADMIN
+        if (user.role === UserRole.SUPER_ADMIN) {
+          const superAdminCount = await this.prisma.user.count({
+            where: {
+              role: UserRole.SUPER_ADMIN,
+            },
+          });
+
+          if (superAdminCount <= 1) {
+            results.push({
+              id: userId,
+              success: false,
+              error: 'Cannot delete the last SUPER_ADMIN user',
+            });
+            continue;
+          }
+        }
+
+        // Check for dependencies (orders, created content, etc.)
+        const dependencies = await this.checkUserDependencies(userId);
+        if (dependencies.length > 0) {
+          results.push({
+            id: userId,
+            success: false,
+            error: `Cannot delete user with existing dependencies: ${dependencies.join(', ')}`,
+          });
+          continue;
+        }
+
+        // Perform hard delete (since User model doesn't have soft delete fields)
+        await this.prisma.user.delete({
+          where: { id: userId },
+        });
+
+        results.push({
+          id: userId,
+          success: true,
+        });
+
+        // Invalidate cache
+        await this.cacheService.invalidateByTags(['users']);
+      } catch (error) {
+        results.push({
+          id: userId,
+          success: false,
+          error:
+            error instanceof Error ? error.message : 'Unknown error occurred',
+        });
+      }
+    }
+
+    return {
+      results,
+      totalRequested: userIds.length,
+      successful: results.filter((r) => r.success).length,
+      failed: results.filter((r) => !r.success).length,
     };
   }
 }

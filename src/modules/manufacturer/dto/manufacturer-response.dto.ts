@@ -155,10 +155,10 @@ export class ManufacturerResponseDto {
   productsCount: number;
 
   @ApiProperty({
-    description: 'Number of orders for this manufacturer',
-    example: 150,
+    description: 'Number of brands for this manufacturer',
+    example: 5,
   })
-  ordersCount: number;
+  brandsCount: number;
 
   @ApiPropertyOptional({
     description: 'Brands under this manufacturer',

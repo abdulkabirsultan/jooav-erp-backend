@@ -34,10 +34,11 @@ export class AdminJwtStrategy extends PassportStrategy(Strategy, 'admin-jwt') {
       throw new UnauthorizedException('Invalid admin token');
     }
 
-    // Ensure the user has admin privileges (SUPER_ADMIN or ADMIN)
+    // Ensure the user has admin privileges (SUPER_ADMIN, ADMIN, or PROCUREMENT_OFFICER)
     if (
       payload.role !== UserRole.SUPER_ADMIN &&
-      payload.role !== UserRole.ADMIN
+      payload.role !== UserRole.ADMIN &&
+      payload.role !== UserRole.PROCUREMENT_OFFICER
     ) {
       throw new UnauthorizedException('Admin privileges required');
     }

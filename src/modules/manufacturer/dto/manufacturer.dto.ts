@@ -1,10 +1,13 @@
 import {
+  IsNotEmpty,
   IsString,
   IsOptional,
-  IsEnum,
-  IsNotEmpty,
   MaxLength,
+  IsEmail,
+  IsUrl,
+  Matches,
   IsBoolean,
+  IsEnum,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -172,4 +175,24 @@ export class ManufacturerQueryDto {
   })
   @IsBoolean()
   includeAuditInfo?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Sort by field',
+    enum: ['name', 'createdAt', 'updatedAt', 'status'],
+    example: 'createdAt',
+    default: 'createdAt',
+  })
+  @IsOptional()
+  @IsEnum(['name', 'createdAt', 'updatedAt', 'status'])
+  sortBy?: 'name' | 'createdAt' | 'updatedAt' | 'status' = 'createdAt';
+
+  @ApiPropertyOptional({
+    description: 'Sort order',
+    enum: ['asc', 'desc'],
+    example: 'desc',
+    default: 'desc',
+  })
+  @IsOptional()
+  @IsEnum(['asc', 'desc'])
+  sortOrder?: 'asc' | 'desc' = 'desc';
 }

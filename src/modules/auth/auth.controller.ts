@@ -48,7 +48,7 @@ import { UserRole } from '@prisma/client';
 import { SuccessResponse } from '../../common/dto/api-response.dto';
 import type { User } from '@prisma/client';
 
-@ApiTags('Authentication')
+@ApiTags('User Authentication')
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
@@ -221,62 +221,6 @@ export class AuthController {
   ): Promise<SuccessResponse<TokenValidationDto>> {
     const result = await this.authService.validateToken(token);
     return new SuccessResponse('Token validation completed', result);
-  }
-
-  // ================================
-  // ADMIN ONLY ENDPOINTS
-  // ================================
-
-  @Get('admin/users')
-  @UseGuards(UnifiedAuthGuard, RolesGuard)
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
-  @ApiBearerAuth('access-token')
-  @ApiOperation({ summary: 'Get all users (Admin only)' })
-  @ApiResponse({
-    status: 200,
-    description: 'Users retrieved successfully',
-  })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({
-    status: 403,
-    description: 'Forbidden - Admin access required',
-  })
-  async getAllUsers(@CurrentUser() currentUser: User) {
-    // Implementation would go in UserService
-    return {
-      message: 'Admin endpoint - list all users',
-      currentUser: currentUser.email,
-    };
-  }
-
-  @Patch('admin/users/:userId/status')
-  @UseGuards(UnifiedAuthGuard, RolesGuard)
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
-  @ApiBearerAuth('access-token')
-  @ApiOperation({ summary: 'Update user status (Admin only)' })
-  @ApiResponse({ status: 200, description: 'User status updated successfully' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({
-    status: 403,
-    description: 'Forbidden - Admin access required',
-  })
-  @AuditLog({
-    action: 'UPDATE_USER_STATUS',
-    resource: 'USER',
-    includeRequestBody: true,
-  })
-  async updateUserStatus(
-    @Param('userId') userId: string,
-    @Body('status') status: string,
-    @CurrentUser() currentUser: User,
-  ) {
-    // Implementation would go in UserService
-    return {
-      message: 'Admin endpoint - update user status',
-      targetUser: userId,
-      newStatus: status,
-      adminUser: currentUser.email,
-    };
   }
 
   @Post('forgot-password')

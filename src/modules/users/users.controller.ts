@@ -10,6 +10,7 @@ import {
   UseGuards,
   Request,
   ParseEnumPipe,
+  HttpStatus,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -19,6 +20,9 @@ import {
   ApiBody,
   ApiQuery,
   ApiParam,
+  ApiBadRequestResponse,
+  ApiUnauthorizedResponse,
+  ApiForbiddenResponse,
 } from '@nestjs/swagger';
 import { UserRole, UserStatus } from '@prisma/client';
 
@@ -38,8 +42,17 @@ import {
   UpdateUserRoleDto,
   UpdateUserProfileDto,
   UpdateAdminPermissionsDto,
+  AddWholesalerUserAddressDto,
+  WholesalerUserAddressListDto,
 } from './dto/user.dto';
+import {
+  CreateUserResponseDto,
+  RegenerateResetTokenResponseDto,
+} from './dto/user-response.dto';
+import { BulkDeleteUserDto } from './dto/bulk-delete-user.dto';
+import { BulkDeleteResultDto } from '../../common/dto';
 import { UserProfileDto } from '../auth/dto/auth-response.dto';
+import { UsersQueryDto } from './dto/users-query.dto';
 import { PaginationDto } from '../../common/dto';
 
 @ApiTags('Users')
@@ -60,11 +73,6 @@ export class UsersController {
   @ApiOperation({
     summary: 'Get all users with pagination and filters (Admin only)',
   })
-  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
-  @ApiQuery({ name: 'limit', required: false, type: Number, example: 10 })
-  @ApiQuery({ name: 'search', required: false, type: String })
-  @ApiQuery({ name: 'role', required: false, enum: UserRole })
-  @ApiQuery({ name: 'status', required: false, enum: UserStatus })
   @ApiResponse({
     status: 200,
     description: 'Users retrieved successfully',
@@ -76,34 +84,14 @@ export class UsersController {
     description: 'Forbidden - Admin access required',
   })
   async findAll(
-    @Query() paginationDto: PaginationDto,
-    @Query('role') role?: UserRole,
-    @Query('status') status?: UserStatus,
+    @Query() queryDto: UsersQueryDto,
     @CurrentUserId() currentUserId?: string,
   ): Promise<PaginatedResponse<UserProfileDto>> {
     return this.usersService.findAll(
-      paginationDto,
-      { role, status },
+      queryDto,
+      { role: queryDto.role, status: queryDto.status },
       currentUserId,
     );
-  }
-
-  @Get('stats')
-  @UseGuards(RolesGuard)
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
-  @ApiOperation({ summary: 'Get user statistics (Admin only)' })
-  @ApiResponse({
-    status: 200,
-    description: 'User statistics retrieved successfully',
-  })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({
-    status: 403,
-    description: 'Forbidden - Admin access required',
-  })
-  async getUserStats() {
-    const stats = await this.usersService.getUserStats();
-    return new SuccessResponse(ResponseMessages.statsRetrieved('User'), stats);
   }
 
   @Post()
@@ -113,8 +101,8 @@ export class UsersController {
   @ApiBody({ type: CreateUserDto })
   @ApiResponse({
     status: 201,
-    description: 'User created successfully',
-    type: UserProfileDto,
+    description: 'User created successfully with reset URL',
+    type: CreateUserResponseDto,
   })
   @ApiResponse({ status: 400, description: 'Invalid user data' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
@@ -132,8 +120,84 @@ export class UsersController {
     @Body() createUserDto: CreateUserDto,
     @CurrentUserId() currentUserId: string,
     @Request() req: any,
-  ): Promise<UserProfileDto> {
-    return this.usersService.create(createUserDto, currentUserId, req);
+  ): Promise<SuccessResponse<CreateUserResponseDto>> {
+    const user = await this.usersService.create(
+      createUserDto,
+      currentUserId,
+      req,
+    );
+    return new SuccessResponse(
+      ResponseMessages.created('User', user.email),
+      user as CreateUserResponseDto,
+    );
+  }
+
+  @Post(':id/regenerate-reset-token')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Regenerate password reset token for user (Admin only)',
+    description: 'Generate a new password reset token for the specified user',
+  })
+  @ApiParam({ name: 'id', description: 'User ID' })
+  @ApiResponse({
+    status: 200,
+    description: 'Reset token regenerated successfully',
+    type: RegenerateResetTokenResponseDto,
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Admin only' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  @AuditLog({
+    action: 'REGENERATE_RESET_TOKEN',
+    resource: 'USER',
+  })
+  async regenerateResetToken(
+    @Param('id') userId: string,
+    @CurrentUserId() currentUserId: string,
+    @Request() req: any,
+  ): Promise<SuccessResponse<RegenerateResetTokenResponseDto>> {
+    const result = await this.usersService.regenerateResetToken(
+      userId,
+      currentUserId,
+      req,
+    );
+    return new SuccessResponse(
+      'Password reset token regenerated successfully',
+      result,
+    );
+  }
+
+  @Get('stats')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Get user statistics',
+    description: 'Get comprehensive user statistics',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'User statistics retrieved successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean' },
+        message: { type: 'string' },
+        data: {
+          type: 'object',
+          properties: {
+            totalUsers: { type: 'number', example: 50 },
+            archived: { type: 'number', example: 3 },
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Admin only' })
+  async getUserStats(): Promise<SuccessResponse<any>> {
+    const stats = await this.usersService.getUserStats();
+    return new SuccessResponse('User statistics retrieved successfully', stats);
   }
 
   @Get(':id')
@@ -312,6 +376,52 @@ export class UsersController {
     return { message: 'User deleted successfully' };
   }
 
+  @Post('bulk/delete')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN) // Only Super Admin can bulk delete users
+  @ApiOperation({
+    summary: 'Delete multiple users',
+    description:
+      'Soft delete multiple users by their IDs. Returns success/failure status for each user.',
+  })
+  @ApiBody({
+    description: 'Array of user IDs to delete',
+    type: BulkDeleteUserDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Bulk delete operation completed',
+    type: BulkDeleteResultDto,
+  })
+  @ApiBadRequestResponse({ description: 'Invalid user IDs or empty array' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  @ApiForbiddenResponse({ description: 'Super Admin access required' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Super Admin access required',
+  })
+  @AuditLog({
+    action: 'BULK_DELETE_USER',
+    resource: 'USER',
+  })
+  async removeMany(
+    @Body() bulkDeleteDto: BulkDeleteUserDto,
+    @CurrentUserId() currentUserId: string,
+  ): Promise<SuccessResponse<BulkDeleteResultDto>> {
+    const result = await this.usersService.removeMany(
+      bulkDeleteDto.userIds,
+      currentUserId,
+    );
+
+    let message = `Bulk delete completed: ${result.successful} users deleted successfully`;
+    if (result.failed > 0) {
+      message += `, ${result.failed} failed`;
+    }
+
+    return new SuccessResponse(message, result);
+  }
+
   // ================================
   // PROFILE MANAGEMENT (SELF)
   // ================================
@@ -377,6 +487,55 @@ export class UsersController {
       updateProfileDto,
       userId,
       req,
+    );
+  }
+
+  @Post('me/user-address')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.WHOLESALER)
+  @ApiOperation({ summary: 'Add user address (Wholesaler only)' })
+  @ApiBody({ type: AddWholesalerUserAddressDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Wholesaler address added successfully',
+    type: WholesalerUserAddressListDto,
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Wholesaler only' })
+  @AuditLog({
+    action: 'ADD_WHOLESALER_USER_ADDRESS',
+    resource: 'WHOLESALER_PROFILE',
+    includeRequestBody: true,
+  })
+  async addMyUserAddress(
+    @CurrentUserId() userId: string,
+    @Body() addAddressDto: AddWholesalerUserAddressDto,
+  ): Promise<SuccessResponse<WholesalerUserAddressListDto>> {
+    const result = await this.usersService.addMyUserAddress(
+      userId,
+      addAddressDto,
+    );
+    return new SuccessResponse('Wholesaler address added successfully', result);
+  }
+
+  @Get('me/user-address')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.WHOLESALER)
+  @ApiOperation({ summary: 'Get all user addresses (Wholesaler only)' })
+  @ApiResponse({
+    status: 200,
+    description: 'Wholesaler addresses retrieved successfully',
+    type: WholesalerUserAddressListDto,
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Wholesaler only' })
+  async getMyUserAddresses(
+    @CurrentUserId() userId: string,
+  ): Promise<SuccessResponse<WholesalerUserAddressListDto>> {
+    const result = await this.usersService.getMyUserAddresses(userId);
+    return new SuccessResponse(
+      'Wholesaler addresses retrieved successfully',
+      result,
     );
   }
 

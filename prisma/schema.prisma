@@ -28,7 +28,7 @@ model User {
   lastName          String?
   phone             String?
   avatar            String?
-  role              UserRole   @default(SME_USER)
+  role              UserRole   @default(WHOLESALER)
   status            UserStatus @default(ACTIVE)
   emailVerified     Boolean    @default(false)
   lastLogin         DateTime?
@@ -43,11 +43,15 @@ model User {
   sessions      UserSession[]
   activities    UserActivity[]
   createdOrders Order[]        @relation("CreatedBy")
-  assignedTasks Task[]         @relation("AssignedTo")
+  assignedOrders Order[]       @relation("AssignedProcurementOfficer")
+  wholesalerOrders Order[]     @relation("WholesalerUser")
+  itemStatusUpdates OrderItem[] @relation("ItemStatusUpdatedBy")
+  outOfStockReports OutOfStockReport[] @relation("OutOfStockReportedBy")
+  resolvedOutOfStockReports OutOfStockReport[] @relation("OutOfStockResolvedBy")
 
   // JooavERP specific relations
   adminProfile              AdminProfile?
-  smeProfile                SMEUser?
+  wholesalerProfile         Wholesaler?
   procurementOfficerProfile ProcurementOfficerProfile?
   createdManufacturers      Manufacturer[]             @relation("CreatedManufacturers")
   updatedManufacturers Manufacturer[]     @relation("UpdatedManufacturers")
@@ -282,7 +286,7 @@ model Product {
   id              String        @id @default(cuid())
   
   // Basic Product Information
-  name            String        // Generated: Brand Variant PackSize (PackType)
+  name            String        @unique // User-provided product name (must be unique)
   description     String?
   sku             String        @unique // Auto-generated: Brand Variant PackSize (PackType)
   
@@ -298,9 +302,12 @@ model Product {
   price           Decimal?      @db.Decimal(10,2)
   discount        Decimal?      @db.Decimal(5,2) // Discount percentage (0-100)
   
+  // Inventory
+  quantity        Int           @default(0) // Available stock quantity
+  
   // Media
-  images          Json[]        // Array of image URLs (first one is primary)
-  thumbnail       String?       // Primary thumbnail image URL
+  images          String[]      @default([]) // Array of Cloudinary image URLs
+  thumbnail       String?       // Cloudinary thumbnail image URL
   
   // Status
   status          ProductStatus @default(QUEUE)
@@ -328,6 +335,7 @@ model Product {
   // Relations to other models
   orderItems      OrderItem[]
   stockMovements  StockMovement[]
+  outOfStockReportItems OutOfStockReportItem[]
   
   @@map("products")
 }
@@ -335,56 +343,67 @@ model Product {
 model Order {
   id                 String         @id @default(cuid())
   orderNumber        String         @unique
-  smeUserId          String? // SME who placed the order
-  manufacturerId     String? // Manufacturer fulfilling the order
+  wholesalerId       String // Wholesaler who placed the order
   assignedProcurementOfficerId String? // Procurement officer handling procurement
   createdById        String
-  status             OrderStatus    @default(PLACED)
-  paymentStatus      PaymentStatus  @default(PENDING)
-  paymentMethod      PaymentMethod?
+  status             OrderStatus    @default(DRAFT)
+  
+  // Assignment tracking
+  assignmentStatus   AssignmentStatus? @default(UNASSIGNED)
+  assignedAt         DateTime?      // When assignment was made
+  assignmentNotes    String?        // Notes from admin during assignment
+  assignmentRespondedAt DateTime?   // When officer responded
+  assignmentResponseReason String? // Officer's response reason
+  
+  // Monnify Integration
+  monnifyInvoiceRef  String?        @unique
+  virtualAccounts    Json?          // Store virtual account details
+  checkoutUrl        String?
+  paymentExpiresAt   DateTime?
+  
+  // Simplified Financial
   subtotal           Decimal        @db.Decimal(10, 2)
-  taxAmount          Decimal        @default(0) @db.Decimal(10, 2)
-  discountAmount     Decimal        @default(0) @db.Decimal(10, 2)
   totalAmount        Decimal        @db.Decimal(10, 2)
-  notes              String?
+  
+  // Optional Delivery Address
+  deliveryAddress    Json?          // Can be null
+  customerNotes      String?
 
-  // JooavERP specific fields
-  procurementNotes  String? // Internal procurement notes
-  deliveryAddress   String? // SME delivery address
-  estimatedDelivery DateTime? // Estimated delivery date
-  trackingNumber    String? // Logistics tracking
-
-  // Dates
-  orderDate      DateTime  @default(now())
-  requiredDate   DateTime?
-  acceptedDate   DateTime? // When manufacturer accepted
-  processingDate DateTime? // When processing started
-  shippedDate    DateTime?
-  deliveredDate  DateTime?
+  // Key Timestamps
+  orderDate          DateTime       @default(now())
+  submittedAt        DateTime?      // When customer submitted
+  confirmedAt        DateTime?      // When confirmed for processing
 
   // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   // Relations
-  smeUser            SMEUser?            @relation(fields: [smeUserId], references: [id])
-  manufacturer       Manufacturer?       @relation("ManufacturerOrders", fields: [manufacturerId], references: [id])
-  assignedProcurementOfficer   ProcurementOfficerProfile? @relation("AssignedProcurementOfficer", fields: [assignedProcurementOfficerId], references: [id])
+  wholesaler         User         @relation("WholesalerUser", fields: [wholesalerId], references: [id])
+  assignedProcurementOfficer   User? @relation("AssignedProcurementOfficer", fields: [assignedProcurementOfficerId], references: [id])
   createdBy          User                @relation("CreatedBy", fields: [createdById], references: [id])
   items              OrderItem[]
   payments           Payment[]
-  inventoryMovements InventoryMovement[]
+  outOfStockReportItems OutOfStockReportItem[]
 
   @@map("orders")
 }
 
 model OrderItem {
-  id         String  @id @default(cuid())
+  id         String     @id @default(cuid())
   orderId    String
   productId  String
-  quantity   Int
-  unitPrice  Decimal @db.Decimal(10, 2)
-  totalPrice Decimal @db.Decimal(10, 2)
+  
+  // Quantity & Price
+  quantity   Int        // Minimum 10 required
+  unitPrice  Decimal    @db.Decimal(8, 2)
+  lineTotal  Decimal    @db.Decimal(10, 2)  // unitPrice * quantity
+  
+  // Enhanced status tracking
+  status           OrderItemStatus @default(PENDING)
+  statusUpdatedAt  DateTime        @default(now())
+  statusUpdatedBy  String?
+  processingNotes  String?
 
   // Timestamps
   createdAt DateTime @default(now())
@@ -393,29 +412,87 @@ model OrderItem {
   // Relations
   order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id])
+  statusUpdatedByUser User? @relation("ItemStatusUpdatedBy", fields: [statusUpdatedBy], references: [id])
+  outOfStockReportItems OutOfStockReportItem[]
 
   @@unique([orderId, productId])
   @@map("order_items")
 }
 
 model Payment {
-  id            String        @id @default(cuid())
-  orderId       String
-  paymentMethod PaymentMethod
-  status        PaymentStatus @default(PENDING)
-  amount        Decimal       @db.Decimal(10, 2)
-  transactionId String?       @unique
-  reference     String?
-  notes         String?
+  id                String        @id @default(cuid())
+  orderId           String
+  order             Order         @relation(fields: [orderId], references: [id])
+  
+  // Monnify Integration
+  monnifyInvoiceRef String        @unique
+  transactionRef    String?       @unique
+  paymentMethod     PaymentMethod?
+  
+  // Payment Details
+  amount            Decimal       @db.Decimal(10, 2)
+  currency          String        @default("NGN")
+  status            PaymentStatus @default(PENDING)
+  
+  // Virtual Account Details
+  virtualAccounts   Json?         // Store account numbers and bank details
+  checkoutUrl       String?
+  
+  // Payment Tracking
+  paidAt            DateTime?
+  webhookData       Json?         // Store webhook payload
+  
+  // Reference and Notes
+  reference         String?
+  notes             String?
 
   // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Relations
-  order Order @relation(fields: [orderId], references: [id])
-
   @@map("payments")
+}
+
+model OutOfStockReport {
+  id          String                 @id @default(cuid())
+  wholesalerId String
+  status      OutOfStockReportStatus @default(OPEN)
+  resolvedAt  DateTime?
+  resolvedBy  String?
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+
+  // Relations
+  wholesaler  User                   @relation("OutOfStockReportedBy", fields: [wholesalerId], references: [id], onDelete: Cascade)
+  resolver    User?                  @relation("OutOfStockResolvedBy", fields: [resolvedBy], references: [id])
+  items       OutOfStockReportItem[]
+
+  @@index([wholesalerId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("out_of_stock_reports")
+}
+
+model OutOfStockReportItem {
+  id               String           @id @default(cuid())
+  reportId         String
+  orderId          String
+  orderItemId      String
+  productId        String
+  quantityAffected Int
+  createdAt        DateTime         @default(now())
+
+  // Relations
+  report           OutOfStockReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  order            Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItem        OrderItem        @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  product          Product          @relation(fields: [productId], references: [id])
+
+  @@index([reportId])
+  @@index([orderItemId])
+  @@index([orderId])
+  @@index([productId])
+  @@map("out_of_stock_report_items")
 }
 
 model StockMovement {
@@ -433,51 +510,6 @@ model StockMovement {
   product Product @relation(fields: [productId], references: [id])
 
   @@map("stock_movements")
-}
-
-// ================================
-// PROJECT MANAGEMENT MODELS
-// ================================
-
-model Project {
-  id          String        @id @default(cuid())
-  name        String
-  description String?
-  status      ProjectStatus @default(ACTIVE)
-  priority    Priority      @default(MEDIUM)
-  startDate   DateTime?
-  endDate     DateTime?
-  budget      Decimal?      @db.Decimal(12, 2)
-
-  // Timestamps
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Relations
-  tasks Task[]
-
-  @@map("projects")
-}
-
-model Task {
-  id          String     @id @default(cuid())
-  projectId   String?
-  assignedId  String?
-  title       String
-  description String?
-  status      TaskStatus @default(TODO)
-  priority    Priority   @default(MEDIUM)
-  dueDate     DateTime?
-
-  // Timestamps
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Relations
-  project    Project? @relation(fields: [projectId], references: [id])
-  assignedTo User?    @relation("AssignedTo", fields: [assignedId], references: [id])
-
-  @@map("tasks")
 }
 
 // ================================
@@ -545,7 +577,6 @@ model AdminProfile {
 model Region {
   id       String  @id @default(cuid())
   name     String  @unique
-  code     String  @unique // e.g., "NG-LA" for Lagos, Nigeria
   country  String
   state    String?
   isActive Boolean @default(true)
@@ -556,7 +587,7 @@ model Region {
 
   // Relations
   manufacturers Manufacturer[]
-  smeUsers      SMEUser[]
+  wholesalers   Wholesaler[]
   procurementOfficers ProcurementOfficerProfile[]
 
   @@map("regions")
@@ -581,7 +612,6 @@ model Manufacturer {
   // Relations
   brands        Brand[]   @relation("ManufacturerBrands")
   products      Product[] @relation("ManufacturerProducts")
-  orders        Order[]   @relation("ManufacturerOrders")
   createdByUser User      @relation("CreatedManufacturers", fields: [createdBy], references: [id])
   updatedByUser User      @relation("UpdatedManufacturers", fields: [updatedBy], references: [id])
   deletedByUser User?     @relation("DeletedManufacturers", fields: [deletedBy], references: [id])
@@ -618,18 +648,12 @@ model Brand {
   @@map("brands")
 }
 
-model SMEUser {
-  id           String @id @default(cuid())
-  userId       String @unique
-  businessName String
-  businessType String // e.g., "Retail", "Wholesale", "Distribution"
-  regionId     String
-
-  // Business verification
-  businessLicense    String?
-  verificationStatus SMEVerificationStatus @default(PENDING)
-  approvedBy         String? // Admin who approved
-  approvedAt         DateTime?
+model Wholesaler {
+  id       String @id @default(cuid())
+  userId   String @unique
+  regionId String? // Optional for now
+  draftCart String?
+  userAddress Json @default("[]")
 
   // Business metrics
   totalOrders Int     @default(0)
@@ -641,22 +665,25 @@ model SMEUser {
 
   // Relations
   user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  region    Region      @relation(fields: [regionId], references: [id])
-  orders    Order[]
+  region    Region?     @relation(fields: [regionId], references: [id])
   inventory Inventory[]
 
-  @@map("sme_users")
+  @@map("wholesalers")
 }
 
 model ProcurementOfficerProfile {
   id         String  @id @default(cuid())
   userId     String  @unique
-  regionId   String? // Optional - can be assigned by region or order-based
-  employeeId String  @unique
+  regionId   String? // Optional - no impact on logic for now
+ 
 
   // Procurement officer details
   specializations String[] // e.g., ["Electronics", "Food & Beverages"]
   maxOrderValue   Decimal? @db.Decimal(15, 2)
+
+  // Availability management
+  availabilityStatus ProcurementOfficerStatus @default(AVAILABLE)
+  maxActiveOrders Int @default(5) // Maximum concurrent orders
 
   // Performance metrics
   ordersProcessed       Int  @default(0)
@@ -669,14 +696,13 @@ model ProcurementOfficerProfile {
   // Relations
   user           User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   region         Region? @relation(fields: [regionId], references: [id])
-  assignedOrders Order[] @relation("AssignedProcurementOfficer")
 
   @@map("procurement_officer_profiles")
 }
 
 model Inventory {
   id           String          @id @default(cuid())
-  smeUserId    String
+  wholesalerId String
   productName  String
   productSku   String
   currentStock Int             @default(0)
@@ -695,10 +721,10 @@ model Inventory {
   updatedAt DateTime @updatedAt
 
   // Relations
-  smeUser   SMEUser             @relation(fields: [smeUserId], references: [id], onDelete: Cascade)
+  wholesaler Wholesaler          @relation(fields: [wholesalerId], references: [id], onDelete: Cascade)
   movements InventoryMovement[]
 
-  @@unique([smeUserId, productSku])
+  @@unique([wholesalerId, productSku])
   @@map("inventory")
 }
 
@@ -715,7 +741,7 @@ model InventoryMovement {
 
   // Relations
   inventory Inventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
-  order     Order?    @relation(fields: [orderId], references: [id])
+  // Note: Order relation removed for simplified system
 
   @@map("inventory_movements")
 }
@@ -749,7 +775,7 @@ enum UserRole {
   SUPER_ADMIN // Platform owner (Jooav management) - highest level
   ADMIN // Regional/operational admin
   PROCUREMENT_OFFICER // Procurement officers (can be regional or order-based)
-  SME_USER // Small business owners
+  WHOLESALER // Wholesale business owners
 }
 
 enum UserStatus {
@@ -778,13 +804,37 @@ enum PackTypeStatus {
 }
 
 enum OrderStatus {
-  PLACED // SME placed the order
-  ACCEPTED // Manufacturer accepted the order
-  PROCESSING // Order being processed/sourced
-  IN_TRANSIT // Order shipped and in transit
-  DELIVERED // Order delivered to SME
-  CANCELLED // Order cancelled
-  REJECTED // Manufacturer rejected the order
+  DRAFT              // Customer building order (no payment setup)
+  PENDING_PAYMENT    // Payment account generated, waiting for payment
+  CONFIRMED          // Payment verified, ready for assignment
+  ASSIGNED           // Assigned to procurement officer
+  IN_PROGRESS        // Officer actively working
+  COMPLETED          // All items delivered
+  CANCELLED          // Order cancelled
+}
+
+enum OrderItemStatus {
+  PENDING           // Order placed, payment pending
+  PAID              // Payment confirmed, ready for processing
+  SOURCING          // Procurement team sourcing item
+  READY             // Item ready for shipment
+  SHIPPED           // Item shipped to customer
+  DELIVERED         // Item delivered
+  UNAVAILABLE       // Cannot fulfill this item
+  CANCELLED         // Item cancelled
+}
+
+enum AssignmentStatus {
+  UNASSIGNED        // No procurement officer assigned
+  PENDING_ACCEPTANCE // Assigned but awaiting officer response
+  ACCEPTED          // Officer accepted assignment
+  REJECTED          // Officer rejected assignment
+  REASSIGNED        // Previously rejected, now assigned to different officer
+}
+
+enum ProcurementOfficerStatus {
+  AVAILABLE    // Ready to receive new orders
+  UNAVAILABLE  // Not accepting new orders
 }
 
 enum PaymentStatus {
@@ -796,11 +846,13 @@ enum PaymentStatus {
 }
 
 enum PaymentMethod {
-  CREDIT_CARD
-  DEBIT_CARD
   BANK_TRANSFER
-  CASH
-  DIGITAL_WALLET
+  CHECKOUT_URL
+}
+
+enum OutOfStockReportStatus {
+  OPEN
+  RESOLVED
 }
 
 enum StockMovementType {
@@ -809,27 +861,6 @@ enum StockMovementType {
   ADJUSTMENT
 }
 
-enum ProjectStatus {
-  ACTIVE
-  COMPLETED
-  CANCELLED
-  ON_HOLD
-}
-
-enum TaskStatus {
-  TODO
-  IN_PROGRESS
-  REVIEW
-  COMPLETED
-  CANCELLED
-}
-
-enum Priority {
-  LOW
-  MEDIUM
-  HIGH
-  URGENT
-}
 
 // JooavERP specific enums
 enum ManufacturerStatus {
@@ -855,13 +886,6 @@ enum SubcategoryStatus {
   ACTIVE
   INACTIVE
   ARCHIVED
-}
-
-enum SMEVerificationStatus {
-  PENDING
-  VERIFIED
-  REJECTED
-  REQUIRES_ADDITIONAL_INFO
 }
 
 enum InventoryStatus {
@@ -891,8 +915,8 @@ enum AdminAction {
   CREATE_MANUFACTURER
   APPROVE_MANUFACTURER
   SUSPEND_MANUFACTURER
-  APPROVE_SME
-  REJECT_SME
+  APPROVE_WHOLESALER
+  REJECT_WHOLESALER
   ASSIGN_SUB_ADMIN
   UPDATE_ORDER_STATUS
   MANAGE_INVENTORY
@@ -902,7 +926,7 @@ enum AdminAction {
 
 enum ResourceType {
   MANUFACTURER
-  SME_USER
+  WHOLESALER
   SUB_ADMIN
   ORDER
   INVENTORY

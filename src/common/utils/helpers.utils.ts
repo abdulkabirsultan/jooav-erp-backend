@@ -41,6 +41,36 @@ export class StringUtils {
     if (text.length <= length) return text;
     return text.substring(0, length).trim() + suffix;
   }
+
+  /**
+   * Normalizes name for consistent comparison
+   */
+  static normalizeName(name: string): string {
+    return name.trim().toLowerCase().replace(/\s+/g, ' ');
+  }
+
+  /**
+   * Generates a URL-friendly slug
+   */
+  static generateSlug(text: string): string {
+    return text
+      .toLowerCase()
+      .trim()
+      .replace(/[^\w\s-]/g, '')
+      .replace(/[\s_-]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+  }
+
+  /**
+   * Normalizes text for SKU generation (removes special chars, spaces)
+   */
+  static normalizeForSKU(text: string): string {
+    return text
+      .trim()
+      .replace(/[^\w\s]/g, '')
+      .replace(/\s+/g, '')
+      .toUpperCase();
+  }
 }
 
 export class DateUtils {
@@ -122,5 +152,31 @@ export class ValidationUtils {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Normalize name for case-insensitive comparison
+   */
+  static normalizeName(name: string): string {
+    return name.trim().toLowerCase().replace(/\s+/g, ' ');
+  }
+
+  /**
+   * Generate slug from text
+   */
+  static generateSlug(text: string): string {
+    return StringUtils.slugify(text);
+  }
+
+  /**
+   * Normalize text for SKU generation
+   */
+  static normalizeForSKU(text: string): string {
+    return text
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
   }
 }

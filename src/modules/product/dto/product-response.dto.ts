@@ -91,6 +91,13 @@ export class ProductResponseDto {
   discount: Decimal | null;
 
   @ApiProperty({
+    description: 'Available stock quantity',
+    example: 100,
+    type: 'number',
+  })
+  quantity: number;
+
+  @ApiProperty({
     description: 'Primary thumbnail image URL',
     example: 'https://example.com/indomie-chicken-thumb.jpg',
     required: false,

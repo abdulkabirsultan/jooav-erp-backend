@@ -7,6 +7,7 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { EmailModule } from '../email/email.module';
 
 // Strategies
 import { LocalStrategy } from './strategies/local.strategy';
@@ -21,6 +22,7 @@ import { RolesGuard } from './guards/roles.guard';
 @Module({
   imports: [
     ConfigModule,
+    EmailModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],

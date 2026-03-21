@@ -3,11 +3,14 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  Logger,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { CacheInvalidationService } from '../cache/cache-invalidation.service';
+import { CacheService } from '../cache/cache.service';
+import { CloudinaryService } from '../storage/cloudinary.service';
 import {
   CreateProductDto,
   UpdateProductDto,
@@ -15,26 +18,31 @@ import {
   ProductResponseDto,
 } from './dto';
 import { PaginatedResponse } from '../../common/dto/paginated-response.dto';
+import { BulkDeleteResultDto } from '../../common/dto';
 import { StringUtils } from '../../common/utils/string.utils';
 import { BarcodeGenerator } from '../../common/utils/barcode.utils';
 
 @Injectable()
 export class ProductService {
+  private readonly logger = new Logger(ProductService.name);
+
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly auditLog: AuditService,
-    private readonly cacheInvalidationService: CacheInvalidationService,
+    private prisma: PrismaService,
+    private cloudinaryService: CloudinaryService,
+    private auditLog: AuditService,
+    private cacheInvalidationService: CacheInvalidationService,
+    private cacheService: CacheService,
   ) {}
 
   /**
-   * Generate product name, SKU, and barcode
+   * Generate product SKU and barcode only
    */
   private async generateProductIdentifiers(
     brandId: string,
     variantId: string,
     packSizeId: string,
     packTypeId: string,
-  ): Promise<{ name: string; sku: string; barcode: string }> {
+  ): Promise<{ sku: string; barcode: string }> {
     // Get brand, variant, pack size, and pack type names
     const [brand, variant, packSize, packType] = await Promise.all([
       this.prisma.brand.findUnique({
@@ -71,9 +79,6 @@ export class ProductService {
       throw new BadRequestException('Pack type not found');
     }
 
-    // Generate name: "Brand Variant PackSize (PackType)"
-    const name = `${brand.name} ${variant.name} ${packSize.name} (${packType.name})`;
-
     // Generate SKU: "BRAND-VARIANT-PACKSIZE-PACKTYPE"
     const sku = StringUtils.generateSlug(
       `${brand.name}-${variant.name}-${packSize.name}-${packType.name}`,
@@ -87,7 +92,7 @@ export class ProductService {
       packType.name,
     );
 
-    return { name, sku, barcode };
+    return { sku, barcode };
   }
 
   /**
@@ -184,12 +189,15 @@ export class ProductService {
     userId: string,
   ): Promise<ProductResponseDto> {
     const {
+      name,
       brandId,
       subcategoryId,
       variantId,
       packSizeId,
       packTypeId,
       barcode: providedBarcode,
+      images,
+      thumbnail,
       ...rest
     } = createProductDto;
 
@@ -203,17 +211,14 @@ export class ProductService {
     // Validate pack entities
     await this.validatePackEntities(packSizeId, packTypeId, variantId);
 
-    // Generate name, SKU, and barcode (if not provided)
-    const {
-      name,
-      sku,
-      barcode: generatedBarcode,
-    } = await this.generateProductIdentifiers(
-      brandId,
-      variantId,
-      packSizeId,
-      packTypeId,
-    );
+    // Generate SKU and barcode (name is provided by user)
+    const { sku, barcode: generatedBarcode } =
+      await this.generateProductIdentifiers(
+        brandId,
+        variantId,
+        packSizeId,
+        packTypeId,
+      );
 
     // Use provided barcode or generated one (but barcode is currently not used in schema)
     const finalBarcode = providedBarcode || generatedBarcode;
@@ -228,6 +233,18 @@ export class ProductService {
       }
     }
 
+    // Check if product name already exists
+    const existingProductByName = await this.prisma.product.findFirst({
+      where: {
+        name,
+        deletedAt: null,
+      },
+    });
+
+    if (existingProductByName) {
+      throw new ConflictException(`Product with name "${name}" already exists`);
+    }
+
     // Check if SKU already exists
     const existingProduct = await this.prisma.product.findUnique({
       where: { sku },
@@ -235,6 +252,40 @@ export class ProductService {
 
     if (existingProduct) {
       throw new ConflictException(`Product with SKU "${sku}" already exists`);
+    }
+    // Handle file uploads
+    let uploadedImageUrls: string[] = [];
+    let uploadedThumbnailUrl: string | undefined = undefined;
+
+    try {
+      // Upload images to Cloudinary
+      if (images && Array.isArray(images) && images.length > 0) {
+        const imageUploads = await this.cloudinaryService.uploadMultipleFiles(
+          images,
+          {
+            folder: 'products/images',
+            tags: ['product', 'image'],
+          },
+        );
+        uploadedImageUrls = imageUploads.map((upload) => upload.secureUrl);
+      }
+
+      // Upload thumbnail to Cloudinary
+      if (thumbnail) {
+        const thumbnailUpload = await this.cloudinaryService.uploadFile(
+          thumbnail.buffer,
+          {
+            folder: 'products/thumbnails',
+            tags: ['product', 'thumbnail'],
+            transformation: [
+              { width: 300, height: 300, crop: 'fill', quality: 'auto' },
+            ],
+          },
+        );
+        uploadedThumbnailUrl = thumbnailUpload.secureUrl;
+      }
+    } catch (error) {
+      throw new BadRequestException(`File upload failed: ${error.message}`);
     }
 
     try {
@@ -250,9 +301,10 @@ export class ProductService {
           packSizeId,
           packTypeId,
           ...rest,
+          images: uploadedImageUrls,
+          thumbnail: uploadedThumbnailUrl,
           createdBy: userId,
           updatedBy: userId,
-          images: rest.images || [],
         },
         include: {
           brand: {
@@ -303,7 +355,7 @@ export class ProductService {
       });
 
       // Invalidate product caches
-      await this.cacheInvalidationService.invalidateProducts();
+      await this.cacheService.invalidateByTag('products');
 
       return {
         ...product,
@@ -331,10 +383,20 @@ export class ProductService {
       search,
       brandId,
       categoryId,
+      subcategoryId,
+      subcategoryIds,
       variant,
       status,
+      priceSort,
       includeRelations = true,
     } = query;
+
+    const normalizedSubcategoryIds =
+      subcategoryIds && subcategoryIds.length > 0
+        ? subcategoryIds
+        : subcategoryId
+          ? [subcategoryId]
+          : [];
 
     const skip = (page - 1) * limit;
 
@@ -343,7 +405,14 @@ export class ProductService {
       deletedAt: null,
       ...(status && { status }),
       ...(brandId && { brandId }),
-      ...(categoryId && { categoryId }),
+      ...(categoryId && {
+        subcategory: {
+          categoryId: categoryId,
+        },
+      }),
+      ...(normalizedSubcategoryIds.length > 0 && {
+        subcategoryId: { in: normalizedSubcategoryIds },
+      }),
       ...(variant && {
         variant: {
           name: { contains: variant, mode: 'insensitive' as const },
@@ -397,7 +466,9 @@ export class ProductService {
       this.prisma.product.findMany({
         where,
         include,
-        orderBy: [{ status: 'desc' }, { createdAt: 'desc' }],
+        orderBy: priceSort
+          ? [{ price: priceSort }, { createdAt: 'desc' }]
+          : [{ status: 'desc' }, { createdAt: 'desc' }],
         skip,
         take: limit,
       }),
@@ -474,17 +545,38 @@ export class ProductService {
     }
 
     const {
+      name,
       brandId,
       subcategoryId,
       variantId,
       packSizeId,
       packTypeId,
+      createImages,
+      deleteImages,
+      thumbnail,
+      deleteThumbnail,
       ...rest
     } = updateProductDto;
 
-    let name: string | undefined;
     let sku: string | undefined;
     let manufacturerId: string | undefined;
+
+    // Check if name is unique (if being updated)
+    if (name && name !== existingProduct.name) {
+      const existingProductByName = await this.prisma.product.findFirst({
+        where: {
+          name,
+          id: { not: id }, // Exclude current product
+          deletedAt: null,
+        },
+      });
+
+      if (existingProductByName) {
+        throw new ConflictException(
+          `Product with name "${name}" already exists`,
+        );
+      }
+    }
 
     // If any identifier fields are being updated, regenerate name, SKU
     if (brandId || variantId || packSizeId || packTypeId) {
@@ -529,7 +621,6 @@ export class ProductService {
         finalPackTypeId,
       );
 
-      name = identifiers.name;
       sku = identifiers.sku;
 
       // Check if new SKU conflicts with existing products (excluding current)
@@ -546,6 +637,123 @@ export class ProductService {
       }
     }
 
+    // Handle image operations
+    let updatedImages = [...existingProduct.images] as string[];
+    let updatedThumbnail = existingProduct.thumbnail;
+
+    try {
+      // Delete specified images from Cloudinary and remove from array
+      if (deleteImages && deleteImages.length > 0) {
+        // Validate deleteImages array
+        const validDeleteImages = deleteImages.filter((url) => {
+          if (!url || typeof url !== 'string') {
+            this.logger.warn('Invalid image URL provided for deletion', {
+              invalidUrl: url,
+              productId: id,
+            });
+            return false;
+          }
+
+          // Check if URL exists in current product images
+          if (!existingProduct.images.includes(url)) {
+            this.logger.warn('URL not found in product images', {
+              url,
+              productId: id,
+            });
+            return false;
+          }
+
+          return true;
+        });
+
+        if (validDeleteImages.length > 0) {
+          const deleteResult =
+            await this.cloudinaryService.deleteFilesByUrls(validDeleteImages);
+
+          // Log any deletion errors but don't fail the whole operation
+          if (
+            deleteResult.errors &&
+            Object.keys(deleteResult.errors).length > 0
+          ) {
+            this.logger.warn('Some images failed to delete from Cloudinary', {
+              errors: deleteResult.errors,
+              productId: id,
+            });
+          }
+
+          // Remove successfully deleted images from the array
+          const successfullyDeleted = Object.keys(deleteResult.deleted || {});
+          if (successfullyDeleted.length > 0) {
+            // Map public IDs back to URLs for filtering
+            const deletedUrls = validDeleteImages.filter((url) => {
+              const publicId =
+                this.cloudinaryService.extractPublicIdFromUrl(url);
+              return successfullyDeleted.includes(publicId);
+            });
+
+            updatedImages = updatedImages.filter(
+              (url) => !deletedUrls.includes(url),
+            );
+
+            this.logger.log('Successfully deleted images from Cloudinary', {
+              deletedCount: deletedUrls.length,
+              deletedUrls,
+              productId: id,
+            });
+          }
+        } else {
+          this.logger.warn('No valid images to delete', {
+            providedUrls: deleteImages,
+            productId: id,
+          });
+        }
+      }
+
+      // Upload new images and add to array
+      if (createImages && createImages.length > 0) {
+        const imageUploads = await this.cloudinaryService.uploadMultipleFiles(
+          createImages,
+          {
+            folder: 'products/images',
+            tags: ['product', 'image'],
+          },
+        );
+        const newImageUrls = imageUploads.map((upload) => upload.secureUrl);
+        updatedImages = [...updatedImages, ...newImageUrls];
+      }
+
+      // Handle thumbnail operations
+      if (deleteThumbnail && existingProduct.thumbnail) {
+        await this.cloudinaryService.deleteFilesByUrls([
+          existingProduct.thumbnail,
+        ]);
+        updatedThumbnail = null;
+      }
+
+      if (thumbnail) {
+        // If there's an existing thumbnail and we're uploading a new one, delete the old one
+        if (existingProduct.thumbnail) {
+          await this.cloudinaryService.deleteFilesByUrls([
+            existingProduct.thumbnail,
+          ]);
+        }
+
+        const thumbnailUpload = await this.cloudinaryService.uploadFile(
+          thumbnail.buffer,
+          {
+            folder: 'products/thumbnails',
+            tags: ['product', 'thumbnail'],
+            transformation: [
+              { width: 300, height: 300, crop: 'fill', quality: 'auto' },
+            ],
+          },
+        );
+        updatedThumbnail = thumbnailUpload.secureUrl;
+      }
+    } catch (error) {
+      throw new BadRequestException(`File operation failed: ${error.message}`);
+    }
+
     try {
       const product = await this.prisma.product.update({
         where: { id },
@@ -554,6 +762,8 @@ export class ProductService {
           ...(sku && { sku }),
           ...(manufacturerId && { manufacturerId }),
           ...rest,
+          images: updatedImages,
+          thumbnail: updatedThumbnail,
           updatedBy: userId,
         },
         include: {
@@ -603,7 +813,7 @@ export class ProductService {
       });
 
       // Invalidate product caches
-      await this.cacheInvalidationService.invalidateProduct(id);
+      await this.invalidateProductCaches(id, product);
 
       return {
         ...product,
@@ -654,8 +864,158 @@ export class ProductService {
       },
     });
 
-    // Invalidate product caches
-    await this.cacheInvalidationService.invalidateProduct(id);
+    // Invalidate caches using smart tag-based invalidation
+    await this.invalidateProductCaches(id, existingProduct);
+  }
+
+  async removeMany(
+    productIds: string[],
+    userId: string,
+  ): Promise<BulkDeleteResultDto> {
+    const results: Array<{ id: string; success: boolean; error?: string }> = [];
+
+    // Process each product ID
+    for (const productId of productIds) {
+      try {
+        // Check if product exists
+        const existingProduct = await this.prisma.product.findFirst({
+          where: { id: productId, deletedAt: null },
+        });
+
+        if (!existingProduct) {
+          results.push({
+            id: productId,
+            success: false,
+            error: 'Product not found',
+          });
+          continue;
+        }
+
+        // Soft delete the product
+        await this.prisma.product.update({
+          where: { id: productId },
+          data: {
+            status: 'ARCHIVED',
+            deletedAt: new Date(),
+            deletedBy: userId,
+          },
+        });
+
+        // Log audit for each product
+        await this.auditLog.createAuditLog({
+          action: 'BULK_DELETE',
+          resource: 'product',
+          resourceId: productId,
+          userId,
+          metadata: {
+            productName: existingProduct.name,
+            sku: existingProduct.sku,
+            bulkOperation: true,
+          },
+        });
+
+        // Invalidate caches using tags
+        await this.invalidateProductCaches(productId, existingProduct);
+
+        results.push({ id: productId, success: true });
+      } catch (error) {
+        this.logger.error(`Failed to delete product ${productId}`, error);
+        results.push({
+          id: productId,
+          success: false,
+          error: error.message || 'Unknown error occurred',
+        });
+      }
+    }
+
+    // Immediately invalidate ALL product-related caches for bulk operations
+    await this.cacheService.invalidateByTag('products');
+
+    return {
+      results,
+      totalRequested: productIds.length,
+      successful: results.filter((r) => r.success).length,
+      failed: results.filter((r) => !r.success).length,
+    };
+  }
+
+  async updateManyStatus(
+    productIds: string[],
+    status: 'DRAFT' | 'QUEUE' | 'LIVE' | 'ARCHIVED',
+    userId: string,
+  ): Promise<{
+    updatedCount: number;
+    updatedIds: string[];
+    failedIds: Array<{ id: string; error: string }>;
+  }> {
+    const updatedIds: string[] = [];
+    const failedIds: Array<{ id: string; error: string }> = [];
+
+    // Process each product ID
+    for (const productId of productIds) {
+      try {
+        // Check if product exists
+        const existingProduct = await this.prisma.product.findFirst({
+          where: { id: productId, deletedAt: null },
+        });
+
+        if (!existingProduct) {
+          failedIds.push({ id: productId, error: 'Product not found' });
+          continue;
+        }
+
+        // Update the product status
+        await this.prisma.product.update({
+          where: { id: productId },
+          data: {
+            status,
+            updatedBy: userId,
+            updatedAt: new Date(),
+          },
+        });
+
+        // Log audit for each product
+        await this.auditLog.createAuditLog({
+          action: 'BULK_UPDATE_STATUS',
+          resource: 'product',
+          resourceId: productId,
+          userId,
+          metadata: {
+            productName: existingProduct.name,
+            sku: existingProduct.sku,
+            oldStatus: existingProduct.status,
+            newStatus: status,
+            bulkOperation: true,
+          },
+        });
+
+        // Invalidate caches using tags
+        await this.invalidateProductCaches(productId, {
+          ...existingProduct,
+          status,
+        });
+
+        updatedIds.push(productId);
+      } catch (error) {
+        this.logger.error(
+          `Failed to update product status ${productId}`,
+          error,
+        );
+        failedIds.push({
+          id: productId,
+          error: error.message || 'Unknown error occurred',
+        });
+      }
+    }
+
+    // Immediately invalidate ALL product-related caches for bulk operations
+    await this.cacheService.invalidateByTag('products');
+
+    return {
+      updatedCount: updatedIds.length,
+      updatedIds,
+      failedIds,
+    };
   }
 
   async activate(id: string, userId: string): Promise<ProductResponseDto> {
@@ -864,5 +1224,101 @@ export class ProductService {
       ...updatedProduct,
       subcategoryId: updatedProduct.subcategoryId || undefined,
     };
+  }
+
+  /**
+   * Get product statistics
+   */
+  async getProductStats(): Promise<{
+    totalProducts: number;
+    totalVariants: number;
+    drafts: number;
+    archived: number;
+  }> {
+    const [totalProducts, totalVariants, drafts, archived] = await Promise.all([
+      this.prisma.product.count({
+        where: { deletedAt: null },
+      }),
+      this.prisma.variant.count({
+        where: { deletedAt: null },
+      }),
+      this.prisma.product.count({
+        where: {
+          deletedAt: null,
+          status: 'DRAFT',
+        },
+      }),
+      this.prisma.product.count({
+        where: {
+          deletedAt: null,
+          status: 'ARCHIVED',
+        },
+      }),
+    ]);
+
+    return {
+      totalProducts,
+      totalVariants,
+      drafts,
+      archived,
+    };
+  }
+
+  /**
+   * Smart cache invalidation based on product properties
+   */
+  private async invalidateProductCaches(
+    productId: string,
+    product: any,
+  ): Promise<void> {
+    try {
+      // Always invalidate the specific product cache
+      await this.cacheService.invalidateByTag(`product:${productId}`);
+
+      // Invalidate general product lists
+      await this.cacheService.invalidateByTag('products');
+
+      // Invalidate brand-specific caches if product has brand
+      if (product.brandId) {
+        await this.cacheService.invalidateByTag(`brand:${product.brandId}`);
+      }
+
+      // Invalidate category-specific caches
+      if (product.subcategoryId) {
+        await this.cacheService.invalidateByTag(
+          `subcategory:${product.subcategoryId}`,
+        );
+
+        // Get category from subcategory to invalidate category caches too
+        const subcategory = await this.prisma.subcategory.findUnique({
+          where: { id: product.subcategoryId },
+          select: { categoryId: true },
+        });
+        if (subcategory?.categoryId) {
+          await this.cacheService.invalidateByTag(
+            `category:${subcategory.categoryId}`,
+          );
+        }
+      }
+
+      // Invalidate status-specific caches
+      if (product.status) {
+        await this.cacheService.invalidateByTag(`status:${product.status}`);
+      }
+
+      // Invalidate variant-specific caches
+      if (product.variantId) {
+        await this.cacheService.invalidateByTag(`variant:${product.variantId}`);
+      }
+
+      this.logger.debug(
+        `Invalidated smart cache tags for product ${productId}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Error invalidating caches for product ${productId}:`,
+        error,
+      );
+    }
   }
 }

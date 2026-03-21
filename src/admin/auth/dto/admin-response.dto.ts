@@ -28,7 +28,7 @@ export class AdminProfileDto {
 
   @ApiProperty({
     description:
-      'Admin role in the platform (SUPER_ADMIN, ADMIN, PROCUREMENT_OFFICER, SME_USER)',
+      'Admin role in the platform (SUPER_ADMIN, ADMIN, PROCUREMENT_OFFICER, WHOLESALER)',
     enum: UserRole,
     example: UserRole.SUPER_ADMIN,
   })
@@ -58,6 +58,12 @@ export class AdminProfileDto {
     example: ['NG-LA', 'NG-AB', 'NG-KC'],
   })
   assignedRegions: string[];
+
+  @ApiProperty({
+    description: 'Availability status for procurement officers',
+    example: 'AVAILABLE',
+  })
+  availabilityStatus: string;
 
   @ApiProperty({
     description: 'Platform permissions',
@@ -144,7 +150,7 @@ export class AdminPermissionsDto {
         delete: true,
         approve: true,
       },
-      smeUsers: {
+      wholesalers: {
         create: false,
         read: true,
         update: true,
@@ -182,7 +188,7 @@ export class AdminPermissionsDto {
       delete: boolean;
       approve: boolean;
     };
-    smeUsers: {
+    wholesalers: {
       create: boolean;
       read: boolean;
       update: boolean;

@@ -17,10 +17,10 @@ export class CSVProductRowDto {
   @IsNotEmpty()
   major_category: string;
 
-  @ApiProperty({ description: 'Sub category name (optional)', required: false })
+  @ApiProperty({ description: 'Sub category name' })
   @IsString()
-  @IsOptional()
-  sub_category?: string;
+  @IsNotEmpty()
+  sub_category: string;
 
   @ApiProperty({ description: 'Manufacturer name' })
   @IsString()

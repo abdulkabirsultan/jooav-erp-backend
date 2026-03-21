@@ -8,14 +8,14 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { UserRole, UserStatus, User } from '@prisma/client';
+import { UserRole, UserStatus, User, OrderStatus } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { v4 as uuidv4 } from 'uuid';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { generatePasswordResetToken } from '../../common/utils/token.util';
 import { AuditService } from '../audit/audit.service';
-import { EmailService } from '../email/email.service';
+import { EmailService } from '../email/services/email.service';
 import { JwtPayload } from './strategies/jwt.strategy';
 import {
   LoginDto,
@@ -66,11 +66,18 @@ export class AuthService {
   async validateUser(email: string, password: string): Promise<User | null> {
     const user = await this.prisma.user.findUnique({
       where: { email: email.toLowerCase() },
-      include: { profile: true },
+      include: { profile: true, wholesalerProfile: true },
     });
 
     if (!user || user.status !== UserStatus.ACTIVE) {
       return null;
+    }
+
+    // Check if user is a wholesaler
+    if (user.role !== UserRole.WHOLESALER) {
+      throw new UnauthorizedException(
+        'Access denied - User is not a wholesaler.',
+      );
     }
 
     const isPasswordValid = await argon2.verify(user.password, password);
@@ -84,20 +91,54 @@ export class AuthService {
       data: { lastLogin: new Date() },
     });
 
-    return user;
+    await this.ensureWholesalerDraftCart(user.id);
+
+    const refreshedUser = await this.prisma.user.findUnique({
+      where: { id: user.id },
+      include: {
+        profile: true,
+        wholesalerProfile: true,
+        procurementOfficerProfile: true,
+        adminProfile: true,
+      },
+    });
+
+    return (refreshedUser || user) as User;
   }
 
   /**
    * Validate user by ID (for JWT strategy)
    */
   async validateUserById(id: string): Promise<User | null> {
-    const user = await this.prisma.user.findUnique({
+    let user = await this.prisma.user.findUnique({
       where: { id },
-      include: { profile: true },
+      include: {
+        profile: true,
+        wholesalerProfile: true,
+        procurementOfficerProfile: true,
+        adminProfile: true,
+      },
     });
 
     if (!user || user.status !== UserStatus.ACTIVE) {
       return null;
+    }
+
+    if (user.role === UserRole.WHOLESALER) {
+      await this.ensureWholesalerDraftCart(user.id);
+      const refreshedUser = await this.prisma.user.findUnique({
+        where: { id },
+        include: {
+          profile: true,
+          wholesalerProfile: true,
+          procurementOfficerProfile: true,
+          adminProfile: true,
+        },
+      });
+
+      if (refreshedUser) {
+        user = refreshedUser;
+      }
     }
 
     return user;
@@ -113,9 +154,9 @@ export class AuthService {
       // Log failed login attempt
       await this.auditService.logAuthEvent('unknown', 'LOGIN_FAILED', request, {
         email: loginDto.email,
-        reason: 'Invalid credentials',
+        reason: 'Invalid credentials or not a wholesaler',
       });
-      throw new UnauthorizedException('Invalid credentials');
+      throw new UnauthorizedException('Access denied - Invalid credentials.');
     }
 
     const tokens = await this.generateTokens(user);
@@ -170,30 +211,64 @@ export class AuthService {
         firstName: registerDto.firstName,
         lastName: registerDto.lastName,
         phone: registerDto.phone,
-        role: UserRole.SME_USER, // Default role
+        role: UserRole.WHOLESALER, // Default role
         status: UserStatus.ACTIVE,
         profile: {
           create: {
             // Initialize empty profile
           },
         },
+        wholesalerProfile: {
+          create: {
+            totalOrders: 0,
+            totalSpent: 0,
+          },
+        },
       },
-      include: { profile: true },
+      include: {
+        profile: true,
+        wholesalerProfile: true,
+      },
     });
 
-    const tokens = await this.generateTokens(user);
+    await this.ensureWholesalerDraftCart(user.id);
+
+    const registeredUser = await this.prisma.user.findUnique({
+      where: { id: user.id },
+      include: {
+        profile: true,
+        wholesalerProfile: true,
+        procurementOfficerProfile: true,
+        adminProfile: true,
+      },
+    });
+
+    if (!registeredUser) {
+      throw new NotFoundException('Registered user not found');
+    }
+
+    const tokens = await this.generateTokens(registeredUser);
 
     // Create user session
-    await this.createUserSession(user.id, tokens.refreshToken, request);
+    await this.createUserSession(
+      registeredUser.id,
+      tokens.refreshToken,
+      request,
+    );
 
     // Log registration
-    await this.auditService.logAuthEvent(user.id, 'REGISTER', request, {
-      email: user.email,
-    });
+    await this.auditService.logAuthEvent(
+      registeredUser.id,
+      'REGISTER',
+      request,
+      {
+        email: registeredUser.email,
+      },
+    );
 
     return {
       ...tokens,
-      user: this.transformUserToProfile(user),
+      user: this.transformUserToProfile(registeredUser),
     };
   }
 
@@ -312,11 +387,11 @@ export class AuthService {
 
     // Send password change confirmation email
     try {
-      await this.emailService.sendTemplatedEmail(
-        user.email,
-        'passwordChanged',
-        {
-          name: user.firstName
+      await this.emailService.sendTemplateEmail({
+        to: user.email,
+        templateAlias: 'password-reset',
+        variables: {
+          USER_NAME: user.firstName
             ? `${user.firstName} ${user.lastName || ''}`.trim()
             : user.email,
           changeTime: new Date().toLocaleString(),
@@ -324,7 +399,7 @@ export class AuthService {
             request?.ip || request?.connection?.remoteAddress || 'Unknown',
           userAgent: request?.get?.('User-Agent') || 'Unknown',
         },
-      );
+      });
     } catch (error) {
       this.logger.error(
         'Failed to send password change confirmation email:',
@@ -356,6 +431,7 @@ export class AuthService {
       sub: user.id,
       email: user.email,
       role: user.role,
+      // jti: jwtId,
     };
 
     const accessToken = this.jwtService.sign(payload as any);
@@ -363,6 +439,7 @@ export class AuthService {
     const refreshToken = this.jwtService.sign({
       sub: user.id,
       tokenType: 'refresh',
+      // jti: uuidv4(), // Separate JTI for refresh token
     } as any);
 
     return {
@@ -378,6 +455,85 @@ export class AuthService {
    */
   private async hashPassword(password: string): Promise<string> {
     return argon2.hash(password, this.argon2Options);
+  }
+
+  private async ensureWholesalerDraftCart(
+    wholesalerUserId: string,
+  ): Promise<string | null> {
+    const wholesalerUser = await this.prisma.user.findUnique({
+      where: { id: wholesalerUserId },
+      include: { wholesalerProfile: true },
+    });
+
+    if (
+      !wholesalerUser ||
+      wholesalerUser.role !== UserRole.WHOLESALER ||
+      !wholesalerUser.wholesalerProfile
+    ) {
+      return null;
+    }
+
+    const existingDraftCart = wholesalerUser.wholesalerProfile.draftCart;
+    if (existingDraftCart) {
+      const existingDraftOrder = await this.prisma.order.findFirst({
+        where: {
+          orderNumber: existingDraftCart,
+          wholesalerId: wholesalerUserId,
+          status: OrderStatus.DRAFT,
+        },
+      });
+
+      if (existingDraftOrder) {
+        return existingDraftCart;
+      }
+    }
+
+    const reusableDraftOrder = await this.prisma.order.findFirst({
+      where: {
+        wholesalerId: wholesalerUserId,
+        status: OrderStatus.DRAFT,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (reusableDraftOrder) {
+      await this.prisma.wholesaler.update({
+        where: { userId: wholesalerUserId },
+        data: { draftCart: reusableDraftOrder.orderNumber },
+      });
+      return reusableDraftOrder.orderNumber;
+    }
+
+    const draftOrderNumber = await this.generateOrderNumber('DRAFT-');
+
+    await this.prisma.order.create({
+      data: {
+        orderNumber: draftOrderNumber,
+        wholesalerId: wholesalerUserId,
+        createdById: wholesalerUserId,
+        status: OrderStatus.DRAFT,
+        subtotal: 0,
+        totalAmount: 0,
+        items: {
+          create: [], // Start with empty items, can be added to later
+        },
+      },
+    });
+
+    await this.prisma.wholesaler.update({
+      where: { userId: wholesalerUserId },
+      data: { draftCart: draftOrderNumber },
+    });
+
+    return draftOrderNumber;
+  }
+
+  private async generateOrderNumber(prefix: string = 'JOO-'): Promise<string> {
+    const timestamp = Date.now().toString().slice(-7);
+    const random = Math.floor(Math.random() * 1000)
+      .toString()
+      .padStart(3, '0');
+    return `${prefix}${timestamp}${random}`;
   }
 
   /**
@@ -521,12 +677,16 @@ export class AuthService {
     const resetUrl = `${this.configService.get('email.baseUrl')}/reset-password?token=${resetToken}`;
 
     try {
-      await this.emailService.sendTemplatedEmail(email, 'passwordReset', {
-        name: user.firstName
-          ? `${user.firstName} ${user.lastName || ''}`.trim()
-          : user.email,
-        resetUrl,
-        expiresIn: '1 hour',
+      await this.emailService.sendTemplateEmail({
+        to: email,
+        templateAlias: 'password-reset',
+        variables: {
+          USER_NAME: user.firstName
+            ? `${user.firstName} ${user.lastName || ''}`.trim()
+            : user.email,
+          resetUrl,
+          expiresIn: '1 hour',
+        },
       });
     } catch (error) {
       this.logger.error('Failed to send password reset email:', error);
@@ -607,11 +767,11 @@ export class AuthService {
 
     // Send password reset success confirmation email
     try {
-      await this.emailService.sendTemplatedEmail(
-        user.email,
-        'passwordResetSuccess',
-        {
-          name: user.firstName
+      await this.emailService.sendTemplateEmail({
+        to: user.email,
+        templateAlias: 'password-reset',
+        variables: {
+          USER_NAME: user.firstName
             ? `${user.firstName} ${user.lastName || ''}`.trim()
             : user.email,
           resetTime: new Date().toLocaleString(),
@@ -619,7 +779,7 @@ export class AuthService {
             request?.ip || request?.connection?.remoteAddress || 'Unknown',
           userAgent: request?.get?.('User-Agent') || 'Unknown',
         },
-      );
+      });
     } catch (error) {
       this.logger.error('Failed to send password reset success email:', error);
       // Don't throw error as password was already reset successfully

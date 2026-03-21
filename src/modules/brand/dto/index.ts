@@ -8,3 +8,4 @@ export {
   BulkBrandOperationDto,
   BulkBrandOperationResultDto,
 } from './bulk-brand-operation.dto';
+export { BulkDeleteBrandDto } from './bulk-delete-brand.dto';
