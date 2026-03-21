@@ -13,6 +13,7 @@ import {
   InitiatePaymentDto,
   PaymentResponseDto,
 } from './dto/create-order.dto';
+import { CreateOutOfStockReportDto } from './dto/out-of-stock.dto';
 import {
   AssignOrderDto,
   AssignmentResponseDto,
@@ -31,6 +32,7 @@ import {
   UserRole,
   AssignmentStatus,
   ProcurementOfficerStatus,
+  OutOfStockReportStatus,
 } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 
@@ -107,6 +109,85 @@ export class OrderService {
   ): boolean {
     const validTransitions = this.getValidOrderItemStatusTransitions();
     return validTransitions[currentStatus]?.includes(newStatus) || false;
+  }
+
+  private normalizeOrigin(origin?: string | null): string | null {
+    if (!origin) {
+      return null;
+    }
+
+    const trimmedOrigin = origin.trim();
+    if (!trimmedOrigin) {
+      return null;
+    }
+
+    try {
+      return new URL(trimmedOrigin).origin;
+    } catch {
+      return trimmedOrigin.replace(/\/+$/, '');
+    }
+  }
+
+  private getAllowedOrigins(): string[] {
+    const configuredOrigins = [
+      this.configService.get<string>('ORIGIN'),
+      this.configService.get<string>('CORS_ORIGIN'),
+    ]
+      .filter((value): value is string => Boolean(value))
+      .flatMap((value) => value.split(','))
+      .map((value) => this.normalizeOrigin(value))
+      .filter((value): value is string => Boolean(value));
+
+    return [...new Set(configuredOrigins)];
+  }
+
+  private getPaymentRedirectPath(role: UserRole): string {
+    if (role === UserRole.WHOLESALER) {
+      return '/order-processing';
+    }
+
+    if (role === UserRole.ADMIN || role === UserRole.SUPER_ADMIN) {
+      return '/payment-verification';
+    }
+
+    return '/payment-verification';
+  }
+
+  private buildPaymentRedirectUrl(
+    role: UserRole,
+    requestOrigin?: string,
+  ): string {
+    const allowedOrigins = this.getAllowedOrigins();
+    const normalizedRequestOrigin = this.normalizeOrigin(requestOrigin);
+
+    let redirectBaseUrl: string | null = null;
+
+    if (
+      normalizedRequestOrigin &&
+      allowedOrigins.includes(normalizedRequestOrigin)
+    ) {
+      redirectBaseUrl = normalizedRequestOrigin;
+    } else if (normalizedRequestOrigin) {
+      this.logger.warn(
+        `Origin ${normalizedRequestOrigin} is not allowlisted for redirects; falling back to configured base URL`,
+      );
+    }
+
+    if (!redirectBaseUrl) {
+      redirectBaseUrl = this.normalizeOrigin(
+        this.configService.get<string>('APP_BASE_URL'),
+      );
+    }
+
+    if (!redirectBaseUrl && allowedOrigins.length > 0) {
+      redirectBaseUrl = allowedOrigins[0];
+    }
+
+    if (!redirectBaseUrl) {
+      throw new BadRequestException('No valid redirect base URL configured');
+    }
+
+    return `${redirectBaseUrl}${this.getPaymentRedirectPath(role)}`;
   }
 
   /**
@@ -350,6 +431,7 @@ export class OrderService {
     userId: string,
     initiatePaymentDto?: InitiatePaymentDto,
     options?: { bypassWholesalerDraftCart?: boolean },
+    requestOrigin?: string,
   ) {
     // Get user and validate permissions
     const user = await this.prismaService.user.findUnique({
@@ -539,8 +621,7 @@ export class OrderService {
         currencyCode: 'NGN',
         expiryDate: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
         paymentMethods: ['ACCOUNT_TRANSFER', 'CARD'],
-        redirectUrl:
-          this.configService.get('APP_BASE_URL') + `/payment-verification`,
+        redirectUrl: this.buildPaymentRedirectUrl(user.role, requestOrigin),
       };
 
       const monnifyInvoice =
@@ -674,7 +755,11 @@ export class OrderService {
    * Reinitiate payment for expired PENDING_PAYMENT orders
    * Returns existing details if not expired, recreates order if expired
    */
-  async reinitiatePayment(orderNumber: string, userId: string) {
+  async reinitiatePayment(
+    orderNumber: string,
+    userId: string,
+    requestOrigin?: string,
+  ) {
     // Get order and validate
     const order = await this.prismaService.order.findUnique({
       where: { orderNumber },
@@ -819,6 +904,7 @@ export class OrderService {
           {
             bypassWholesalerDraftCart: true,
           },
+          requestOrigin,
         );
       }
 
@@ -849,7 +935,13 @@ export class OrderService {
         },
       });
 
-      return await this.initiatePayment(newDraftOrder.orderNumber, userId);
+      return await this.initiatePayment(
+        newDraftOrder.orderNumber,
+        userId,
+        undefined,
+        undefined,
+        requestOrigin,
+      );
     }
 
     // Check if payment has expired using Monnify's expiry date
@@ -955,6 +1047,7 @@ export class OrderService {
           {
             bypassWholesalerDraftCart: true,
           },
+          requestOrigin,
         );
       }
 
@@ -985,7 +1078,13 @@ export class OrderService {
       });
 
       // 6. Immediately initiate payment for recreated order
-      return await this.initiatePayment(newDraftOrder.orderNumber, userId);
+      return await this.initiatePayment(
+        newDraftOrder.orderNumber,
+        userId,
+        undefined,
+        undefined,
+        requestOrigin,
+      );
     } catch (error) {
       this.logger.error(
         `Failed to reinitiate payment for order ${orderNumber}: ${error.message}`,
@@ -1752,6 +1851,411 @@ export class OrderService {
     };
   }
 
+  async createOutOfStockReport(
+    createDto: CreateOutOfStockReportDto,
+    userId: string,
+  ) {
+    const user = await this.prismaService.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.role !== UserRole.WHOLESALER) {
+      throw new ForbiddenException(
+        'Only wholesalers can report out-of-stock items',
+      );
+    }
+
+    if (!createDto.items?.length) {
+      throw new BadRequestException('At least one item is required');
+    }
+
+    const uniqueOrderItemIds = [
+      ...new Set(createDto.items.map((i) => i.orderItemId)),
+    ];
+    if (uniqueOrderItemIds.length !== createDto.items.length) {
+      throw new BadRequestException(
+        'Duplicate orderItemId entries are not allowed in a single report',
+      );
+    }
+
+    const orderItems = await this.prismaService.orderItem.findMany({
+      where: { id: { in: uniqueOrderItemIds } },
+      include: {
+        order: {
+          select: {
+            id: true,
+            orderNumber: true,
+            wholesalerId: true,
+            status: true,
+          },
+        },
+        product: {
+          select: {
+            id: true,
+            name: true,
+            sku: true,
+          },
+        },
+      },
+    });
+
+    if (orderItems.length !== uniqueOrderItemIds.length) {
+      throw new NotFoundException('One or more order items were not found');
+    }
+
+    const itemMap = new Map(orderItems.map((item) => [item.id, item]));
+
+    for (const inputItem of createDto.items) {
+      const item = itemMap.get(inputItem.orderItemId);
+
+      if (!item) {
+        throw new NotFoundException(
+          `Order item ${inputItem.orderItemId} was not found`,
+        );
+      }
+
+      if (item.orderId !== inputItem.orderId) {
+        throw new BadRequestException(
+          `Order item ${inputItem.orderItemId} does not belong to order ${inputItem.orderId}`,
+        );
+      }
+
+      if (item.order.wholesalerId !== userId) {
+        throw new ForbiddenException(
+          'You can only report items from your own orders',
+        );
+      }
+
+      if (item.order.status !== OrderStatus.COMPLETED) {
+        throw new BadRequestException(
+          `Order ${item.order.orderNumber} is not completed`,
+        );
+      }
+
+      const quantityAffected = inputItem.quantityAffected ?? item.quantity;
+      if (quantityAffected < 1 || quantityAffected > item.quantity) {
+        throw new BadRequestException(
+          `Invalid quantityAffected for item ${item.id}. Must be between 1 and ${item.quantity}`,
+        );
+      }
+    }
+
+    const existingOpenItems =
+      await this.prismaService.outOfStockReportItem.findMany({
+        where: {
+          orderItemId: { in: uniqueOrderItemIds },
+          report: {
+            status: OutOfStockReportStatus.OPEN,
+          },
+        },
+        select: {
+          orderItemId: true,
+          product: { select: { name: true } },
+        },
+      });
+
+    if (existingOpenItems.length > 0) {
+      const existingItemNames = existingOpenItems.map(
+        (item) => item.product.name,
+      );
+      throw new BadRequestException(
+        `Some items already exist in an open out-of-stock report: ${existingItemNames.join(', ')}`,
+      );
+    }
+
+    const report = await this.prismaService.outOfStockReport.create({
+      data: {
+        wholesalerId: userId,
+        items: {
+          create: createDto.items.map((inputItem) => {
+            const item = itemMap.get(inputItem.orderItemId)!;
+            return {
+              orderId: inputItem.orderId,
+              orderItemId: inputItem.orderItemId,
+              productId: item.productId,
+              quantityAffected: inputItem.quantityAffected ?? item.quantity,
+            };
+          }),
+        },
+      },
+      include: {
+        wholesaler: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phone: true,
+          },
+        },
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Out-of-stock request created successfully',
+      data: report,
+    };
+  }
+
+  async listOpenOutOfStockReports(userId: string) {
+    const user = await this.prismaService.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.role !== UserRole.ADMIN && user.role !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException('Only admins can view out-of-stock reports');
+    }
+
+    const reports = await this.prismaService.outOfStockReport.findMany({
+      where: {
+        status: OutOfStockReportStatus.OPEN,
+      },
+      include: {
+        wholesaler: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phone: true,
+            role: true,
+            status: true,
+            createdAt: true,
+          },
+        },
+        items: {
+          include: {
+            order: {
+              select: {
+                id: true,
+                orderNumber: true,
+                status: true,
+                orderDate: true,
+                submittedAt: true,
+                confirmedAt: true,
+                totalAmount: true,
+              },
+            },
+            orderItem: {
+              select: {
+                id: true,
+                quantity: true,
+                status: true,
+                unitPrice: true,
+                lineTotal: true,
+              },
+            },
+            product: {
+              select: {
+                id: true,
+                name: true,
+                sku: true,
+                thumbnail: true,
+                images: true,
+                price: true,
+                quantity: true,
+                brand: { select: { id: true, name: true } },
+                variant: { select: { id: true, name: true } },
+                packSize: { select: { id: true, name: true } },
+                packType: { select: { id: true, name: true } },
+              },
+            },
+          },
+          orderBy: {
+            createdAt: 'desc',
+          },
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Open out-of-stock reports retrieved successfully',
+      data: {
+        reports,
+      },
+    };
+  }
+
+  async resolveOutOfStockReport(reportId: string, userId: string) {
+    const user = await this.prismaService.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.role !== UserRole.ADMIN && user.role !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException(
+        'Only admins can resolve out-of-stock reports',
+      );
+    }
+
+    const existingReport = await this.prismaService.outOfStockReport.findUnique(
+      {
+        where: { id: reportId },
+        select: {
+          id: true,
+          status: true,
+        },
+      },
+    );
+
+    if (!existingReport) {
+      throw new NotFoundException('Out-of-stock report not found');
+    }
+
+    if (existingReport.status === OutOfStockReportStatus.RESOLVED) {
+      const resolvedReport =
+        await this.prismaService.outOfStockReport.findUnique({
+          where: { id: reportId },
+          include: {
+            wholesaler: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                phone: true,
+                wholesalerProfile: {
+                  select: {
+                    id: true,
+                    regionId: true,
+                    totalOrders: true,
+                    totalSpent: true,
+                    userAddress: true,
+                  },
+                },
+              },
+            },
+            resolver: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+              },
+            },
+            items: {
+              include: {
+                order: {
+                  select: {
+                    id: true,
+                    orderNumber: true,
+                    status: true,
+                  },
+                },
+                orderItem: {
+                  select: {
+                    id: true,
+                    quantity: true,
+                    status: true,
+                  },
+                },
+                product: {
+                  select: {
+                    id: true,
+                    name: true,
+                    sku: true,
+                  },
+                },
+              },
+            },
+          },
+        });
+
+      return {
+        success: true,
+        message: 'Out-of-stock report is already resolved',
+        data: resolvedReport,
+      };
+    }
+
+    const report = await this.prismaService.outOfStockReport.update({
+      where: { id: reportId },
+      data: {
+        status: OutOfStockReportStatus.RESOLVED,
+        resolvedAt: new Date(),
+        resolvedBy: userId,
+      },
+      include: {
+        wholesaler: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phone: true,
+            wholesalerProfile: {
+              select: {
+                id: true,
+                regionId: true,
+                totalOrders: true,
+                totalSpent: true,
+                userAddress: true,
+              },
+            },
+          },
+        },
+        resolver: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+          },
+        },
+        items: {
+          include: {
+            order: {
+              select: {
+                id: true,
+                orderNumber: true,
+                status: true,
+              },
+            },
+            orderItem: {
+              select: {
+                id: true,
+                quantity: true,
+                status: true,
+              },
+            },
+            product: {
+              select: {
+                id: true,
+                name: true,
+                sku: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Out-of-stock report resolved successfully',
+      data: report,
+    };
+  }
+
   /**
    * Handle Monnify webhook with proper duplicate prevention and processing
    */
@@ -1908,7 +2412,7 @@ export class OrderService {
         data: {
           status: OrderItemStatus.PAID,
           statusUpdatedAt: new Date(),
-          statusUpdatedBy: 'webhook', // Use 'webhook' identifier for webhook updates
+          statusUpdatedBy: null,
         },
       });
     });
@@ -3882,7 +4386,7 @@ export class OrderService {
           createdAt: true,
         },
         orderBy: { createdAt: 'desc' },
-        take: 20,
+        take: 10,
       }),
 
       // 3. Get total revenue from completed orders

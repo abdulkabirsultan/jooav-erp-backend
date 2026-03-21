@@ -47,6 +47,11 @@ import {
   PaymentResponseDto,
   DraftOrderResponseDto,
 } from './dto/create-order.dto';
+import {
+  CreateOutOfStockReportDto,
+  OutOfStockReportListResponseDto,
+  OutOfStockReportResponseDto,
+} from './dto/out-of-stock.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { WebhookResponseDto } from './dto/webhook.dto';
 import { SuccessResponse } from '../../common/dto/api-response.dto';
@@ -100,9 +105,9 @@ export class OrderController {
     summary: 'Initiate payment for draft order',
     description:
       'Converts a DRAFT order to PENDING_PAYMENT and generates a Monnify virtual account. ' +
-    '\n\n**Address rules:**' +
+      '\n\n**Address rules:**' +
       '\n- `deliveryAddress` is strictly required for all users. Only the `address` sub-field is mandatory; all others (city, state, contactName, contactPhone) are optional.' +
-      '\n\n**Phone fallback**: If `contactPhone` is omitted from the address, it will be auto-filled from the wholesaler\'s user profile.' +
+      "\n\n**Phone fallback**: If `contactPhone` is omitted from the address, it will be auto-filled from the wholesaler's user profile." +
       '\n\n**Items**: Always sourced from the draft order in the database — do not include items in this request.',
   })
   @ApiParam({
@@ -129,11 +134,14 @@ export class OrderController {
     @Param('orderNumber') orderNumber: string,
     @Body() initiatePaymentDto: InitiatePaymentDto,
     @CurrentUserId() userId: string,
+    @Headers('origin') requestOrigin?: string,
   ): Promise<PaymentResponseDto> {
     return this.orderService.initiatePayment(
       orderNumber,
       userId,
       initiatePaymentDto,
+      undefined,
+      requestOrigin,
     );
   }
 
@@ -163,8 +171,13 @@ export class OrderController {
   async reinitiatePayment(
     @Param('orderNumber') orderNumber: string,
     @CurrentUserId() userId: string,
+    @Headers('origin') requestOrigin?: string,
   ): Promise<PaymentResponseDto> {
-    return this.orderService.reinitiatePayment(orderNumber, userId);
+    return this.orderService.reinitiatePayment(
+      orderNumber,
+      userId,
+      requestOrigin,
+    );
   }
 
   @Get('stats')
@@ -341,6 +354,63 @@ export class OrderController {
     );
 
     return new SuccessResponse(result.message, result.data);
+  }
+
+  @Post('out-of-stock-reports')
+  @Roles(UserRole.WHOLESALER)
+  @ApiOperation({
+    summary: 'Report out-of-stock items',
+    description:
+      'Wholesaler marks one or more items from completed orders as out of stock',
+  })
+  @ApiResponse({
+    status: HttpStatus.CREATED,
+    description: 'Out-of-stock report created successfully',
+    type: OutOfStockReportResponseDto,
+  })
+  async createOutOfStockReport(
+    @Body() createDto: CreateOutOfStockReportDto,
+    @CurrentUserId() userId: string,
+  ): Promise<OutOfStockReportResponseDto> {
+    return this.orderService.createOutOfStockReport(createDto, userId);
+  }
+
+  @Get('out-of-stock-reports')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'List open out-of-stock reports',
+    description:
+      'Admin retrieves all open out-of-stock reports with full wholesaler and item details (no pagination)',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Open out-of-stock reports retrieved successfully',
+    type: OutOfStockReportListResponseDto,
+  })
+  async listOpenOutOfStockReports(
+    @CurrentUserId() userId: string,
+  ): Promise<OutOfStockReportListResponseDto> {
+    return this.orderService.listOpenOutOfStockReports(userId);
+  }
+
+  @Patch('out-of-stock-reports/:reportId/resolve')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'Resolve out-of-stock report',
+    description:
+      'Admin marks an out-of-stock report as resolved so it no longer appears in open list',
+  })
+  @ApiParam({ name: 'reportId', description: 'Out-of-stock report ID' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Out-of-stock report resolved successfully',
+    type: OutOfStockReportResponseDto,
+  })
+  async resolveOutOfStockReport(
+    @Param('reportId') reportId: string,
+    @CurrentUserId() userId: string,
+  ): Promise<OutOfStockReportResponseDto> {
+    return this.orderService.resolveOutOfStockReport(reportId, userId);
   }
 
   @Get(':orderNumber')
