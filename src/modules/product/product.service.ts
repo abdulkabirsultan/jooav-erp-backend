@@ -25,6 +25,7 @@ import { BarcodeGenerator } from '../../common/utils/barcode.utils';
 @Injectable()
 export class ProductService {
   private readonly logger = new Logger(ProductService.name);
+  private static readonly MAX_INT4 = 2147483647;
 
   constructor(
     private prisma: PrismaService,
@@ -184,6 +185,35 @@ export class ProductService {
     }
   }
 
+  private validateQuantityRange(quantity: unknown): void {
+    if (quantity === undefined || quantity === null) {
+      return;
+    }
+
+    if (!Number.isInteger(quantity) || Number(quantity) < 0) {
+      throw new BadRequestException('Quantity must be a non-negative integer');
+    }
+
+    if (Number(quantity) > ProductService.MAX_INT4) {
+      throw new BadRequestException(
+        `Quantity exceeds maximum supported value (${ProductService.MAX_INT4})`,
+      );
+    }
+  }
+
+  private isInt4OverflowError(error: unknown): boolean {
+    if (!error || typeof error !== 'object') {
+      return false;
+    }
+
+    const errorWithMessage = error as { message?: string };
+    const message = errorWithMessage.message || '';
+    return (
+      message.includes('Unable to fit integer value') &&
+      message.includes('INT4')
+    );
+  }
+
   async create(
     createProductDto: CreateProductDto,
     userId: string,
@@ -200,6 +230,8 @@ export class ProductService {
       thumbnail,
       ...rest
     } = createProductDto;
+
+    this.validateQuantityRange(rest.quantity);
 
     // Validate references and get manufacturerId from brand
     const validation = await this.validateReferences(brandId, subcategoryId);
@@ -362,6 +394,12 @@ export class ProductService {
         subcategoryId: product.subcategoryId || undefined,
       };
     } catch (error) {
+      if (this.isInt4OverflowError(error)) {
+        throw new BadRequestException(
+          `Quantity exceeds maximum supported value (${ProductService.MAX_INT4})`,
+        );
+      }
+
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         if (error.code === 'P2002') {
           const field = error.meta?.target as string[];
@@ -557,6 +595,8 @@ export class ProductService {
       deleteThumbnail,
       ...rest
     } = updateProductDto;
+
+    this.validateQuantityRange(rest.quantity);
 
     let sku: string | undefined;
     let manufacturerId: string | undefined;
@@ -820,6 +860,12 @@ export class ProductService {
         subcategoryId: product.subcategoryId || undefined,
       };
     } catch (error) {
+      if (this.isInt4OverflowError(error)) {
+        throw new BadRequestException(
+          `Quantity exceeds maximum supported value (${ProductService.MAX_INT4})`,
+        );
+      }
+
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         if (error.code === 'P2002') {
           const field = error.meta?.target as string[];

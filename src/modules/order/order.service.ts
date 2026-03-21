@@ -111,6 +111,85 @@ export class OrderService {
     return validTransitions[currentStatus]?.includes(newStatus) || false;
   }
 
+  private normalizeOrigin(origin?: string | null): string | null {
+    if (!origin) {
+      return null;
+    }
+
+    const trimmedOrigin = origin.trim();
+    if (!trimmedOrigin) {
+      return null;
+    }
+
+    try {
+      return new URL(trimmedOrigin).origin;
+    } catch {
+      return trimmedOrigin.replace(/\/+$/, '');
+    }
+  }
+
+  private getAllowedOrigins(): string[] {
+    const configuredOrigins = [
+      this.configService.get<string>('ORIGIN'),
+      this.configService.get<string>('CORS_ORIGIN'),
+    ]
+      .filter((value): value is string => Boolean(value))
+      .flatMap((value) => value.split(','))
+      .map((value) => this.normalizeOrigin(value))
+      .filter((value): value is string => Boolean(value));
+
+    return [...new Set(configuredOrigins)];
+  }
+
+  private getPaymentRedirectPath(role: UserRole): string {
+    if (role === UserRole.WHOLESALER) {
+      return '/order-processing';
+    }
+
+    if (role === UserRole.ADMIN || role === UserRole.SUPER_ADMIN) {
+      return '/payment-verification';
+    }
+
+    return '/payment-verification';
+  }
+
+  private buildPaymentRedirectUrl(
+    role: UserRole,
+    requestOrigin?: string,
+  ): string {
+    const allowedOrigins = this.getAllowedOrigins();
+    const normalizedRequestOrigin = this.normalizeOrigin(requestOrigin);
+
+    let redirectBaseUrl: string | null = null;
+
+    if (
+      normalizedRequestOrigin &&
+      allowedOrigins.includes(normalizedRequestOrigin)
+    ) {
+      redirectBaseUrl = normalizedRequestOrigin;
+    } else if (normalizedRequestOrigin) {
+      this.logger.warn(
+        `Origin ${normalizedRequestOrigin} is not allowlisted for redirects; falling back to configured base URL`,
+      );
+    }
+
+    if (!redirectBaseUrl) {
+      redirectBaseUrl = this.normalizeOrigin(
+        this.configService.get<string>('APP_BASE_URL'),
+      );
+    }
+
+    if (!redirectBaseUrl && allowedOrigins.length > 0) {
+      redirectBaseUrl = allowedOrigins[0];
+    }
+
+    if (!redirectBaseUrl) {
+      throw new BadRequestException('No valid redirect base URL configured');
+    }
+
+    return `${redirectBaseUrl}${this.getPaymentRedirectPath(role)}`;
+  }
+
   /**
    * Create draft order (no payment integration)
    * Supports both admin and wholesaler order creation
@@ -352,6 +431,7 @@ export class OrderService {
     userId: string,
     initiatePaymentDto?: InitiatePaymentDto,
     options?: { bypassWholesalerDraftCart?: boolean },
+    requestOrigin?: string,
   ) {
     // Get user and validate permissions
     const user = await this.prismaService.user.findUnique({
@@ -541,8 +621,7 @@ export class OrderService {
         currencyCode: 'NGN',
         expiryDate: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
         paymentMethods: ['ACCOUNT_TRANSFER', 'CARD'],
-        redirectUrl:
-          this.configService.get('APP_BASE_URL') + `/payment-verification`,
+        redirectUrl: this.buildPaymentRedirectUrl(user.role, requestOrigin),
       };
 
       const monnifyInvoice =
@@ -676,7 +755,11 @@ export class OrderService {
    * Reinitiate payment for expired PENDING_PAYMENT orders
    * Returns existing details if not expired, recreates order if expired
    */
-  async reinitiatePayment(orderNumber: string, userId: string) {
+  async reinitiatePayment(
+    orderNumber: string,
+    userId: string,
+    requestOrigin?: string,
+  ) {
     // Get order and validate
     const order = await this.prismaService.order.findUnique({
       where: { orderNumber },
@@ -821,6 +904,7 @@ export class OrderService {
           {
             bypassWholesalerDraftCart: true,
           },
+          requestOrigin,
         );
       }
 
@@ -851,7 +935,13 @@ export class OrderService {
         },
       });
 
-      return await this.initiatePayment(newDraftOrder.orderNumber, userId);
+      return await this.initiatePayment(
+        newDraftOrder.orderNumber,
+        userId,
+        undefined,
+        undefined,
+        requestOrigin,
+      );
     }
 
     // Check if payment has expired using Monnify's expiry date
@@ -957,6 +1047,7 @@ export class OrderService {
           {
             bypassWholesalerDraftCart: true,
           },
+          requestOrigin,
         );
       }
 
@@ -987,7 +1078,13 @@ export class OrderService {
       });
 
       // 6. Immediately initiate payment for recreated order
-      return await this.initiatePayment(newDraftOrder.orderNumber, userId);
+      return await this.initiatePayment(
+        newDraftOrder.orderNumber,
+        userId,
+        undefined,
+        undefined,
+        requestOrigin,
+      );
     } catch (error) {
       this.logger.error(
         `Failed to reinitiate payment for order ${orderNumber}: ${error.message}`,
@@ -2315,7 +2412,7 @@ export class OrderService {
         data: {
           status: OrderItemStatus.PAID,
           statusUpdatedAt: new Date(),
-          statusUpdatedBy: 'webhook', // Use 'webhook' identifier for webhook updates
+          statusUpdatedBy: null,
         },
       });
     });
