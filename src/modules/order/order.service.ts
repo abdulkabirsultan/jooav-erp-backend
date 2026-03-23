@@ -1766,6 +1766,104 @@ export class OrderService {
       where.status = queryDto.status;
     }
 
+    const search = queryDto.search?.trim();
+    if (search) {
+      where.OR = [
+        {
+          orderNumber: {
+            contains: search,
+            mode: 'insensitive',
+          },
+        },
+        {
+          items: {
+            some: {
+              id: {
+                contains: search,
+                mode: 'insensitive',
+              },
+            },
+          },
+        },
+        {
+          items: {
+            some: {
+              processingNotes: {
+                contains: search,
+                mode: 'insensitive',
+              },
+            },
+          },
+        },
+        {
+          items: {
+            some: {
+              product: {
+                name: {
+                  contains: search,
+                  mode: 'insensitive',
+                },
+              },
+            },
+          },
+        },
+        {
+          items: {
+            some: {
+              product: {
+                sku: {
+                  contains: search,
+                  mode: 'insensitive',
+                },
+              },
+            },
+          },
+        },
+        {
+          items: {
+            some: {
+              product: {
+                brand: {
+                  name: {
+                    contains: search,
+                    mode: 'insensitive',
+                  },
+                },
+              },
+            },
+          },
+        },
+        {
+          items: {
+            some: {
+              product: {
+                variant: {
+                  name: {
+                    contains: search,
+                    mode: 'insensitive',
+                  },
+                },
+              },
+            },
+          },
+        },
+        {
+          items: {
+            some: {
+              product: {
+                subcategory: {
+                  name: {
+                    contains: search,
+                    mode: 'insensitive',
+                  },
+                },
+              },
+            },
+          },
+        },
+      ];
+    }
+
     // Set sort order (default: desc)
     const sortOrder = queryDto.sortOrder || 'desc';
 

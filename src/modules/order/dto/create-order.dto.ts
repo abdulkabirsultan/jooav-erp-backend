@@ -190,6 +190,16 @@ export class ListOrdersQueryDto {
   status?: OrderStatus;
 
   @ApiProperty({
+    description:
+      'Search by order number, product details, or item details in an order',
+    required: false,
+    example: '',
+  })
+  @IsOptional()
+  @IsString()
+  search?: string;
+
+  @ApiProperty({
     description: 'Sort order for results',
     enum: ['asc', 'desc'],
     required: false,

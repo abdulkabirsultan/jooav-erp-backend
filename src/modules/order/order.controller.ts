@@ -459,6 +459,14 @@ export class OrderController {
     description: 'Filter by order status',
   })
   @ApiQuery({
+    name: 'search',
+    required: false,
+    type: 'string',
+    description:
+      'Search by order number, product fields, or item details within orders',
+    example: '',
+  })
+  @ApiQuery({
     name: 'sortOrder',
     required: false,
     enum: ['asc', 'desc'],
