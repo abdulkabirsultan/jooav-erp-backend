@@ -143,7 +143,7 @@ export class OrderService {
 
   private getPaymentRedirectPath(role: UserRole): string {
     if (role === UserRole.WHOLESALER) {
-      return '/order-processing';
+      return '/dashboard/payment-verification';
     }
 
     if (role === UserRole.ADMIN || role === UserRole.SUPER_ADMIN) {
