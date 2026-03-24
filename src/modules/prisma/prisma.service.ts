@@ -1,21 +1,49 @@
-import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleInit,
+  OnModuleDestroy,
+} from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { withAccelerate } from '@prisma/extension-accelerate';
 
 @Injectable()
 export class PrismaService
   extends PrismaClient
   implements OnModuleInit, OnModuleDestroy
 {
-  constructor(private configService: ConfigService) {
+  constructor(configService: ConfigService) {
+    const rawDatabaseUrl =
+      configService.get<string>('database.url') ||
+      process.env.DATABASE_URL ||
+      '';
+    const databaseUrl = rawDatabaseUrl.trim().replace(/^['"]|['"]$/g, '');
+    const logger = new Logger(PrismaService.name);
+
+    const isAccelerateUrl = /^prisma(\+postgres)?:\/\//i.test(databaseUrl);
+
+    if (isAccelerateUrl) {
+      super({
+        log: ['error', 'warn'],
+      });
+
+      Object.assign(this, this.$extends(withAccelerate()));
+      logger.log('Prisma initialized in Accelerate mode');
+      return;
+    }
+
+    const adapter = databaseUrl
+      ? new PrismaPg({ connectionString: databaseUrl })
+      : undefined;
+
     super({
-      datasources: {
-        db: {
-          url: configService.get('database.url'),
-        },
-      },
+      ...(adapter ? { adapter } : {}),
       log: ['error', 'warn'],
     });
+
+    logger.log('Prisma initialized in adapter-pg mode');
   }
 
   async onModuleInit() {

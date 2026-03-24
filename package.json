@@ -43,7 +43,8 @@
     "typecheck": "tsc --noEmit",
     "health:check": "curl -f http://localhost:3000/api/v1/health || exit 1",
     "admin:seed": "./scripts/seed-admin.sh",
-    "deploy:templates": "ts-node src/scripts/deploy-templates.ts"
+    "deploy:templates": "ts-node src/scripts/deploy-templates.ts",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@nestjs/axios": "^4.0.1",
@@ -58,7 +59,9 @@
     "@nestjs/swagger": "^11.2.3",
     "@nestjs/terminus": "^11.0.0",
     "@nestjs/throttler": "^6.5.0",
+    "@prisma/adapter-pg": "^6.19.0",
     "@prisma/client": "^6.19.0",
+    "@prisma/extension-accelerate": "^3.0.1",
     "@sentry/nestjs": "^10.29.0",
     "@sentry/profiling-node": "^10.30.0",
     "@types/bcryptjs": "^3.0.0",
@@ -66,6 +69,7 @@
     "@types/multer": "^2.0.0",
     "@types/passport-jwt": "^4.0.1",
     "@types/passport-local": "^1.0.38",
+    "@types/pg": "^8.20.0",
     "@upstash/redis": "^1.35.8",
     "argon2": "^0.44.0",
     "axios": "^1.13.5",
@@ -86,6 +90,7 @@
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "passport-local": "^1.0.0",
+    "pg": "^8.20.0",
     "prisma": "^6.19.0",
     "reflect-metadata": "^0.2.2",
     "resend": "^6.9.2",
