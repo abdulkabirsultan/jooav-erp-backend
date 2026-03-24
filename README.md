@@ -282,6 +282,10 @@ Key environment variables:
 # Database (Local PostgreSQL)
 DATABASE_URL=postgresql://jooav:password@localhost:5432/jooav_erp_dev
 
+# Database (Prisma Postgres recommended)
+# DATABASE_URL=postgres://USER:PASSWORD@pooled.db.prisma.io:5432/postgres?sslmode=require
+# DIRECT_URL=postgres://USER:PASSWORD@db.prisma.io:5432/postgres?sslmode=require
+
 # Redis (Local Redis)
 REDIS_URL=redis://localhost:6379
 REDIS_HOST=localhost
