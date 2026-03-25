@@ -94,6 +94,33 @@ export class UsersController {
     );
   }
 
+  @Get('archive')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Get archived (deactivated) users with pagination (Admin only)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Archived users retrieved successfully',
+    type: PaginatedResponse<UserProfileDto>,
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Admin access required',
+  })
+  async findArchived(
+    @Query() queryDto: UsersQueryDto,
+    @CurrentUserId() currentUserId?: string,
+  ): Promise<PaginatedResponse<UserProfileDto>> {
+    return this.usersService.findArchived(
+      queryDto,
+      { role: queryDto.role, search: queryDto.search },
+      currentUserId,
+    );
+  }
+
   @Post()
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)

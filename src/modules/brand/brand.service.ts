@@ -493,11 +493,14 @@ export class BrandService {
     // Check if brand name will change (affects product names and SKUs)
     const willAffectProducts =
       updateBrandDto.name && updateBrandDto.name !== existingBrand.name;
+    const effectiveBrandName =
+      typeof updateData.name === 'string'
+        ? updateData.name
+        : existingBrand.name;
 
     try {
-      // Use transaction if brand name changes to update products
-      const result = await this.prisma.$transaction(async (tx) => {
-        const brand = await tx.brand.update({
+      const operations: any[] = [
+        this.prisma.brand.update({
           where: { id },
           data: updateData,
           include: {
@@ -509,41 +512,42 @@ export class BrandService {
               },
             },
           },
+        }),
+      ];
+
+      if (willAffectProducts) {
+        const linkedProducts = await this.prisma.product.findMany({
+          where: {
+            brandId: id,
+            deletedAt: null,
+          },
+          select: {
+            id: true,
+            variant: { select: { name: true } },
+            packSize: { select: { name: true } },
+            packType: { select: { name: true } },
+          },
         });
 
-        // If brand name changed, update all linked product names and SKUs
-        if (willAffectProducts) {
-          const linkedProducts = await tx.product.findMany({
-            where: {
-              brandId: id,
-              deletedAt: null,
-            },
-            select: {
-              id: true,
-              variant: { select: { name: true } },
-              packSize: { select: { name: true } },
-              packType: { select: { name: true } },
-            },
-          });
+        for (const product of linkedProducts) {
+          const newName = `${effectiveBrandName} ${product.variant.name} ${product.packSize.name} (${product.packType.name})`;
+          const newSku = `${effectiveBrandName.toUpperCase().replace(/[^A-Z0-9]/g, '-')}-${product.variant.name.toUpperCase().replace(/[^A-Z0-9]/g, '-')}-${product.packSize.name.toUpperCase().replace(/[^A-Z0-9]/g, '-')}-${product.packType.name.toUpperCase().replace(/[^A-Z0-9]/g, '-')}`;
 
-          // Update each product's name and SKU
-          for (const product of linkedProducts) {
-            const newName = `${brand.name} ${product.variant.name} ${product.packSize.name} (${product.packType.name})`;
-            const newSku = `${brand.name.toUpperCase().replace(/[^A-Z0-9]/g, '-')}-${product.variant.name.toUpperCase().replace(/[^A-Z0-9]/g, '-')}-${product.packSize.name.toUpperCase().replace(/[^A-Z0-9]/g, '-')}-${product.packType.name.toUpperCase().replace(/[^A-Z0-9]/g, '-')}`;
-
-            await tx.product.update({
+          operations.push(
+            this.prisma.product.update({
               where: { id: product.id },
               data: {
                 name: newName,
                 sku: newSku,
                 updatedBy: userId,
               },
-            });
-          }
+            }),
+          );
         }
+      }
 
-        return brand;
-      });
+      const results = await this.prisma.$transaction(operations);
+      const result = results[0] as BrandResponseDto;
 
       // Log audit trail
       await this.auditService.createAuditLog({
