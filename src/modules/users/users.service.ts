@@ -148,6 +148,24 @@ export class UsersService {
     );
   }
 
+  async findArchived(
+    paginationDto: PaginationDto,
+    filters?: {
+      role?: UserRole;
+      search?: string;
+    },
+    currentUserId?: string,
+  ): Promise<PaginatedResponse<UserProfileDto>> {
+    return this.findAll(
+      paginationDto,
+      {
+        ...filters,
+        status: UserStatus.DEACTIVATED,
+      },
+      currentUserId,
+    );
+  }
+
   /**
    * Get user by ID
    */
@@ -1301,7 +1319,7 @@ export class UsersService {
       this.prisma.user.count(),
       this.prisma.user.count({
         where: {
-          status: UserStatus.SUSPENDED, // Assuming SUSPENDED is "archived"
+          status: UserStatus.DEACTIVATED,
         },
       }),
     ]);
@@ -1343,6 +1361,15 @@ export class UsersService {
   ): Promise<BulkDeleteResultDto> {
     const results: Array<{ id: string; success: boolean; error?: string }> = [];
 
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: currentUserId },
+      include: { adminProfile: true },
+    });
+
+    if (!currentUser) {
+      throw new NotFoundException('Current user not found');
+    }
+
     // Process each user deletion individually to handle errors gracefully
     for (const userId of userIds) {
       try {
@@ -1360,6 +1387,15 @@ export class UsersService {
           continue;
         }
 
+        if (user.status === UserStatus.DEACTIVATED) {
+          results.push({
+            id: userId,
+            success: false,
+            error: 'User is already deactivated',
+          });
+          continue;
+        }
+
         // Prevent user from deleting themselves
         if (userId === currentUserId) {
           results.push({
@@ -1370,20 +1406,16 @@ export class UsersService {
           continue;
         }
 
-        // Prevent deletion of SUPER_ADMIN users by non-SUPER_ADMINs
-        const currentUser = await this.prisma.user.findUnique({
-          where: { id: currentUserId },
-          select: { role: true },
-        });
-
+        // Check permissions for deleting admin accounts
         if (
-          user.role === UserRole.SUPER_ADMIN &&
-          currentUser?.role !== UserRole.SUPER_ADMIN
+          (user.role === UserRole.ADMIN ||
+            user.role === UserRole.SUPER_ADMIN) &&
+          !currentUser.adminProfile?.canSuspendAdmins
         ) {
           results.push({
             id: userId,
             success: false,
-            error: 'Only SUPER_ADMIN can delete SUPER_ADMIN users',
+            error: 'Insufficient permissions to delete admin accounts',
           });
           continue;
         }
@@ -1406,20 +1438,16 @@ export class UsersService {
           }
         }
 
-        // Check for dependencies (orders, created content, etc.)
-        const dependencies = await this.checkUserDependencies(userId);
-        if (dependencies.length > 0) {
-          results.push({
-            id: userId,
-            success: false,
-            error: `Cannot delete user with existing dependencies: ${dependencies.join(', ')}`,
-          });
-          continue;
-        }
-
-        // Perform hard delete (since User model doesn't have soft delete fields)
-        await this.prisma.user.delete({
+        await this.prisma.user.update({
           where: { id: userId },
+          data: {
+            status: UserStatus.DEACTIVATED,
+            updatedAt: new Date(),
+          },
+        });
+
+        await this.prisma.userSession.deleteMany({
+          where: { userId },
         });
 
         results.push({
