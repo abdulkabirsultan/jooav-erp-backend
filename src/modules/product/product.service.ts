@@ -522,6 +522,112 @@ export class ProductService {
     return new PaginatedResponse(products, page, limit, total);
   }
 
+  async findArchived(
+    query: ProductQueryDto,
+  ): Promise<PaginatedResponse<ProductResponseDto>> {
+    const {
+      page = 1,
+      limit = 10,
+      search,
+      brandId,
+      categoryId,
+      subcategoryId,
+      subcategoryIds,
+      variant,
+      priceSort,
+      includeRelations = true,
+    } = query;
+
+    const normalizedSubcategoryIds =
+      subcategoryIds && subcategoryIds.length > 0
+        ? subcategoryIds
+        : subcategoryId
+          ? [subcategoryId]
+          : [];
+
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.ProductWhereInput = {
+      status: 'ARCHIVED',
+      ...(brandId && { brandId }),
+      ...(categoryId && {
+        subcategory: {
+          categoryId: categoryId,
+        },
+      }),
+      ...(normalizedSubcategoryIds.length > 0 && {
+        subcategoryId: { in: normalizedSubcategoryIds },
+      }),
+      ...(variant && {
+        variant: {
+          name: { contains: variant, mode: 'insensitive' as const },
+        },
+      }),
+      ...(search && {
+        OR: [
+          { name: { contains: search, mode: 'insensitive' } },
+          { sku: { contains: search, mode: 'insensitive' } },
+          { description: { contains: search, mode: 'insensitive' } },
+          { variant: { name: { contains: search, mode: 'insensitive' } } },
+        ],
+      }),
+    };
+
+    const include = includeRelations
+      ? {
+          brand: {
+            select: {
+              id: true,
+              name: true,
+              manufacturer: { select: { name: true, id: true } },
+            },
+          },
+          variant: {
+            select: { id: true, name: true, description: true },
+          },
+          subcategory: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              category: {
+                select: { id: true, name: true, slug: true },
+              },
+            },
+          },
+          manufacturer: {
+            select: { id: true, name: true },
+          },
+          packSize: {
+            select: { id: true, name: true },
+          },
+          packType: {
+            select: { id: true, name: true },
+          },
+        }
+      : undefined;
+
+    const [rawProducts, total] = await Promise.all([
+      this.prisma.product.findMany({
+        where,
+        include,
+        orderBy: priceSort
+          ? [{ price: priceSort }, { createdAt: 'desc' }]
+          : [{ createdAt: 'desc' }],
+        skip,
+        take: limit,
+      }),
+      this.prisma.product.count({ where }),
+    ]);
+
+    const products = rawProducts.map((product) => ({
+      ...product,
+      subcategoryId: product.subcategoryId || undefined,
+    }));
+
+    return new PaginatedResponse(products, page, limit, total);
+  }
+
   async findOne(id: string): Promise<ProductResponseDto> {
     const product = await this.prisma.product.findFirst({
       where: { id, deletedAt: null },

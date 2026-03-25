@@ -19,6 +19,7 @@ import {
 import { PaginatedResponse } from '../../common/dto/paginated-response.dto';
 import { BulkDeleteResultDto } from '../../common/dto';
 import { AuditLog } from '../../common/decorators/audit-log.decorator';
+import { APP_CONSTANTS } from '../../shared/constants/app.constants';
 
 @Injectable()
 export class VariantService {
@@ -81,44 +82,50 @@ export class VariantService {
       }
     }
 
-    const result = await this.prisma.$transaction(async (tx) => {
-      // Create the variant
-      const variant = await tx.variant.create({
-        data: {
-          name,
-          description,
-          brandId,
-          createdBy: userId,
-          updatedBy: userId,
-        },
-      });
-
-      // Create pack sizes if provided
-      if (packSizes && packSizes.length > 0) {
-        await tx.packSize.createMany({
-          data: packSizes.map((ps) => ({
-            name: ps.name,
-            variantId: variant.id,
+    const result = await this.prisma.$transaction(
+      async (tx) => {
+        // Create the variant
+        const variant = await tx.variant.create({
+          data: {
+            name,
+            description,
+            brandId,
             createdBy: userId,
             updatedBy: userId,
-          })),
+          },
         });
-      }
 
-      // Create pack types if provided
-      if (packTypes && packTypes.length > 0) {
-        await tx.packType.createMany({
-          data: packTypes.map((pt) => ({
-            name: pt.name,
-            variantId: variant.id,
-            createdBy: userId,
-            updatedBy: userId,
-          })),
-        });
-      }
+        // Create pack sizes if provided
+        if (packSizes && packSizes.length > 0) {
+          await tx.packSize.createMany({
+            data: packSizes.map((ps) => ({
+              name: ps.name,
+              variantId: variant.id,
+              createdBy: userId,
+              updatedBy: userId,
+            })),
+          });
+        }
 
-      return variant;
-    });
+        // Create pack types if provided
+        if (packTypes && packTypes.length > 0) {
+          await tx.packType.createMany({
+            data: packTypes.map((pt) => ({
+              name: pt.name,
+              variantId: variant.id,
+              createdBy: userId,
+              updatedBy: userId,
+            })),
+          });
+        }
+
+        return variant;
+      },
+      {
+        maxWait: APP_CONSTANTS.ACCELERATE_ITX_MAX_WAIT_MS,
+        timeout: APP_CONSTANTS.ACCELERATE_ITX_TIMEOUT_MS,
+      },
+    );
 
     // Invalidate cache
     await this.cacheInvalidationService.invalidateVariant(result.id);
@@ -264,394 +271,390 @@ export class VariantService {
       throw new NotFoundException('Variant not found');
     }
 
-    return await this.prisma.$transaction(async (tx) => {
-      // Prepare variant update data
-      const updateData: any = {
-        updatedBy: userId,
-      };
+    const updateData: any = {
+      updatedBy: userId,
+    };
 
-      // Handle name update with duplicate check
-      if (name && name !== existingVariant.name) {
-        const duplicateVariant = await tx.variant.findFirst({
+    if (name && name !== existingVariant.name) {
+      const duplicateVariant = await this.prisma.variant.findFirst({
+        where: {
+          name: { equals: name, mode: 'insensitive' },
+          brandId: brandId || existingVariant.brandId,
+          deletedAt: null,
+          id: { not: id },
+        },
+      });
+
+      if (duplicateVariant) {
+        throw new ConflictException(
+          `Variant with name "${name}" already exists for this brand`,
+        );
+      }
+      updateData.name = name;
+    }
+
+    if (description !== undefined) {
+      updateData.description = description;
+    }
+
+    if (brandId && brandId !== existingVariant.brandId) {
+      const newBrand = await this.prisma.brand.findUnique({
+        where: { id: brandId, deletedAt: null },
+        select: { id: true, name: true },
+      });
+
+      if (!newBrand) {
+        throw new BadRequestException('Brand not found');
+      }
+      updateData.brandId = brandId;
+    }
+
+    const operationsSummary = {
+      packSizes: { created: 0, updated: 0, deleted: 0 },
+      packTypes: { created: 0, updated: 0, deleted: 0 },
+      productsAffected: 0,
+      errors: [] as string[],
+    };
+
+    const writeOperations: Prisma.PrismaPromise<unknown>[] = [];
+
+    if (deletePackSizeIds.length > 0) {
+      for (const packSizeId of deletePackSizeIds) {
+        const packSize = await this.prisma.packSize.findFirst({
           where: {
-            name: { equals: name, mode: 'insensitive' },
-            brandId: brandId || existingVariant.brandId,
-            deletedAt: null,
-            id: { not: id },
+            id: packSizeId,
+            variantId: id,
+            status: 'ACTIVE',
+          },
+          include: {
+            _count: {
+              select: { products: { where: { deletedAt: null } } },
+            },
           },
         });
 
-        if (duplicateVariant) {
-          throw new ConflictException(
-            `Variant with name "${name}" already exists for this brand`,
+        if (!packSize) {
+          operationsSummary.errors.push(
+            `Pack size ${packSizeId} not found or doesn't belong to this variant`,
           );
+          continue;
         }
-        updateData.name = name;
-      }
 
-      if (description !== undefined) {
-        updateData.description = description;
-      }
+        const productCount = packSize._count.products;
 
-      // Handle brand update with validation
-      if (brandId && brandId !== existingVariant.brandId) {
-        const newBrand = await tx.brand.findUnique({
-          where: { id: brandId, deletedAt: null },
-          select: { id: true, name: true },
-        });
-
-        if (!newBrand) {
-          throw new BadRequestException('Brand not found');
+        if (productCount > 0 && !forceDeleteConfigs) {
+          operationsSummary.errors.push(
+            `Cannot delete pack size "${packSize.name}" - it has ${productCount} products. Use forceDeleteConfigs=true to cascade delete.`,
+          );
+          continue;
         }
-        updateData.brandId = brandId;
-      }
 
-      // Update the variant first
-      const updatedVariant = await tx.variant.update({
-        where: { id },
-        data: updateData,
-      });
-
-      const operationsSummary = {
-        packSizes: { created: 0, updated: 0, deleted: 0 },
-        packTypes: { created: 0, updated: 0, deleted: 0 },
-        productsAffected: 0,
-        errors: [] as string[],
-      };
-
-      // 1. Handle Pack Size Operations
-      // Delete operations first (check for product dependencies)
-      if (deletePackSizeIds.length > 0) {
-        for (const packSizeId of deletePackSizeIds) {
-          // Verify pack size belongs to this variant
-          const packSize = await tx.packSize.findFirst({
-            where: {
-              id: packSizeId,
-              variantId: id,
-              status: 'ACTIVE',
-            },
-            include: {
-              _count: {
-                select: { products: { where: { deletedAt: null } } },
-              },
-            },
-          });
-
-          if (!packSize) {
-            operationsSummary.errors.push(
-              `Pack size ${packSizeId} not found or doesn't belong to this variant`,
-            );
-            continue;
-          }
-
-          const productCount = packSize._count.products;
-
-          if (productCount > 0 && !forceDeleteConfigs) {
-            operationsSummary.errors.push(
-              `Cannot delete pack size "${packSize.name}" - it has ${productCount} products. Use forceDeleteConfigs=true to cascade delete.`,
-            );
-            continue;
-          }
-
-          if (productCount > 0 && forceDeleteConfigs) {
-            // Cascade delete: soft delete all products using this pack size
-            await tx.product.updateMany({
+        if (productCount > 0 && forceDeleteConfigs) {
+          writeOperations.push(
+            this.prisma.product.updateMany({
               where: {
-                packSizeId: packSizeId,
+                packSizeId,
                 deletedAt: null,
               },
               data: {
                 deletedAt: new Date(),
                 deletedBy: userId,
               },
-            });
-            operationsSummary.productsAffected += productCount;
-          }
+            }),
+          );
+          operationsSummary.productsAffected += productCount;
+        }
 
-          // Soft delete the pack size
-          await tx.packSize.update({
+        writeOperations.push(
+          this.prisma.packSize.update({
             where: { id: packSizeId },
             data: {
               status: 'ARCHIVED',
               deletedAt: new Date(),
               deletedBy: userId,
             },
-          });
+          }),
+        );
 
-          operationsSummary.packSizes.deleted++;
-        }
+        operationsSummary.packSizes.deleted++;
       }
+    }
 
-      // Update pack sizes
-      if (updatePackSizes.length > 0) {
-        for (const updateOp of updatePackSizes) {
-          const { id: packSizeId, name: newName } = updateOp;
+    if (updatePackSizes.length > 0) {
+      for (const updateOp of updatePackSizes) {
+        const { id: packSizeId, name: newName } = updateOp;
 
-          // Verify pack size belongs to this variant
-          const existingPackSize = await tx.packSize.findFirst({
+        const existingPackSize = await this.prisma.packSize.findFirst({
+          where: {
+            id: packSizeId,
+            variantId: id,
+            status: 'ACTIVE',
+          },
+        });
+
+        if (!existingPackSize) {
+          operationsSummary.errors.push(
+            `Pack size ${packSizeId} not found or doesn't belong to this variant`,
+          );
+          continue;
+        }
+
+        if (newName !== existingPackSize.name) {
+          const conflictPackSize = await this.prisma.packSize.findFirst({
             where: {
-              id: packSizeId,
               variantId: id,
+              name: { equals: newName, mode: 'insensitive' },
               status: 'ACTIVE',
+              NOT: { id: packSizeId },
             },
           });
 
-          if (!existingPackSize) {
+          if (conflictPackSize) {
             operationsSummary.errors.push(
-              `Pack size ${packSizeId} not found or doesn't belong to this variant`,
+              `Pack size name "${newName}" already exists in this variant`,
             );
             continue;
           }
+        }
 
-          // Check for name conflicts within the variant
-          if (newName !== existingPackSize.name) {
-            const conflictPackSize = await tx.packSize.findFirst({
-              where: {
-                variantId: id,
-                name: { equals: newName, mode: 'insensitive' },
-                status: 'ACTIVE',
-                NOT: { id: packSizeId },
-              },
-            });
-
-            if (conflictPackSize) {
-              operationsSummary.errors.push(
-                `Pack size name "${newName}" already exists in this variant`,
-              );
-              continue;
-            }
-          }
-
-          await tx.packSize.update({
+        writeOperations.push(
+          this.prisma.packSize.update({
             where: { id: packSizeId },
             data: {
               name: newName,
               updatedBy: userId,
             },
-          });
+          }),
+        );
 
-          operationsSummary.packSizes.updated++;
-        }
+        operationsSummary.packSizes.updated++;
+      }
+    }
+
+    if (createPackSizes.length > 0) {
+      const newPackSizeNames = createPackSizes.map((ps) =>
+        ps.name.trim().toLowerCase(),
+      );
+      const duplicateNames = newPackSizeNames.filter(
+        (packName, index) => newPackSizeNames.indexOf(packName) !== index,
+      );
+
+      if (duplicateNames.length > 0) {
+        throw new BadRequestException(
+          `Duplicate pack size names in request: ${duplicateNames.join(', ')}`,
+        );
       }
 
-      // Create new pack sizes
-      if (createPackSizes.length > 0) {
-        // Validate new pack size names for duplicates
-        const newPackSizeNames = createPackSizes.map((ps) =>
-          ps.name.trim().toLowerCase(),
-        );
-        const duplicateNames = newPackSizeNames.filter(
-          (name, index) => newPackSizeNames.indexOf(name) !== index,
-        );
-
-        if (duplicateNames.length > 0) {
-          throw new BadRequestException(
-            `Duplicate pack size names in request: ${duplicateNames.join(', ')}`,
-          );
-        }
-
-        // Check for conflicts with existing pack sizes
-        const existingPackSizes = await tx.packSize.findMany({
-          where: {
-            variantId: id,
-            name: {
-              in: newPackSizeNames,
-              mode: 'insensitive',
-            },
-            status: 'ACTIVE',
+      const existingPackSizes = await this.prisma.packSize.findMany({
+        where: {
+          variantId: id,
+          name: {
+            in: newPackSizeNames,
+            mode: 'insensitive',
           },
-          select: { name: true },
-        });
+          status: 'ACTIVE',
+        },
+        select: { name: true },
+      });
 
-        if (existingPackSizes.length > 0) {
-          throw new ConflictException(
-            `Pack size names already exist: ${existingPackSizes.map((ps) => ps.name).join(', ')}`,
-          );
-        }
+      if (existingPackSizes.length > 0) {
+        throw new ConflictException(
+          `Pack size names already exist: ${existingPackSizes.map((ps) => ps.name).join(', ')}`,
+        );
+      }
 
-        // Create new pack sizes
-        for (const packSize of createPackSizes) {
-          await tx.packSize.create({
+      for (const packSize of createPackSizes) {
+        writeOperations.push(
+          this.prisma.packSize.create({
             data: {
               name: packSize.name.trim(),
               variantId: id,
               createdBy: userId,
               updatedBy: userId,
             },
-          });
-          operationsSummary.packSizes.created++;
-        }
+          }),
+        );
+        operationsSummary.packSizes.created++;
       }
+    }
 
-      // 2. Handle Pack Type Operations (similar pattern)
-      // Delete operations first
-      if (deletePackTypeIds.length > 0) {
-        for (const packTypeId of deletePackTypeIds) {
-          const packType = await tx.packType.findFirst({
-            where: {
-              id: packTypeId,
-              variantId: id,
-              status: 'ACTIVE',
+    if (deletePackTypeIds.length > 0) {
+      for (const packTypeId of deletePackTypeIds) {
+        const packType = await this.prisma.packType.findFirst({
+          where: {
+            id: packTypeId,
+            variantId: id,
+            status: 'ACTIVE',
+          },
+          include: {
+            _count: {
+              select: { products: { where: { deletedAt: null } } },
             },
-            include: {
-              _count: {
-                select: { products: { where: { deletedAt: null } } },
-              },
-            },
-          });
+          },
+        });
 
-          if (!packType) {
-            operationsSummary.errors.push(
-              `Pack type ${packTypeId} not found or doesn't belong to this variant`,
-            );
-            continue;
-          }
+        if (!packType) {
+          operationsSummary.errors.push(
+            `Pack type ${packTypeId} not found or doesn't belong to this variant`,
+          );
+          continue;
+        }
 
-          const productCount = packType._count.products;
+        const productCount = packType._count.products;
 
-          if (productCount > 0 && !forceDeleteConfigs) {
-            operationsSummary.errors.push(
-              `Cannot delete pack type "${packType.name}" - it has ${productCount} products. Use forceDeleteConfigs=true to cascade delete.`,
-            );
-            continue;
-          }
+        if (productCount > 0 && !forceDeleteConfigs) {
+          operationsSummary.errors.push(
+            `Cannot delete pack type "${packType.name}" - it has ${productCount} products. Use forceDeleteConfigs=true to cascade delete.`,
+          );
+          continue;
+        }
 
-          if (productCount > 0 && forceDeleteConfigs) {
-            // Cascade delete: soft delete all products using this pack type
-            await tx.product.updateMany({
+        if (productCount > 0 && forceDeleteConfigs) {
+          writeOperations.push(
+            this.prisma.product.updateMany({
               where: {
-                packTypeId: packTypeId,
+                packTypeId,
                 deletedAt: null,
               },
               data: {
                 deletedAt: new Date(),
                 deletedBy: userId,
               },
-            });
-            operationsSummary.productsAffected += productCount;
-          }
+            }),
+          );
+          operationsSummary.productsAffected += productCount;
+        }
 
-          await tx.packType.update({
+        writeOperations.push(
+          this.prisma.packType.update({
             where: { id: packTypeId },
             data: {
               status: 'ARCHIVED',
               deletedAt: new Date(),
               deletedBy: userId,
             },
-          });
+          }),
+        );
 
-          operationsSummary.packTypes.deleted++;
-        }
+        operationsSummary.packTypes.deleted++;
       }
+    }
 
-      // Update pack types
-      if (updatePackTypes.length > 0) {
-        for (const updateOp of updatePackTypes) {
-          const { id: packTypeId, name: newName } = updateOp;
+    if (updatePackTypes.length > 0) {
+      for (const updateOp of updatePackTypes) {
+        const { id: packTypeId, name: newName } = updateOp;
 
-          const existingPackType = await tx.packType.findFirst({
+        const existingPackType = await this.prisma.packType.findFirst({
+          where: {
+            id: packTypeId,
+            variantId: id,
+            status: 'ACTIVE',
+          },
+        });
+
+        if (!existingPackType) {
+          operationsSummary.errors.push(
+            `Pack type ${packTypeId} not found or doesn't belong to this variant`,
+          );
+          continue;
+        }
+
+        if (newName !== existingPackType.name) {
+          const conflictPackType = await this.prisma.packType.findFirst({
             where: {
-              id: packTypeId,
               variantId: id,
+              name: { equals: newName, mode: 'insensitive' },
               status: 'ACTIVE',
+              NOT: { id: packTypeId },
             },
           });
 
-          if (!existingPackType) {
+          if (conflictPackType) {
             operationsSummary.errors.push(
-              `Pack type ${packTypeId} not found or doesn't belong to this variant`,
+              `Pack type name "${newName}" already exists in this variant`,
             );
             continue;
           }
+        }
 
-          if (newName !== existingPackType.name) {
-            const conflictPackType = await tx.packType.findFirst({
-              where: {
-                variantId: id,
-                name: { equals: newName, mode: 'insensitive' },
-                status: 'ACTIVE',
-                NOT: { id: packTypeId },
-              },
-            });
-
-            if (conflictPackType) {
-              operationsSummary.errors.push(
-                `Pack type name "${newName}" already exists in this variant`,
-              );
-              continue;
-            }
-          }
-
-          await tx.packType.update({
+        writeOperations.push(
+          this.prisma.packType.update({
             where: { id: packTypeId },
             data: {
               name: newName,
               updatedBy: userId,
             },
-          });
+          }),
+        );
 
-          operationsSummary.packTypes.updated++;
-        }
+        operationsSummary.packTypes.updated++;
+      }
+    }
+
+    if (createPackTypes.length > 0) {
+      const newPackTypeNames = createPackTypes.map((pt) =>
+        pt.name.trim().toLowerCase(),
+      );
+      const duplicateNames = newPackTypeNames.filter(
+        (packName, index) => newPackTypeNames.indexOf(packName) !== index,
+      );
+
+      if (duplicateNames.length > 0) {
+        throw new BadRequestException(
+          `Duplicate pack type names in request: ${duplicateNames.join(', ')}`,
+        );
       }
 
-      // Create new pack types
-      if (createPackTypes.length > 0) {
-        const newPackTypeNames = createPackTypes.map((pt) =>
-          pt.name.trim().toLowerCase(),
-        );
-        const duplicateNames = newPackTypeNames.filter(
-          (name, index) => newPackTypeNames.indexOf(name) !== index,
-        );
-
-        if (duplicateNames.length > 0) {
-          throw new BadRequestException(
-            `Duplicate pack type names in request: ${duplicateNames.join(', ')}`,
-          );
-        }
-
-        const existingPackTypes = await tx.packType.findMany({
-          where: {
-            variantId: id,
-            name: {
-              in: newPackTypeNames,
-              mode: 'insensitive',
-            },
-            status: 'ACTIVE',
+      const existingPackTypes = await this.prisma.packType.findMany({
+        where: {
+          variantId: id,
+          name: {
+            in: newPackTypeNames,
+            mode: 'insensitive',
           },
-          select: { name: true },
-        });
+          status: 'ACTIVE',
+        },
+        select: { name: true },
+      });
 
-        if (existingPackTypes.length > 0) {
-          throw new ConflictException(
-            `Pack type names already exist: ${existingPackTypes.map((pt) => pt.name).join(', ')}`,
-          );
-        }
+      if (existingPackTypes.length > 0) {
+        throw new ConflictException(
+          `Pack type names already exist: ${existingPackTypes.map((pt) => pt.name).join(', ')}`,
+        );
+      }
 
-        for (const packType of createPackTypes) {
-          await tx.packType.create({
+      for (const packType of createPackTypes) {
+        writeOperations.push(
+          this.prisma.packType.create({
             data: {
               name: packType.name.trim(),
               variantId: id,
               createdBy: userId,
               updatedBy: userId,
             },
-          });
-          operationsSummary.packTypes.created++;
-        }
+          }),
+        );
+        operationsSummary.packTypes.created++;
       }
+    }
 
-      // If there were any errors, include them in the response or throw
-      if (operationsSummary.errors.length > 0) {
-        throw new BadRequestException({
-          message: 'Some pack configuration operations failed',
-          errors: operationsSummary.errors,
-          summary: operationsSummary,
-        });
-      }
+    if (operationsSummary.errors.length > 0) {
+      throw new BadRequestException({
+        message: 'Some pack configuration operations failed',
+        errors: operationsSummary.errors,
+        summary: operationsSummary,
+      });
+    }
 
-      // Return updated variant with fresh data
-      return await this.findOne(id);
-    });
+    await this.prisma.$transaction([
+      this.prisma.variant.update({
+        where: { id },
+        data: updateData,
+      }),
+      ...writeOperations,
+    ]);
+
+    return await this.findOne(id);
   }
 
   @AuditLog({
@@ -682,42 +685,48 @@ export class VariantService {
       );
     }
 
-    const result = await this.prisma.$transaction(async (tx) => {
-      // Archive pack sizes
-      await tx.packSize.updateMany({
-        where: {
-          variantId: id,
-          status: 'ACTIVE',
-        },
-        data: {
-          status: 'ARCHIVED',
-          deletedAt: new Date(),
-          deletedBy: userId,
-        },
-      });
+    const result = await this.prisma.$transaction(
+      async (tx) => {
+        // Archive pack sizes
+        await tx.packSize.updateMany({
+          where: {
+            variantId: id,
+            status: 'ACTIVE',
+          },
+          data: {
+            status: 'ARCHIVED',
+            deletedAt: new Date(),
+            deletedBy: userId,
+          },
+        });
 
-      // Archive pack types
-      await tx.packType.updateMany({
-        where: {
-          variantId: id,
-          status: 'ACTIVE',
-        },
-        data: {
-          status: 'ARCHIVED',
-          deletedAt: new Date(),
-          deletedBy: userId,
-        },
-      });
+        // Archive pack types
+        await tx.packType.updateMany({
+          where: {
+            variantId: id,
+            status: 'ACTIVE',
+          },
+          data: {
+            status: 'ARCHIVED',
+            deletedAt: new Date(),
+            deletedBy: userId,
+          },
+        });
 
-      // Soft delete the variant
-      await tx.variant.update({
-        where: { id },
-        data: {
-          deletedAt: new Date(),
-          deletedBy: userId,
-        },
-      });
-    });
+        // Soft delete the variant
+        await tx.variant.update({
+          where: { id },
+          data: {
+            deletedAt: new Date(),
+            deletedBy: userId,
+          },
+        });
+      },
+      {
+        maxWait: APP_CONSTANTS.ACCELERATE_ITX_MAX_WAIT_MS,
+        timeout: APP_CONSTANTS.ACCELERATE_ITX_TIMEOUT_MS,
+      },
+    );
 
     await this.cacheInvalidationService.invalidateVariant(id);
 
@@ -761,45 +770,51 @@ export class VariantService {
     }
 
     // Reactivate the variant and its pack configurations
-    const variant = await this.prisma.$transaction(async (tx) => {
-      // Reactivate variant
-      await tx.variant.update({
-        where: { id },
-        data: {
-          deletedAt: null,
-          deletedBy: null,
-          updatedBy: userId,
-        },
-      });
+    const variant = await this.prisma.$transaction(
+      async (tx) => {
+        // Reactivate variant
+        await tx.variant.update({
+          where: { id },
+          data: {
+            deletedAt: null,
+            deletedBy: null,
+            updatedBy: userId,
+          },
+        });
 
-      // Reactivate pack sizes
-      await tx.packSize.updateMany({
-        where: {
-          variantId: id,
-          status: 'ARCHIVED',
-        },
-        data: {
-          status: 'ACTIVE',
-          deletedAt: null,
-          deletedBy: null,
-          updatedBy: userId,
-        },
-      });
+        // Reactivate pack sizes
+        await tx.packSize.updateMany({
+          where: {
+            variantId: id,
+            status: 'ARCHIVED',
+          },
+          data: {
+            status: 'ACTIVE',
+            deletedAt: null,
+            deletedBy: null,
+            updatedBy: userId,
+          },
+        });
 
-      // Reactivate pack types
-      await tx.packType.updateMany({
-        where: {
-          variantId: id,
-          status: 'ARCHIVED',
-        },
-        data: {
-          status: 'ACTIVE',
-          deletedAt: null,
-          deletedBy: null,
-          updatedBy: userId,
-        },
-      });
-    });
+        // Reactivate pack types
+        await tx.packType.updateMany({
+          where: {
+            variantId: id,
+            status: 'ARCHIVED',
+          },
+          data: {
+            status: 'ACTIVE',
+            deletedAt: null,
+            deletedBy: null,
+            updatedBy: userId,
+          },
+        });
+      },
+      {
+        maxWait: APP_CONSTANTS.ACCELERATE_ITX_MAX_WAIT_MS,
+        timeout: APP_CONSTANTS.ACCELERATE_ITX_TIMEOUT_MS,
+      },
+    );
 
     const reactivatedVariantWithPacks = await this.prisma.variant.findUnique({
       where: { id },

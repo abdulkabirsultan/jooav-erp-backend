@@ -278,6 +278,59 @@ export class ProductController {
     );
   }
 
+  @Get('archive')
+  @UseGuards(UnifiedAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @ApiBearerAuth('admin-access-token')
+  @ApiOperation({
+    summary: 'Get archived products (Admin only)',
+    description:
+      'Retrieve paginated list of archived products (including soft-deleted archived records)',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Archived products retrieved successfully',
+    type: PaginatedResponse,
+  })
+  @ApiQuery({ name: 'page', required: false, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, example: 10 })
+  @ApiQuery({ name: 'search', required: false, example: '' })
+  @ApiQuery({ name: 'brandId', required: false })
+  @ApiQuery({ name: 'categoryId', required: false })
+  @ApiQuery({ name: 'subcategoryId', required: false })
+  @ApiQuery({
+    name: 'subcategoryIds',
+    required: false,
+    isArray: true,
+    type: String,
+    description:
+      'Filter by multiple subcategory IDs (comma-separated or repeated query params)',
+  })
+  @ApiQuery({ name: 'variant', required: false, example: '' })
+  @ApiQuery({
+    name: 'priceSort',
+    required: false,
+    enum: ['asc', 'desc'],
+    description:
+      'Sort by price (asc = least price first, desc = highest price first)',
+  })
+  @ApiQuery({ name: 'includeRelations', required: false, type: Boolean })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  @ApiForbiddenResponse({ description: 'Admin access required' })
+  async findArchived(
+    @Query() query: ProductQueryDto,
+  ): Promise<SuccessResponse<PaginatedResponse<ProductResponseDto>>> {
+    const result = await this.productService.findArchived(query);
+    return new SuccessResponse(
+      ResponseMessages.foundItems(
+        result.data.length,
+        'archived product',
+        result.meta.totalItems,
+      ),
+      result,
+    );
+  }
+
   @Get('stats')
   @UseGuards(UnifiedAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)

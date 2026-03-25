@@ -155,9 +155,9 @@ export class PackSizeService {
       }
     }
 
-    // Use transaction if pack size name changes to update products
-    return this.prisma.$transaction(async (tx) => {
-      const updatedPackSize = await tx.packSize.update({
+    const targetPackSizeName = name ? name.trim() : packSize.name;
+    const operations: any[] = [
+      this.prisma.packSize.update({
         where: { id },
         data: {
           ...updatePackSizeDto,
@@ -173,41 +173,42 @@ export class PackSizeService {
             },
           },
         },
+      }),
+    ];
+
+    if (willAffectProducts) {
+      const linkedProducts = await this.prisma.product.findMany({
+        where: {
+          packSizeId: id,
+          deletedAt: null,
+        },
+        select: {
+          id: true,
+          brand: { select: { name: true } },
+          variant: { select: { name: true } },
+          packType: { select: { name: true } },
+        },
       });
 
-      // If pack size name changed, update all linked product names and SKUs
-      if (willAffectProducts) {
-        const linkedProducts = await tx.product.findMany({
-          where: {
-            packSizeId: id,
-            deletedAt: null,
-          },
-          select: {
-            id: true,
-            brand: { select: { name: true } },
-            variant: { select: { name: true } },
-            packType: { select: { name: true } },
-          },
-        });
+      for (const product of linkedProducts) {
+        const newName = `${product.brand.name} ${product.variant.name} ${targetPackSizeName} (${product.packType.name})`;
+        const newSku = `${product.brand.name.toUpperCase().replace(/[^A-Z0-9]/g, '-')}-${product.variant.name.toUpperCase().replace(/[^A-Z0-9]/g, '-')}-${targetPackSizeName.toUpperCase().replace(/[^A-Z0-9]/g, '-')}-${product.packType.name.toUpperCase().replace(/[^A-Z0-9]/g, '-')}`;
 
-        // Update each product's name and SKU
-        for (const product of linkedProducts) {
-          const newName = `${product.brand.name} ${product.variant.name} ${updatedPackSize.name} (${product.packType.name})`;
-          const newSku = `${product.brand.name.toUpperCase().replace(/[^A-Z0-9]/g, '-')}-${product.variant.name.toUpperCase().replace(/[^A-Z0-9]/g, '-')}-${updatedPackSize.name.toUpperCase().replace(/[^A-Z0-9]/g, '-')}-${product.packType.name.toUpperCase().replace(/[^A-Z0-9]/g, '-')}`;
-
-          await tx.product.update({
+        operations.push(
+          this.prisma.product.update({
             where: { id: product.id },
             data: {
               name: newName,
               sku: newSku,
               updatedBy: userId,
             },
-          });
-        }
+          }),
+        );
       }
+    }
 
-      return updatedPackSize;
-    });
+    const results = await this.prisma.$transaction(operations);
+    return results[0];
   }
 
   async remove(id: string, userId: string) {
