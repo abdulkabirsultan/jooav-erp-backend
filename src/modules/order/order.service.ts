@@ -1967,13 +1967,13 @@ export class OrderService {
               select: {
                 id: true,
                 name: true,
-                packSize: { select: { name: true } },
                 thumbnail: true,
                 images: true,
                 brand: { select: { name: true } },
+                packSize: { select: { name: true } },
+                packType: { select: { name: true } },
                 price: true,
                 discount: true,
-                packType: { select: { name: true } },
                 variant: { select: { id: true, name: true } },
                 subcategory: {
                   select: {
@@ -1990,7 +1990,6 @@ export class OrderService {
       skip: offset,
       take: limit,
     });
-    console.log(orders);
     // Transform orders to include PO name
     const transformedOrders = orders.map((order) => ({
       ...order,
@@ -1998,7 +1997,6 @@ export class OrderService {
         ? `${order.assignedProcurementOfficer.firstName} ${order.assignedProcurementOfficer.lastName}`
         : null,
     }));
-    console.log(transformedOrders);
     const totalPages = Math.ceil(totalCount / limit);
 
     return {

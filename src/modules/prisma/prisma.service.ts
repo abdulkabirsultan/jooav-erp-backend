@@ -8,16 +8,12 @@ import { PrismaClient } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { withAccelerate } from '@prisma/extension-accelerate';
-import postgres from 'postgres';
-import { speedExtension, type SpeedClient } from '../../generated/sql';
 
 @Injectable()
 export class PrismaService
   extends PrismaClient
   implements OnModuleInit, OnModuleDestroy
 {
-  private sqlClient?: ReturnType<typeof postgres>;
-
   constructor(configService: ConfigService) {
     const rawDatabaseUrl =
       configService.get<string>('database.url') ||
@@ -27,22 +23,6 @@ export class PrismaService
     const logger = new Logger(PrismaService.name);
 
     const isAccelerateUrl = /^prisma(\+postgres)?:\/\//i.test(databaseUrl);
-    const prismaSqlEnabled =
-      (
-        configService.get<string>('PRISMA_SQL_ENABLED') ||
-        process.env.PRISMA_SQL_ENABLED ||
-        'true'
-      )
-        .toLowerCase()
-        .trim() === 'true';
-    const prismaSqlDebug =
-      (
-        configService.get<string>('PRISMA_SQL_DEBUG') ||
-        process.env.PRISMA_SQL_DEBUG ||
-        'true'
-      )
-        .toLowerCase()
-        .trim() === 'true';
 
     if (isAccelerateUrl) {
       super({
@@ -50,11 +30,6 @@ export class PrismaService
       });
 
       Object.assign(this, this.$extends(withAccelerate()));
-      if (prismaSqlEnabled) {
-        logger.warn(
-          'PRISMA_SQL_ENABLED is true but DATABASE_URL is Accelerate; prisma-sql is skipped in Accelerate mode',
-        );
-      }
       logger.log('Prisma initialized in Accelerate mode');
       return;
     }
@@ -68,22 +43,7 @@ export class PrismaService
       log: ['error', 'warn'],
     });
 
-    if (prismaSqlEnabled && databaseUrl) {
-      this.sqlClient = postgres(databaseUrl);
-
-      const extendedClient = this.$extends(
-        speedExtension({
-          postgres: this.sqlClient,
-          debug: prismaSqlDebug,
-        }),
-      ) as SpeedClient<this>;
-
-      Object.assign(this, extendedClient);
-      logger.log('Prisma initialized in adapter-pg mode with prisma-sql');
-      return;
-    }
-
-    logger.log('Prisma initialized in adapter-pg mode (prisma-sql disabled)');
+    logger.log('Prisma initialized in adapter-pg mode');
   }
 
   async onModuleInit() {
@@ -91,9 +51,6 @@ export class PrismaService
   }
 
   async onModuleDestroy() {
-    if (this.sqlClient) {
-      await this.sqlClient.end({ timeout: 5 });
-    }
     await this.$disconnect();
   }
 

@@ -5,12 +5,6 @@ generator client {
   provider = "prisma-client-js"
 }
 
-generator sql {
-  provider = "prisma-sql-generator"
-  output   = "../src/generated/sql"
-  dialect  = "postgres"
-}
-
 // generator dbml {
 //   provider = "prisma-dbml-generator"
 // }
