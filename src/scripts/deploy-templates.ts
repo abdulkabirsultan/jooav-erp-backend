@@ -26,6 +26,9 @@ async function deployTemplates() {
     // Get the template setup service
     const templateSetupService = app.get(TemplateSetupService);
 
+    // Uncomment the next line if you want a full reset before deployment.
+     await templateSetupService.deleteAllTemplates();
+
     // Deploy all templates
     await templateSetupService.deployAllTemplates();
 

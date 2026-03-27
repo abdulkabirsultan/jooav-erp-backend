@@ -12,7 +12,11 @@ import {
   TemplateEmailRequest,
 } from '../interfaces/email.interface';
 import { EmailConfig } from '../../../config/email.config';
-import { EmailPriority } from '../types/email.types';
+import {
+  EmailPriority,
+  TEMPLATE_REQUIRED_VARIABLES,
+  EmailTemplateAlias,
+} from '../types/email.types';
 
 @Injectable()
 export class EmailService {
@@ -43,6 +47,38 @@ export class EmailService {
     return filtered;
   }
 
+  private validateTemplateVariables(
+    templateAlias: EmailTemplateAlias,
+    variables: Record<string, string | number | undefined>,
+  ): void {
+    const requiredVariables = TEMPLATE_REQUIRED_VARIABLES[templateAlias] || [];
+    if (requiredVariables.length === 0) {
+      this.logger.warn(
+        `No template variable contract defined for ${templateAlias}`,
+      );
+      return;
+    }
+
+    const missingVariables = requiredVariables.filter((key) => {
+      const value = variables[key];
+      if (value === undefined || value === null) {
+        return true;
+      }
+
+      if (typeof value === 'string' && value.trim().length === 0) {
+        return true;
+      }
+
+      return false;
+    });
+
+    if (missingVariables.length > 0) {
+      throw new Error(
+        `Missing required template variables for ${templateAlias}: ${missingVariables.join(', ')}`,
+      );
+    }
+  }
+
   /**
    * Send single email with template (synchronous)
    */
@@ -55,6 +91,8 @@ export class EmailService {
     }
 
     try {
+      this.validateTemplateVariables(request.templateAlias, request.variables);
+
       const response = await this.resend.emails.send({
         from: request.from || this.getDefaultSender(),
         to: request.to,
@@ -94,9 +132,32 @@ export class EmailService {
     }
 
     // Split into chunks of 100 (Resend's batch limit)
-    const chunks = this.chunkArray(requests, 100);
+    const validRequests: BatchEmailRequest[] = [];
     const allMessageIds: string[] = [];
     const allErrors: string[] = [];
+
+    for (const request of requests) {
+      try {
+        this.validateTemplateVariables(
+          request.templateAlias,
+          request.variables,
+        );
+        validRequests.push(request);
+      } catch (error) {
+        const validationError = error as Error;
+        allErrors.push(validationError.message);
+        this.logger.error(validationError.message);
+      }
+    }
+
+    if (validRequests.length === 0) {
+      return {
+        success: false,
+        errors: allErrors.length > 0 ? allErrors : ['No valid emails to send'],
+      };
+    }
+
+    const chunks = this.chunkArray(validRequests, 100);
 
     for (const chunk of chunks) {
       try {
@@ -148,6 +209,8 @@ export class EmailService {
       return;
     }
 
+    this.validateTemplateVariables(request.templateAlias, request.variables);
+
     await this.emailQueue.add('send-template-email', request, {
       priority: this.getPriority(request.priority || EmailPriority.NORMAL),
       attempts: request.retries || 3,
@@ -172,6 +235,10 @@ export class EmailService {
     if (!this.emailConfig.enabled) {
       this.logger.warn('Email service is disabled - batch emails not queued');
       return;
+    }
+
+    for (const request of requests) {
+      this.validateTemplateVariables(request.templateAlias, request.variables);
     }
 
     // Split into chunks for processing

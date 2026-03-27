@@ -5,6 +5,7 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 import { MonnifyService } from '../payment/monnify.service';
 import {
@@ -36,6 +37,7 @@ import {
 } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { APP_CONSTANTS } from '../../shared/constants/app.constants';
+import { EmailEvent } from '../email/types/email.types';
 
 @Injectable()
 export class OrderService {
@@ -45,7 +47,29 @@ export class OrderService {
     private readonly prismaService: PrismaService,
     private readonly monnifyService: MonnifyService,
     private readonly configService: ConfigService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
+
+  private async getOrderEmailPayloadById(orderId: string) {
+    return this.prismaService.order.findUnique({
+      where: { id: orderId },
+      include: {
+        items: {
+          select: {
+            id: true,
+          },
+        },
+        wholesaler: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+          },
+        },
+      },
+    });
+  }
 
   /**
    * Define valid order item status transitions to prevent backward movement
@@ -744,6 +768,15 @@ export class OrderService {
         `Payment initiated for order ${paymentOrderNumber} with Monnify invoice ${monnifyInvoice.responseBody.transactionReference}`,
       );
 
+      const paymentOrderPayload = await this.getOrderEmailPayloadById(
+        paymentOrder.id,
+      );
+      if (paymentOrderPayload) {
+        this.eventEmitter.emit(EmailEvent.PAYMENT_INITIATED, {
+          order: paymentOrderPayload,
+        });
+      }
+
       return {
         success: true,
         message: 'Payment initiated successfully',
@@ -1199,6 +1232,13 @@ export class OrderService {
             },
           });
 
+          const orderPayload = await this.getOrderEmailPayloadById(order.id);
+          if (orderPayload) {
+            this.eventEmitter.emit(EmailEvent.ORDER_CONFIRMED, {
+              order: orderPayload,
+            });
+          }
+
           // Trigger auto-assignment for paid orders
           try {
             await this.autoAssignOrder(order.orderNumber, userId);
@@ -1225,6 +1265,17 @@ export class OrderService {
           },
         };
       } else {
+        if (invoiceStatus.responseBody.paymentStatus === 'FAILED') {
+          const orderPayload = await this.getOrderEmailPayloadById(order.id);
+          if (orderPayload) {
+            this.eventEmitter.emit(EmailEvent.PAYMENT_FAILED, {
+              order: orderPayload,
+              payment: invoiceStatus.responseBody,
+              reason: 'Payment verification returned FAILED status',
+            });
+          }
+        }
+
         return {
           success: false,
           message: `Payment status: ${invoiceStatus.responseBody.paymentStatus}`,
@@ -2112,6 +2163,15 @@ export class OrderService {
       },
     });
 
+    this.eventEmitter.emit(EmailEvent.OUT_OF_STOCK_REPORT_OPENED, {
+      reportId: report.id,
+      wholesalerName:
+        `${report.wholesaler.firstName || ''} ${report.wholesaler.lastName || ''}`.trim() ||
+        report.wholesaler.email ||
+        'Wholesaler',
+      itemCount: createDto.items.length,
+    });
+
     return {
       success: true,
       message: 'Out-of-stock request created successfully',
@@ -2707,6 +2767,15 @@ export class OrderService {
       this.logger.log(
         `Order ${order.orderNumber} status updated from ${order.status} to ${newOrderStatus} - ${logMessage}`,
       );
+
+      if (newOrderStatus === OrderStatus.COMPLETED) {
+        const orderPayload = await this.getOrderEmailPayloadById(orderId);
+        if (orderPayload) {
+          this.eventEmitter.emit(EmailEvent.ORDER_COMPLETED, {
+            order: orderPayload,
+          });
+        }
+      }
     }
   }
 
@@ -2989,7 +3058,7 @@ export class OrderService {
       include: {
         payments: { where: { status: PaymentStatus.COMPLETED } },
         assignedProcurementOfficer: {
-          select: { firstName: true, lastName: true, id: true },
+          select: { firstName: true, lastName: true, id: true, email: true },
         },
       },
     });
@@ -3071,6 +3140,22 @@ export class OrderService {
       : `Order ${orderNumber} assigned to ${procurementOfficerUser.firstName} ${procurementOfficerUser.lastName} by admin ${admin.firstName} ${admin.lastName}`;
 
     this.logger.log(logMessage);
+
+    const orderPayload = await this.getOrderEmailPayloadById(updatedOrder.id);
+    if (orderPayload) {
+      if (isReassignment) {
+        this.eventEmitter.emit(EmailEvent.ORDER_REASSIGNED, {
+          order: orderPayload,
+          newOfficer: procurementOfficerUser,
+          previousOfficer: previousOfficer,
+        });
+      } else {
+        this.eventEmitter.emit(EmailEvent.ORDER_ASSIGNED, {
+          order: orderPayload,
+          officer: procurementOfficerUser,
+        });
+      }
+    }
 
     return {
       success: true,
@@ -3168,8 +3253,21 @@ export class OrderService {
       `Order ${orderNumber} ${responseDto.response.toLowerCase()}ed by ${user.firstName} ${user.lastName}`,
     );
 
+    if (responseDto.response === AssignmentResponseType.ACCEPT) {
+      this.eventEmitter.emit(EmailEvent.ORDER_ASSIGNMENT_ACCEPTED, {
+        orderNumber,
+        officerName: `${user.firstName} ${user.lastName}`,
+      });
+    }
+
     // If officer rejected the assignment, trigger automatic reassignment
     if (responseDto.response === AssignmentResponseType.REJECT) {
+      this.eventEmitter.emit(EmailEvent.ORDER_ASSIGNMENT_REJECTED, {
+        orderNumber,
+        officerName: `${user.firstName} ${user.lastName}`,
+        reason: responseDto.reason,
+      });
+
       try {
         this.logger.log(
           `Triggering automatic reassignment for rejected order ${orderNumber}`,
@@ -3334,6 +3432,25 @@ export class OrderService {
       this.logger.log(
         `Order ${orderNumber} auto-reassigned to ${availableOfficer.user.firstName} ${availableOfficer.user.lastName} after rejection (${availableOfficer.activeOrdersCount} active orders)`,
       );
+
+      const orderPayload = await this.getOrderEmailPayloadById(updatedOrder.id);
+      const rejectedOfficer = await this.prismaService.user.findUnique({
+        where: { id: rejectedByUserId },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+        },
+      });
+
+      if (orderPayload) {
+        this.eventEmitter.emit(EmailEvent.ORDER_REASSIGNED, {
+          order: orderPayload,
+          newOfficer: availableOfficer.user,
+          previousOfficer: rejectedOfficer,
+        });
+      }
 
       // Optional: Send notification to the new officer about the reassignment
       // You can implement this based on your notification system
@@ -3876,6 +3993,19 @@ export class OrderService {
         `Order ${orderNumber} ${order.status === OrderStatus.DRAFT ? 'deleted' : 'cancelled'} - Field-level audit:`,
         JSON.stringify(auditLog, null, 2),
       );
+
+      if (order.status !== OrderStatus.DRAFT) {
+        this.eventEmitter.emit(EmailEvent.ORDER_CANCELLED, {
+          orderNumber,
+          orderTotal: Number(order.totalAmount || 0),
+          cancelledByName: `${user.firstName} ${user.lastName}`.trim(),
+          cancelledByRole: user.role,
+          wholesalerEmail: order.wholesaler?.email,
+          wholesalerName:
+            `${order.wholesaler?.firstName || ''} ${order.wholesaler?.lastName || ''}`.trim() ||
+            undefined,
+        });
+      }
 
       return {
         success: true,

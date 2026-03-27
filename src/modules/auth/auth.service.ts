@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { UserRole, UserStatus, User, OrderStatus } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { v4 as uuidv4 } from 'uuid';
@@ -15,7 +16,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { PrismaService } from '../prisma/prisma.service';
 import { generatePasswordResetToken } from '../../common/utils/token.util';
 import { AuditService } from '../audit/audit.service';
-import { EmailService } from '../email/services/email.service';
+import { NotificationService } from '../email/services/notification.service';
+import { EmailEvent } from '../email/types/email.types';
 import { JwtPayload } from './strategies/jwt.strategy';
 import {
   LoginDto,
@@ -48,7 +50,8 @@ export class AuthService {
     private jwtService: JwtService,
     private configService: ConfigService,
     private auditService: AuditService,
-    private emailService: EmailService,
+    private notificationService: NotificationService,
+    private eventEmitter: EventEmitter2,
   ) {
     this.jwtSecret =
       this.configService.get('security.jwtSecret') || 'your-secret-key';
@@ -266,6 +269,10 @@ export class AuthService {
       },
     );
 
+    this.eventEmitter.emit(EmailEvent.USER_REGISTERED, {
+      user: registeredUser,
+    });
+
     return {
       ...tokens,
       user: this.transformUserToProfile(registeredUser),
@@ -387,18 +394,11 @@ export class AuthService {
 
     // Send password change confirmation email
     try {
-      await this.emailService.sendTemplateEmail({
-        to: user.email,
-        templateAlias: 'password-reset',
-        variables: {
-          USER_NAME: user.firstName
-            ? `${user.firstName} ${user.lastName || ''}`.trim()
-            : user.email,
-          changeTime: new Date().toLocaleString(),
-          ipAddress:
-            request?.ip || request?.connection?.remoteAddress || 'Unknown',
-          userAgent: request?.get?.('User-Agent') || 'Unknown',
-        },
+      await this.notificationService.notifyPasswordResetSuccess(user, {
+        resetTime: new Date().toLocaleString(),
+        ipAddress:
+          request?.ip || request?.connection?.remoteAddress || 'Unknown',
+        userAgent: request?.get?.('User-Agent') || 'Unknown',
       });
     } catch (error) {
       this.logger.error(
@@ -673,25 +673,10 @@ export class AuthService {
       },
     });
 
-    // Send password reset email
-    const resetUrl = `${this.configService.get('email.baseUrl')}/reset-password?token=${resetToken}`;
-
-    try {
-      await this.emailService.sendTemplateEmail({
-        to: email,
-        templateAlias: 'password-reset',
-        variables: {
-          USER_NAME: user.firstName
-            ? `${user.firstName} ${user.lastName || ''}`.trim()
-            : user.email,
-          resetUrl,
-          expiresIn: '1 hour',
-        },
-      });
-    } catch (error) {
-      this.logger.error('Failed to send password reset email:', error);
-      // Don't throw error to avoid revealing if email exists
-    }
+    this.eventEmitter.emit(EmailEvent.PASSWORD_RESET, {
+      user,
+      resetToken,
+    });
 
     // Log password reset request
     await this.auditService.logAuthEvent(user.id, 'PASSWORD_CHANGED', request, {
@@ -767,18 +752,11 @@ export class AuthService {
 
     // Send password reset success confirmation email
     try {
-      await this.emailService.sendTemplateEmail({
-        to: user.email,
-        templateAlias: 'password-reset',
-        variables: {
-          USER_NAME: user.firstName
-            ? `${user.firstName} ${user.lastName || ''}`.trim()
-            : user.email,
-          resetTime: new Date().toLocaleString(),
-          ipAddress:
-            request?.ip || request?.connection?.remoteAddress || 'Unknown',
-          userAgent: request?.get?.('User-Agent') || 'Unknown',
-        },
+      await this.notificationService.notifyPasswordResetSuccess(user, {
+        resetTime: new Date().toLocaleString(),
+        ipAddress:
+          request?.ip || request?.connection?.remoteAddress || 'Unknown',
+        userAgent: request?.get?.('User-Agent') || 'Unknown',
       });
     } catch (error) {
       this.logger.error('Failed to send password reset success email:', error);
