@@ -164,12 +164,12 @@ export class UsersController {
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Regenerate password reset token for user (Admin only)',
-    description: 'Generate a new password reset token for the specified user',
+    description: 'Generate a new password reset URL for the specified user',
   })
   @ApiParam({ name: 'id', description: 'User ID' })
   @ApiResponse({
     status: 200,
-    description: 'Reset token regenerated successfully',
+    description: 'Reset URL regenerated successfully',
     type: RegenerateResetTokenResponseDto,
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
@@ -190,7 +190,7 @@ export class UsersController {
       req,
     );
     return new SuccessResponse(
-      'Password reset token regenerated successfully',
+      'Password reset URL regenerated successfully',
       result,
     );
   }

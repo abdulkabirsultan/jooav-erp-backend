@@ -3,7 +3,7 @@ import { UserProfileDto } from '../../auth/dto/auth-response.dto';
 
 export class CreateUserResponseDto extends UserProfileDto {
   @ApiProperty({
-    description: 'Password reset URL for the newly created user',
+    description: 'Password setup/reset URL for the newly created user',
     example: 'https://app.jooav.com/reset-password?token=abc123...',
   })
   resetUrl: string;

@@ -4,13 +4,14 @@ import {
   ConflictException,
   BadRequestException,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { UserRole, UserStatus, User, OrderStatus } from '@prisma/client';
 import * as argon2 from 'argon2';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { generatePasswordResetToken } from '../../common/utils/token.util';
 import { AuditService } from '../audit/audit.service';
-import { EmailService } from '../email/services/email.service';
+import { NotificationService } from '../email/services/notification.service';
 import { CacheService } from '../cache/cache.service';
 import { ConfigService } from '@nestjs/config';
 import { PaginationDto, PaginatedResponse } from '../../common/dto';
@@ -27,6 +28,7 @@ import {
 import { BulkDeleteUserDto } from './dto/bulk-delete-user.dto';
 import { UserProfileDto } from '../auth/dto/auth-response.dto';
 import { BulkDeleteResultDto } from '../../common/dto';
+import { EmailEvent } from '../email/types/email.types';
 
 @Injectable()
 export class UsersService {
@@ -40,9 +42,10 @@ export class UsersService {
   constructor(
     private prisma: PrismaService,
     private auditService: AuditService,
-    private emailService: EmailService,
+    private notificationService: NotificationService,
     private configService: ConfigService,
     private cacheService: CacheService,
+    private eventEmitter: EventEmitter2,
   ) {}
 
   // ================================
@@ -353,20 +356,25 @@ export class UsersService {
       },
     });
 
-    // Generate reset URL
-    const resetUrl = `${this.configService.get('email.baseUrl')}/reset-password?token=${resetToken}`;
+    const resetBaseUrl =
+      user.role === UserRole.WHOLESALER
+        ? this.configService.get<string>('email.wholesalerBaseUrl')
+        : this.configService.get<string>('email.baseUrl');
+    const resetUrl = `${resetBaseUrl}/reset-password?token=${resetToken}`;
 
     // Send password setup email
     try {
-      await this.emailService.sendTemplateEmail({
-        to: user.email,
-        templateAlias: 'password-reset',
-        variables: {
+      await this.notificationService.notifyAccountCreatedInvite(
+        {
+          id: user.id,
           firstName: user.firstName || 'User',
-          resetUrl,
-          platformName: 'JOOAV ERP',
+          lastName: user.lastName || '',
+          email: user.email,
+          role: user.role,
         },
-      });
+        resetUrl,
+        '72 hours',
+      );
     } catch (error) {
       // Log email error but don't fail user creation
       console.error('Failed to send password setup email:', error);
@@ -554,6 +562,18 @@ export class UsersService {
       request,
     );
 
+    if (updateStatusDto.status === UserStatus.DEACTIVATED) {
+      this.eventEmitter.emit(EmailEvent.USER_ACCOUNT_DEACTIVATED, {
+        user: {
+          id: updatedUser.id,
+          firstName: updatedUser.firstName || '',
+          lastName: updatedUser.lastName || '',
+          email: updatedUser.email,
+        },
+        reason: 'Account deactivated by administrator',
+      });
+    }
+
     return updatedUser as UserProfileDto;
   }
 
@@ -626,6 +646,17 @@ export class UsersService {
       { role: updatedUser.role },
       request,
     );
+
+    this.eventEmitter.emit(EmailEvent.USER_ROLE_UPDATED, {
+      user: {
+        id: updatedUser.id,
+        firstName: updatedUser.firstName || '',
+        lastName: updatedUser.lastName || '',
+        email: updatedUser.email,
+      },
+      previousRole: existingUser.role,
+      newRole: updatedUser.role,
+    });
 
     return updatedUser as UserProfileDto;
   }
@@ -936,6 +967,16 @@ export class UsersService {
       { email: user.email },
       request,
     );
+
+    this.eventEmitter.emit(EmailEvent.USER_ACCOUNT_DEACTIVATED, {
+      user: {
+        id: user.id,
+        firstName: user.firstName || '',
+        lastName: user.lastName || '',
+        email: user.email,
+      },
+      reason: 'Account archived by administrator',
+    });
   }
 
   /**
@@ -1039,6 +1080,16 @@ export class UsersService {
           },
           request,
         );
+
+        this.eventEmitter.emit(EmailEvent.USER_ACCOUNT_DEACTIVATED, {
+          user: {
+            id: user.id,
+            firstName: user.firstName || '',
+            lastName: user.lastName || '',
+            email: user.email,
+          },
+          reason: 'Account archived by bulk administrative action',
+        });
 
         deletedIds.push(userId);
       } catch (error) {
@@ -1286,9 +1337,6 @@ export class UsersService {
       },
     });
 
-    // Generate reset URL
-    const resetUrl = `${this.configService.get('email.baseUrl')}/reset-password?token=${resetToken}`;
-
     // Log token regeneration
     await this.auditService.logUserAction(
       requestedBy,
@@ -1301,6 +1349,12 @@ export class UsersService {
       },
       request,
     );
+
+    const resetBaseUrl =
+      user.role === UserRole.WHOLESALER
+        ? this.configService.get<string>('email.wholesalerBaseUrl')
+        : this.configService.get<string>('email.baseUrl');
+    const resetUrl = `${resetBaseUrl}/reset-password?token=${resetToken}`;
 
     return {
       resetUrl,
