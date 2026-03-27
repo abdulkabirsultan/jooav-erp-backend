@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bull';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { PrismaModule } from '../prisma/prisma.module';
 
 // Services
 import { EmailService } from './services/email.service';
@@ -21,6 +22,7 @@ import { EmailTestController } from './controllers/email-test.controller';
 @Module({
   imports: [
     ConfigModule,
+    PrismaModule,
     BullModule.registerQueueAsync({
       name: 'email',
       imports: [ConfigModule],

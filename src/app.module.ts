@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { TerminusModule } from '@nestjs/terminus';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 import { APP_FILTER, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { WinstonModule } from 'nest-winston';
@@ -105,6 +106,9 @@ import { SentryModule } from '@sentry/nestjs/setup';
 
     // Health checks
     TerminusModule,
+
+    // Domain events
+    EventEmitterModule.forRoot(),
 
     // Feature modules
     CacheModule,
