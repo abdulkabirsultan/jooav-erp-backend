@@ -64,6 +64,21 @@ export class SystemEmailListener {
     }
   }
 
+  @OnEvent(EmailEvent.PAYMENT_INITIATED)
+  async handlePaymentInitiated(payload: { order: any }) {
+    try {
+      await this.notificationService.notifyPaymentInitiated(payload.order);
+      this.logger.log(
+        `Payment initiated email event handled for order: ${payload.order.orderNumber}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to handle payment initiated email event: ${error.message}`,
+        error.stack,
+      );
+    }
+  }
+
   @OnEvent(EmailEvent.PAYMENT_FAILED)
   async handlePaymentFailed(payload: {
     order: any;
@@ -71,13 +86,76 @@ export class SystemEmailListener {
     reason: string;
   }) {
     try {
-      // TODO: Implement payment failed notification if needed
+      await this.notificationService.notifyPaymentFailed(
+        payload.order,
+        payload.reason,
+      );
       this.logger.log(
         `Payment failed email event handled for order: ${payload.order.orderNumber}`,
       );
     } catch (error) {
       this.logger.error(
         `Failed to handle payment failed email event: ${error.message}`,
+        error.stack,
+      );
+    }
+  }
+
+  @OnEvent(EmailEvent.USER_ROLE_UPDATED)
+  async handleUserRoleUpdated(payload: {
+    user: any;
+    previousRole: string;
+    newRole: string;
+  }) {
+    try {
+      await this.notificationService.notifyRoleUpdated(
+        payload.user,
+        payload.previousRole,
+        payload.newRole,
+      );
+      this.logger.log(
+        `User role update email event handled for user: ${payload.user.email}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to handle user role update email event: ${error.message}`,
+        error.stack,
+      );
+    }
+  }
+
+  @OnEvent(EmailEvent.USER_ACCOUNT_DEACTIVATED)
+  async handleUserAccountDeactivated(payload: { user: any; reason?: string }) {
+    try {
+      await this.notificationService.notifyAccountDeactivated(
+        payload.user,
+        payload.reason,
+      );
+      this.logger.log(
+        `Account deactivation email event handled for user: ${payload.user.email}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to handle account deactivation email event: ${error.message}`,
+        error.stack,
+      );
+    }
+  }
+
+  @OnEvent(EmailEvent.OUT_OF_STOCK_REPORT_OPENED)
+  async handleOutOfStockReportOpened(payload: {
+    reportId: string;
+    wholesalerName?: string;
+    itemCount: number;
+  }) {
+    try {
+      await this.notificationService.notifyOutOfStockReportOpened(payload);
+      this.logger.log(
+        `Out-of-stock report email event handled for report: ${payload.reportId}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to handle out-of-stock report event: ${error.message}`,
         error.stack,
       );
     }

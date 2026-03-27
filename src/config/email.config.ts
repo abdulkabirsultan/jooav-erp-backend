@@ -7,6 +7,7 @@ export interface EmailConfig {
   fromAddress: string;
   fromName: string;
   baseUrl: string;
+  wholesalerBaseUrl: string;
 }
 
 export const emailConfig = registerAs(
@@ -17,6 +18,7 @@ export const emailConfig = registerAs(
     fromAddress: process.env.EMAIL_FROM_ADDRESS || 'noreply@jooav.com',
     fromName: process.env.EMAIL_FROM_NAME || 'JOOAV ERP',
     baseUrl: process.env.APP_BASE_URL || 'http://localhost:3000',
+    wholesalerBaseUrl: process.env.WHOLESALER_BASE_URL || 'http://localhost:3000'
   }),
 );
 
@@ -31,4 +33,5 @@ export const emailConfigSchema = {
   EMAIL_FROM_ADDRESS: Joi.string().email().default('noreply@jooav.com'),
   EMAIL_FROM_NAME: Joi.string().default('JOOAV ERP'),
   APP_BASE_URL: Joi.string().uri().default('http://localhost:3000'),
+  WHOLESALER_BASE_URL: Joi.string().uri().default('http://localhost:3000')
 };

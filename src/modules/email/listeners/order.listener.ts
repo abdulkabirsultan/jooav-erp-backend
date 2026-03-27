@@ -79,4 +79,86 @@ export class OrderEmailListener {
       );
     }
   }
+
+  @OnEvent(EmailEvent.ORDER_REASSIGNED)
+  async handleOrderReassignment(payload: {
+    order: any;
+    newOfficer: any;
+    previousOfficer?: any;
+  }) {
+    try {
+      await this.notificationService.notifyOrderReassigned(
+        payload.order,
+        payload.newOfficer,
+        payload.previousOfficer,
+      );
+      this.logger.log(
+        `Order reassignment email event handled for order: ${payload.order.orderNumber}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to handle order reassignment email event: ${error.message}`,
+        error.stack,
+      );
+    }
+  }
+
+  @OnEvent(EmailEvent.ORDER_ASSIGNMENT_REJECTED)
+  async handleAssignmentRejected(payload: {
+    orderNumber: string;
+    officerName: string;
+    reason?: string;
+  }) {
+    try {
+      await this.notificationService.notifyAssignmentRejected(payload);
+      this.logger.log(
+        `Assignment rejected email event handled for order: ${payload.orderNumber}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to handle assignment rejected email event: ${error.message}`,
+        error.stack,
+      );
+    }
+  }
+
+  @OnEvent(EmailEvent.ORDER_ASSIGNMENT_ACCEPTED)
+  async handleAssignmentAccepted(payload: {
+    orderNumber: string;
+    officerName: string;
+  }) {
+    try {
+      await this.notificationService.notifyAssignmentAccepted(payload);
+      this.logger.log(
+        `Assignment accepted email event handled for order: ${payload.orderNumber}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to handle assignment accepted email event: ${error.message}`,
+        error.stack,
+      );
+    }
+  }
+
+  @OnEvent(EmailEvent.ORDER_CANCELLED)
+  async handleOrderCancelled(payload: {
+    orderNumber: string;
+    orderTotal?: number;
+    cancelledByName: string;
+    cancelledByRole: string;
+    wholesalerEmail?: string;
+    wholesalerName?: string;
+  }) {
+    try {
+      await this.notificationService.notifyOrderCancelled(payload);
+      this.logger.log(
+        `Order cancelled email event handled for order: ${payload.orderNumber}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to handle order cancelled email event: ${error.message}`,
+        error.stack,
+      );
+    }
+  }
 }
