@@ -13,6 +13,7 @@ import {
   UpdateOrderItemStatusDto,
   InitiatePaymentDto,
   PaymentResponseDto,
+  ManualPaymentResponseDto,
 } from './dto/create-order.dto';
 import { CreateOutOfStockReportDto } from './dto/out-of-stock.dto';
 import {
@@ -34,6 +35,7 @@ import {
   AssignmentStatus,
   ProcurementOfficerStatus,
   OutOfStockReportStatus,
+  Prisma,
 } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { APP_CONSTANTS } from '../../shared/constants/app.constants';
@@ -803,6 +805,309 @@ export class OrderService {
   }
 
   /**
+   * Initiate manual payment for draft order (without Monnify integration)
+   * Converts DRAFT order to PENDING_PAYMENT without generating Monnify invoice
+   */
+  async initiateManualPayment(
+    orderNumber: string,
+    userId: string,
+    initiatePaymentDto?: InitiatePaymentDto,
+    options?: { bypassWholesalerDraftCart?: boolean },
+  ) {
+    // Get user and validate permissions
+    const user = await this.prismaService.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        role: true,
+        wholesalerProfile: {
+          select: {
+            draftCart: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const isWholesaler = user.role === UserRole.WHOLESALER;
+    const sourceOrderNumber =
+      isWholesaler &&
+      !options?.bypassWholesalerDraftCart &&
+      user.wholesalerProfile?.draftCart
+        ? user.wholesalerProfile.draftCart
+        : orderNumber;
+
+    if (isWholesaler && !sourceOrderNumber) {
+      throw new BadRequestException(
+        'No draft cart found for wholesaler account',
+      );
+    }
+
+    // Get source order and validate
+    const sourceOrder = await this.prismaService.order.findUnique({
+      where: { orderNumber: sourceOrderNumber },
+      include: {
+        items: {
+          include: {
+            product: {
+              select: { id: true, name: true, quantity: true, price: true },
+            },
+          },
+        },
+        wholesaler: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phone: true,
+          },
+        },
+      },
+    });
+
+    if (!sourceOrder) {
+      throw new NotFoundException('Order not found');
+    }
+
+    // Validate permissions to initiate payment
+    if (isWholesaler) {
+      if (sourceOrder.wholesalerId !== userId) {
+        throw new ForbiddenException(
+          'You can only initiate payment for your own orders',
+        );
+      }
+    }
+    // Admins can initiate payment for any order
+
+    // Validate order status
+    if (sourceOrder.status !== OrderStatus.DRAFT) {
+      throw new BadRequestException(
+        'Only DRAFT orders can be initiated for payment',
+      );
+    }
+
+    // Validate items exist and meet requirements
+    if (!sourceOrder.items || sourceOrder.items.length === 0) {
+      throw new BadRequestException(
+        'Cannot initiate payment for order with no items',
+      );
+    }
+
+    // Validate each item meets minimum quantity and check inventory
+    const inventoryErrors: string[] = [];
+    for (const item of sourceOrder.items) {
+      if (item.quantity < 10) {
+        throw new BadRequestException(
+          `Item ${item.product.name} quantity (${item.quantity}) is below minimum required (10)`,
+        );
+      }
+
+      // Check current inventory availability
+      if (item.product.quantity < item.quantity) {
+        inventoryErrors.push(
+          `Insufficient stock for ${item.product.name}. Available: ${item.product.quantity}, Requested: ${item.quantity}`,
+        );
+      }
+    }
+
+    if (inventoryErrors.length > 0) {
+      throw new BadRequestException(
+        `Inventory validation failed: ${inventoryErrors.join('; ')}`,
+      );
+    }
+
+    // Recalculate totals with current prices
+    let totalAmount = 0;
+    const paymentOrderItemsData: any[] = [];
+
+    for (const item of sourceOrder.items) {
+      const currentPrice = item.product.price ?? item.unitPrice;
+      const lineTotal = item.quantity * Number(currentPrice);
+      totalAmount += lineTotal;
+
+      paymentOrderItemsData.push({
+        productId: item.productId,
+        quantity: item.quantity,
+        unitPrice: currentPrice,
+        lineTotal,
+        status: item.status,
+        statusUpdatedBy: userId,
+        processingNotes: item.processingNotes,
+      });
+    }
+
+    if (totalAmount <= 0) {
+      throw new BadRequestException('Order total must be greater than 0');
+    }
+
+    // Process delivery address from DTO if provided
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let deliveryAddress: any =
+      initiatePaymentDto?.deliveryAddress || sourceOrder.deliveryAddress;
+
+    // Apply requirements for address (Required for all users including admins)
+    if (!deliveryAddress) {
+      throw new BadRequestException(
+        'Delivery address is required for payment initiation',
+      );
+    }
+
+    // Phone number fallback logic: if address exists but phone is missing, use profile phone
+    if (
+      deliveryAddress &&
+      typeof deliveryAddress === 'object' &&
+      !deliveryAddress.contactPhone &&
+      sourceOrder.wholesaler?.phone
+    ) {
+      deliveryAddress = {
+        ...deliveryAddress,
+        contactPhone: sourceOrder.wholesaler.phone,
+      };
+    }
+
+    // Update draft order if a physical address was provided in the initiation payload
+    if (initiatePaymentDto?.deliveryAddress) {
+      await this.prismaService.order.update({
+        where: { id: sourceOrder.id },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: { deliveryAddress: deliveryAddress as any },
+      });
+      // Synchronize back to the local sourceOrder object for subsequent processing
+      sourceOrder.deliveryAddress = deliveryAddress;
+    }
+
+    try {
+      // Generate new order number for payment
+      const paymentOrderNumber = await this.generateOrderNumber('JOO-');
+
+      // Update order with payment details in atomic sequential transaction
+      let paymentOrder: { id: string; orderNumber: string };
+
+      if (!isWholesaler) {
+        const adminOps: any[] = [
+          this.prismaService.order.update({
+            where: { id: sourceOrder.id },
+            data: {
+              orderNumber: paymentOrderNumber,
+              status: OrderStatus.PENDING_PAYMENT,
+              subtotal: totalAmount,
+              totalAmount: totalAmount,
+              monnifyInvoiceRef: null,
+              virtualAccounts: Prisma.JsonNull,
+              checkoutUrl: null,
+              paymentExpiresAt: null,
+            },
+            select: {
+              id: true,
+              orderNumber: true,
+            },
+          }),
+        ];
+
+        for (const item of sourceOrder.items) {
+          const currentPrice = item.product.price ?? item.unitPrice;
+          const lineTotal = item.quantity * Number(currentPrice);
+
+          adminOps.push(
+            this.prismaService.orderItem.update({
+              where: { id: item.id },
+              data: {
+                unitPrice: currentPrice,
+                lineTotal,
+              },
+            }),
+          );
+        }
+
+        const adminResults = await this.prismaService.$transaction(adminOps);
+        paymentOrder = adminResults[0] as { id: string; orderNumber: string };
+      } else {
+        const wholesalerResults = await this.prismaService.$transaction([
+          this.prismaService.order.create({
+            data: {
+              orderNumber: paymentOrderNumber,
+              wholesalerId: sourceOrder.wholesalerId,
+              createdById: userId,
+              status: OrderStatus.PENDING_PAYMENT,
+              subtotal: totalAmount,
+              totalAmount: totalAmount,
+              ...(sourceOrder.deliveryAddress
+                ? { deliveryAddress: sourceOrder.deliveryAddress }
+                : {}),
+              customerNotes: sourceOrder.customerNotes,
+              monnifyInvoiceRef: null,
+              virtualAccounts: Prisma.JsonNull,
+              checkoutUrl: null,
+              paymentExpiresAt: null,
+              items: {
+                create: paymentOrderItemsData,
+              },
+            },
+            select: {
+              id: true,
+              orderNumber: true,
+            },
+          }),
+          this.prismaService.orderItem.deleteMany({
+            where: { orderId: sourceOrder.id },
+          }),
+          this.prismaService.order.update({
+            where: { id: sourceOrder.id },
+            data: {
+              subtotal: 0,
+              totalAmount: 0,
+            },
+          }),
+        ]);
+
+        paymentOrder = wholesalerResults[0] as {
+          id: string;
+          orderNumber: string;
+        };
+      }
+
+      // Reserve inventory
+      await this.reserveInventoryForOrder(sourceOrder.items);
+
+      this.logger.log(
+        `Manual payment initiated for order ${paymentOrderNumber}`,
+      );
+
+      const paymentOrderPayload = await this.getOrderEmailPayloadById(
+        paymentOrder.id,
+      );
+      if (paymentOrderPayload) {
+        this.eventEmitter.emit(EmailEvent.PAYMENT_INITIATED, {
+          order: paymentOrderPayload,
+        });
+      }
+
+      return {
+        success: true,
+        message: 'Manual payment initiated successfully',
+        data: {
+          order: {
+            id: paymentOrder.id,
+            orderNumber: paymentOrder.orderNumber,
+            totalAmount: totalAmount,
+            status: OrderStatus.PENDING_PAYMENT,
+          },
+        },
+      };
+    } catch (error) {
+      this.logger.error(
+        `Failed to initiate manual payment for order ${sourceOrderNumber}: ${error.message}`,
+        error.stack,
+      );
+      throw new BadRequestException('Failed to initiate manual payment');
+    }
+  }
+
+  /**
    * Reinitiate payment for expired PENDING_PAYMENT orders
    * Returns existing details if not expired, recreates order if expired
    */
@@ -1146,9 +1451,13 @@ export class OrderService {
   }
 
   /**
-   * Verify payment status from Monnify
+   * Verify payment status (supports both auto Monnify verification and manual admin confirmation)
    */
-  async verifyPayment(orderNumber: string, userId: string) {
+  async verifyPayment(
+    orderNumber: string,
+    userId: string,
+    mode: 'auto' | 'manual' = 'auto',
+  ) {
     // Get user and their role
     const user = await this.prismaService.user.findUnique({
       where: { id: userId },
@@ -1161,7 +1470,7 @@ export class OrderService {
 
     const userRole = user.role;
     this.logger.log(
-      `Verifying payment for order ${orderNumber} by user ${userId}`,
+      `Verifying payment for order ${orderNumber} by user ${userId} (mode: ${mode})`,
     );
 
     const order = await this.prismaService.order.findUnique({
@@ -1176,6 +1485,13 @@ export class OrderService {
       throw new NotFoundException('Order not found');
     }
 
+    // Validate order status (manual verification only for PENDING_PAYMENT)
+    if (mode === 'manual' && order.status !== OrderStatus.PENDING_PAYMENT) {
+      throw new BadRequestException(
+        `Manual payment verification only allowed for orders with PENDING_PAYMENT status. Current status: ${order.status}`,
+      );
+    }
+
     // Check permissions
     if (userRole === UserRole.WHOLESALER) {
       if (order.wholesalerId !== userId) {
@@ -1184,12 +1500,59 @@ export class OrderService {
     }
     // Procurement officers can verify any order (removed assignment restriction)
 
+    // Manual mode requires admin privileges
+    if (mode === 'manual') {
+      if (userRole !== UserRole.ADMIN && userRole !== UserRole.SUPER_ADMIN) {
+        throw new ForbiddenException(
+          'Manual payment verification is restricted to administrators only',
+        );
+      }
+    }
+
     try {
-      // Use the orderNumber as the invoice reference, not the monnify transaction ref
-      const invoiceStatus = await this.monnifyService.getInvoiceStatus(
-        order.orderNumber,
-      );
-      if (invoiceStatus.responseBody.paymentStatus === 'PAID') {
+      let paymentStatus: string;
+      let paymentDetails: {
+        transactionReference: string;
+        amountPaid: number;
+        paidOn: string;
+        paymentMethod: string;
+      };
+
+      if (mode === 'manual') {
+        // MANUAL MODE: Admin confirms payment without Monnify verification
+        this.logger.log(
+          `Manual payment verification initiated for order ${orderNumber} by admin ${userId}`,
+        );
+
+        paymentStatus = 'PAID';
+        paymentDetails = {
+          transactionReference: `MANUAL-${order.orderNumber}-${Date.now()}`,
+          amountPaid: Number(order.totalAmount),
+          paidOn: new Date().toISOString(),
+          paymentMethod: 'BANK_TRANSFER',
+        };
+      } else {
+        // AUTO MODE: Monnify verification (existing flow)
+        this.logger.log(
+          `Verifying payment with Monnify for order ${orderNumber}`,
+        );
+
+        // Use the orderNumber as the invoice reference, not the monnify transaction ref
+        const invoiceStatus = await this.monnifyService.getInvoiceStatus(
+          order.orderNumber,
+        );
+
+        paymentStatus = invoiceStatus.responseBody.paymentStatus;
+        paymentDetails = {
+          transactionReference: invoiceStatus.responseBody.transactionReference,
+          amountPaid: invoiceStatus.responseBody.amountPaid,
+          paidOn: invoiceStatus.responseBody.paidOn,
+          paymentMethod: invoiceStatus.responseBody.paymentMethod,
+        };
+      }
+
+      // Process payment if status is PAID
+      if (paymentStatus === 'PAID') {
         // Check if payment already recorded
         const existingPayment = order.payments.find(
           (p) =>
@@ -1202,13 +1565,12 @@ export class OrderService {
           await this.prismaService.payment.create({
             data: {
               orderId: order.id,
-              amount: invoiceStatus.responseBody.amountPaid,
+              amount: paymentDetails.amountPaid,
               paymentMethod: this.mapMonnifyPaymentMethod(
-                invoiceStatus.responseBody.paymentMethod,
+                paymentDetails.paymentMethod,
               ),
               status: PaymentStatus.COMPLETED,
-              monnifyInvoiceRef:
-                invoiceStatus.responseBody.transactionReference,
+              monnifyInvoiceRef: paymentDetails.transactionReference,
               paidAt: new Date(),
             },
           });
@@ -1228,7 +1590,7 @@ export class OrderService {
             data: {
               status: OrderItemStatus.PAID,
               statusUpdatedAt: new Date(),
-              statusUpdatedBy: userId, // Use the actual user ID instead of 'system'
+              statusUpdatedBy: userId,
             },
           });
 
@@ -1257,20 +1619,20 @@ export class OrderService {
           success: true,
           message: 'Payment confirmed successfully',
           paymentDetails: {
-            transactionReference:
-              invoiceStatus.responseBody.transactionReference,
-            amountPaid: invoiceStatus.responseBody.amountPaid,
-            paidOn: invoiceStatus.responseBody.paidOn,
-            paymentMethod: invoiceStatus.responseBody.paymentMethod,
+            transactionReference: paymentDetails.transactionReference,
+            amountPaid: paymentDetails.amountPaid,
+            paidOn: paymentDetails.paidOn,
+            paymentMethod: paymentDetails.paymentMethod,
           },
         };
       } else {
-        if (invoiceStatus.responseBody.paymentStatus === 'FAILED') {
+        // Only send FAILED email for auto mode (Monnify verification)
+        if (mode === 'auto' && paymentStatus === 'FAILED') {
           const orderPayload = await this.getOrderEmailPayloadById(order.id);
           if (orderPayload) {
             this.eventEmitter.emit(EmailEvent.PAYMENT_FAILED, {
               order: orderPayload,
-              payment: invoiceStatus.responseBody,
+              payment: paymentDetails,
               reason: 'Payment verification returned FAILED status',
             });
           }
@@ -1278,7 +1640,7 @@ export class OrderService {
 
         return {
           success: false,
-          message: `Payment status: ${invoiceStatus.responseBody.paymentStatus}`,
+          message: `Payment status: ${paymentStatus}`,
         };
       }
     } catch (error) {
