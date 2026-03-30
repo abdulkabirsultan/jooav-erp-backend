@@ -23,26 +23,9 @@ import { EmailTestController } from './controllers/email-test.controller';
   imports: [
     ConfigModule,
     PrismaModule,
-    BullModule.registerQueueAsync({
+    // Use the global Bull configuration instead of creating a separate one
+    BullModule.registerQueue({
       name: 'email',
-      imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        redis: {
-          host: configService.get<string>('REDIS_HOST'),
-          port: configService.get<number>('REDIS_PORT'),
-          password: configService.get<string>('REDIS_PASSWORD'),
-        },
-        defaultJobOptions: {
-          attempts: 3,
-          backoff: {
-            type: 'exponential',
-            delay: 2000,
-          },
-          removeOnComplete: 10,
-          removeOnFail: 5,
-        },
-      }),
-      inject: [ConfigService],
     }),
   ],
   controllers: [EmailTestController],
