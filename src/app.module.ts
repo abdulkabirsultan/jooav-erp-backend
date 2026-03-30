@@ -118,6 +118,9 @@ import { SentryModule } from '@sentry/nestjs/setup';
         const nodeEnv = configService.get<string>('NODE_ENV') || 'development';
         const redisUrl = configService.get<string>('REDIS_URL');
         const upstashUrl = configService.get<string>('UPSTASH_REDIS_REST_URL');
+        const upstashToken = configService.get<string>(
+          'UPSTASH_REDIS_REST_TOKEN',
+        );
 
         // Use Upstash Redis in production if available
         if (nodeEnv === 'production' && (redisUrl || upstashUrl)) {
@@ -129,27 +132,33 @@ import { SentryModule } from '@sentry/nestjs/setup';
               ? // Use URL-based connection for Upstash
                 {
                   url: connectionUrl,
-                  // Critical ioredis options for Upstash
-                  maxRetriesPerRequest: 3,
-                  retryDelayOnFailover: 100,
+                  // Optimized ioredis options for Upstash Redis
+                  maxRetriesPerRequest: null, // Unlimited retries as requested
+                  retryDelayOnFailover: 1000, // Increased from 100ms to 1s
                   enableReadyCheck: false,
                   lazyConnect: true,
                   keepAlive: 30000,
                   family: 4,
                   connectTimeout: 60000,
-                  commandTimeout: 5000,
+                  commandTimeout: 15000, // Increased from 5s to 15s
                   tls: { rejectUnauthorized: false },
                 }
-              : // Fallback to host/port for production Redis without URL
+              : // Fallback to host/port parsing for Upstash URL
                 {
-                  host: configService.get<string>('REDIS_HOST') || 'localhost',
-                  port: configService.get<number>('REDIS_PORT') || 6380,
-                  password: configService.get<string>('REDIS_PASSWORD'),
+                  host:
+                    (redisUrl || upstashUrl)?.split('@')[1]?.split(':')[0] ||
+                    'localhost',
+                  port: parseInt(
+                    (redisUrl || upstashUrl)?.split(':')[3] || '6379',
+                  ),
+                  password:
+                    upstashToken || configService.get<string>('REDIS_PASSWORD'),
                   tls: { rejectUnauthorized: false },
-                  maxRetriesPerRequest: 3,
-                  retryDelayOnFailover: 100,
+                  maxRetriesPerRequest: null, // Unlimited retries for fallback too
+                  retryDelayOnFailover: 1000, // Increased delay
                   enableReadyCheck: false,
                   lazyConnect: true,
+                  commandTimeout: 15000, // Consistent timeout
                 },
             defaultJobOptions: {
               attempts: 3,
@@ -169,9 +178,10 @@ import { SentryModule } from '@sentry/nestjs/setup';
             host: configService.get<string>('REDIS_HOST') || 'localhost',
             port: configService.get<number>('REDIS_PORT') || 6379,
             password: configService.get<string>('REDIS_PASSWORD'),
-            // Local Redis options
-            maxRetriesPerRequest: 3,
-            retryDelayOnFailover: 100,
+            // Local Redis options - optimized for reliability
+            maxRetriesPerRequest: null, // Consistent with production
+            retryDelayOnFailover: 1000, // Consistent retry delay
+            commandTimeout: 15000, // Consistent timeout
           },
           defaultJobOptions: {
             attempts: 3,
