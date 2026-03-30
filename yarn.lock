@@ -1660,6 +1660,11 @@
   resolved "https://registry.yarnpkg.com/@prisma/prisma-schema-wasm/-/prisma-schema-wasm-4.17.0-26.6b0aef69b7cdfc787f822ecd7cdc76d5f1991584.tgz#58398a22a15d0a11ae7c8756de2b793bb8abfca3"
   integrity sha512-JFdsnSgBPN8reDTLOI9Vh/6ccCb2aD1LbY/LWQnkcIgNo6IdpzvuM+qRVbBuA6IZP2SdqQI8Lu6RL2P8EFBQUA==
 
+"@prisma/sqlcommenter-query-insights@^7.6.0":
+  version "7.6.0"
+  resolved "https://registry.yarnpkg.com/@prisma/sqlcommenter-query-insights/-/sqlcommenter-query-insights-7.6.0.tgz#f0bbf2f3b608ee27ea15600a8887fca3d3b68f74"
+  integrity sha512-vbDjudQLUflAhGZTMBR5BUm3z+6z9XYj9pwpAngC/6vBI/v/jLDV+OlCRMO2wYAB571fyxED6FtJqDmhtegArQ==
+
 "@scarf/scarf@=1.4.0":
   version "1.4.0"
   resolved "https://registry.yarnpkg.com/@scarf/scarf/-/scarf-1.4.0.tgz#3bbb984085dbd6d982494538b523be1ce6562972"

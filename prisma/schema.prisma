@@ -78,6 +78,13 @@ model User {
   updatedPackTypes     PackType[]         @relation("UpdatedPackTypes")
   deletedPackTypes     PackType[]         @relation("DeletedPackTypes")
 
+  // Performance indexes for common queries
+  @@index([role])
+  @@index([status]) 
+  @@index([emailVerified])
+  @@index([lastLogin])
+  @@index([role, status])
+  @@index([createdAt])
   @@map("users")
 }
 
@@ -173,6 +180,8 @@ model Category {
   updatedByUser   User          @relation("UpdatedCategories", fields: [updatedBy], references: [id])
   deletedByUser   User?         @relation("DeletedCategories", fields: [deletedBy], references: [id])
   
+  @@index([status])
+  @@index([createdAt])
   @@map("categories")
 }
 
@@ -201,6 +210,8 @@ model Subcategory {
 
   // Prevent duplicate subcategory names within same category
   @@unique([categoryId, name])
+  @@index([status])
+  @@index([createdAt])
   @@map("subcategories")
 }
 
@@ -337,6 +348,16 @@ model Product {
   stockMovements  StockMovement[]
   outOfStockReportItems OutOfStockReportItem[]
   
+  // Performance indexes for common queries
+  @@index([status])
+  @@index([brandId])
+  @@index([manufacturerId]) 
+  @@index([subcategoryId])
+  @@index([price])
+  @@index([quantity])
+  @@index([deletedAt])
+  @@index([status, deletedAt])
+  @@index([createdAt])
   @@map("products")
 }
 
@@ -379,13 +400,21 @@ model Order {
   updatedAt DateTime @updatedAt
 
   // Relations
-  wholesaler         User         @relation("WholesalerUser", fields: [wholesalerId], references: [id])
-  assignedProcurementOfficer   User? @relation("AssignedProcurementOfficer", fields: [assignedProcurementOfficerId], references: [id])
-  createdBy          User                @relation("CreatedBy", fields: [createdById], references: [id])
-  items              OrderItem[]
-  payments           Payment[]
-  outOfStockReportItems OutOfStockReportItem[]
-
+  wholesaler              User                   @relation("WholesalerUser", fields: [wholesalerId], references: [id])
+  assignedProcurementOfficer User?                @relation("AssignedProcurementOfficer", fields: [assignedProcurementOfficerId], references: [id])
+  createdBy               User                   @relation("CreatedBy", fields: [createdById], references: [id])
+  items                   OrderItem[]
+  outOfStockReportItems   OutOfStockReportItem[]
+  payments                Payment[]
+  
+  // Performance indexes for order queries
+  @@index([wholesalerId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([assignmentStatus])
+  @@index([assignedProcurementOfficerId])
+  @@index([submittedAt])
+  @@index([orderDate])
   @@map("orders")
 }
 
@@ -416,6 +445,9 @@ model OrderItem {
   outOfStockReportItems OutOfStockReportItem[]
 
   @@unique([orderId, productId])
+  @@index([status])
+  @@index([productId])
+  @@index([statusUpdatedAt])
   @@map("order_items")
 }
 
@@ -618,6 +650,9 @@ model Manufacturer {
   region        Region?   @relation(fields: [regionId], references: [id])
   regionId      String?
 
+  @@index([status])
+  @@index([regionId])
+  @@index([createdAt])
   @@map("manufacturers")
 }
 
@@ -645,6 +680,9 @@ model Brand {
   updatedByUser User         @relation("UpdatedBrands", fields: [updatedBy], references: [id])
   deletedByUser User?        @relation("DeletedBrands", fields: [deletedBy], references: [id])
 
+  @@index([status])
+  @@index([manufacturerId])
+  @@index([createdAt])
   @@map("brands")
 }
 

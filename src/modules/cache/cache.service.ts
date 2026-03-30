@@ -476,4 +476,156 @@ export class CacheService implements OnModuleInit {
       return [];
     }
   }
+
+  // ================================
+  // USER AUTHENTICATION CACHING
+  // ================================
+
+  /**
+   * Get cached user data for JWT authentication
+   * Uses token issued time for cache key to handle password changes
+   */
+  async getUserFromCache(
+    userId: string,
+    tokenIat: number,
+  ): Promise<any | null> {
+    try {
+      const cacheKey = `user:${userId}:${tokenIat}`;
+      const cachedUser = await this.get<any>(cacheKey);
+
+      if (cachedUser) {
+        this.logger.debug(`User cache HIT for ${userId}`);
+        return cachedUser;
+      }
+
+      this.logger.debug(`User cache MISS for ${userId}`);
+      return null;
+    } catch (error) {
+      this.logger.error(`Error getting user from cache for ${userId}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Set user data in cache with 15-minute TTL
+   * Uses token issued time for cache key to handle password changes
+   */
+  async setUserInCache(
+    user: any,
+    tokenIat: number,
+    ttl: number = 900,
+  ): Promise<void> {
+    try {
+      const cacheKey = `user:${user.id}:${tokenIat}`;
+
+      // Create a clean user object for caching (remove sensitive data)
+      const cacheableUser = {
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role,
+        status: user.status,
+        emailVerified: user.emailVerified,
+        lastLogin: user.lastLogin,
+        passwordChangedAt: user.passwordChangedAt,
+        profile: user.profile,
+        wholesalerProfile: user.wholesalerProfile,
+        procurementOfficerProfile: user.procurementOfficerProfile,
+        adminProfile: user.adminProfile,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      };
+
+      await this.set(cacheKey, cacheableUser, { ex: ttl });
+      this.logger.debug(`User cached for ${user.id} with TTL ${ttl}s`);
+    } catch (error) {
+      this.logger.error(`Error setting user in cache for ${user.id}:`, error);
+      // Don't throw error - caching should be graceful
+    }
+  }
+
+  /**
+   * Invalidate all cached user data for a specific user
+   * Useful when user data changes (password change, profile update, etc.)
+   */
+  async invalidateUserCache(userId: string): Promise<number> {
+    try {
+      const pattern = `user:${userId}:*`;
+      const keys = await this.keys(pattern);
+
+      if (keys.length > 0) {
+        const deletedCount = await this.del(keys);
+        this.logger.debug(
+          `Invalidated ${deletedCount} user cache entries for ${userId}`,
+        );
+        return deletedCount;
+      }
+
+      return 0;
+    } catch (error) {
+      this.logger.error(`Error invalidating user cache for ${userId}:`, error);
+      return 0;
+    }
+  }
+
+  /**
+   * Check if a JWT token is blacklisted
+   */
+  async isTokenBlacklisted(tokenId: string): Promise<boolean> {
+    try {
+      const blacklistKey = `blacklist:${tokenId}`;
+      const exists = await this.exists(blacklistKey);
+      return exists;
+    } catch (error) {
+      this.logger.error(
+        `Error checking token blacklist for ${tokenId}:`,
+        error,
+      );
+      // Return false on error to prevent blocking legitimate requests
+      return false;
+    }
+  }
+
+  /**
+   * Add a JWT token to the blacklist
+   */
+  async addTokenToBlacklist(tokenId: string, ttl: number): Promise<void> {
+    try {
+      const blacklistKey = `blacklist:${tokenId}`;
+      await this.set(blacklistKey, 'blacklisted', { ex: ttl });
+      this.logger.debug(`Token ${tokenId} added to blacklist with TTL ${ttl}s`);
+    } catch (error) {
+      this.logger.error(`Error adding token to blacklist ${tokenId}:`, error);
+      // Don't throw error - blacklisting should be graceful
+    }
+  }
+
+  /**
+   * Get cache statistics for monitoring
+   */
+  async getCacheStats(): Promise<any> {
+    try {
+      const stats = {
+        connected: this.isConnected,
+        type: this.clientType,
+        environment: process.env.NODE_ENV || 'development',
+      };
+
+      if (this.clientType === 'traditional' && this.ioredisClient) {
+        return {
+          ...stats,
+          status: this.ioredisClient.status,
+          host: this.ioredisClient.options.host,
+          port: this.ioredisClient.options.port,
+          db: this.ioredisClient.options.db,
+        };
+      }
+
+      return stats;
+    } catch (error) {
+      this.logger.error('Error getting cache stats:', error);
+      return { error: error.message };
+    }
+  }
 }

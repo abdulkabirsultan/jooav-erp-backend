@@ -2331,12 +2331,14 @@ export class OrderService {
                 name: true,
                 thumbnail: true,
                 images: true,
+                price: true,
+                discount: true,
+                // Optimize nested relations - get only essential data
                 brand: { select: { name: true } },
                 packSize: { select: { name: true } },
                 packType: { select: { name: true } },
-                price: true,
-                discount: true,
                 variant: { select: { id: true, name: true } },
+                // Use a single select instead of nested query
                 subcategory: {
                   select: {
                     name: true,
@@ -2346,6 +2348,8 @@ export class OrderService {
               },
             },
           },
+          // Limit order items per order to prevent huge responses
+          take: 50,
         },
       },
       orderBy: { createdAt: sortOrder as 'asc' | 'desc' },
