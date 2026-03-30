@@ -45,7 +45,9 @@ import {
   ListOrdersQueryDto,
   InitiatePaymentDto,
   PaymentResponseDto,
+  ManualPaymentResponseDto,
   DraftOrderResponseDto,
+  VerifyPaymentDto,
 } from './dto/create-order.dto';
 import {
   CreateOutOfStockReportDto,
@@ -145,6 +147,50 @@ export class OrderController {
     );
   }
 
+  @Post(':orderNumber/initiate-manual-payment')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.WHOLESALER)
+  @ApiOperation({
+    summary: 'Initiate manual payment for draft order (no Monnify)',
+    description:
+      'Converts a DRAFT order to PENDING_PAYMENT without Monnify integration. ' +
+      'Admin must manually confirm payment after verification. ' +
+      '\n\n**Address rules:**' +
+      '\n- `deliveryAddress` is strictly required for all users. Only the `address` sub-field is mandatory; all others (city, state, contactName, contactPhone) are optional.' +
+      "\n\n**Phone fallback**: If `contactPhone` is omitted from the address, it will be auto-filled from the wholesaler's user profile." +
+      '\n\n**Items**: Always sourced from the draft order in the database — do not include items in this request.',
+  })
+  @ApiParam({
+    name: 'orderNumber',
+    description: 'Draft order number to initiate manual payment for',
+    example: 'DRAFT-1536724985',
+  })
+  @ApiBadRequestResponse({
+    description:
+      'Validation failed — e.g. deliveryAddress missing, empty order, or zero total',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Manual payment initiated successfully',
+    type: ManualPaymentResponseDto,
+  })
+  @ApiForbiddenResponse({
+    description: 'Access denied or order belongs to another user',
+  })
+  @ApiNotFoundResponse({
+    description: 'Order not found',
+  })
+  async initiateManualPayment(
+    @Param('orderNumber') orderNumber: string,
+    @Body() initiatePaymentDto: InitiatePaymentDto,
+    @CurrentUserId() userId: string,
+  ): Promise<ManualPaymentResponseDto> {
+    return this.orderService.initiateManualPayment(
+      orderNumber,
+      userId,
+      initiatePaymentDto,
+    );
+  }
+
   @Post(':orderNumber/reinitiate-payment')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.WHOLESALER)
   @ApiOperation({
@@ -209,22 +255,41 @@ export class OrderController {
   )
   @ApiOperation({
     summary: 'Verify payment status',
-    description: 'Checks Monnify payment status and updates order accordingly',
+    description:
+      'Verifies payment for an order. Supports two modes:\n\n' +
+      '**Auto mode (default):** Checks Monnify payment status via API\n\n' +
+      '**Manual mode:** Admin confirms payment without Monnify (requires ADMIN/SUPER_ADMIN role)\n\n' +
+      'Both modes result in order confirmation if payment is verified.',
   })
   @ApiParam({
     name: 'orderNumber',
     description: 'Order number to verify payment for',
+    example: 'JOO-1234567890',
   })
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Payment verification result',
     type: PaymentConfirmationDto,
   })
+  @ApiForbiddenResponse({
+    description: 'Access denied or insufficient permissions for manual mode',
+  })
+  @ApiNotFoundResponse({
+    description: 'Order or user not found',
+  })
+  @ApiBadRequestResponse({
+    description: 'Verification failed or invalid order status',
+  })
   async verifyPayment(
     @Param('orderNumber') orderNumber: string,
+    @Body() verifyPaymentDto: VerifyPaymentDto,
     @CurrentUserId() userId: string,
   ): Promise<PaymentConfirmationDto> {
-    return this.orderService.verifyPayment(orderNumber, userId);
+    return this.orderService.verifyPayment(
+      orderNumber,
+      userId,
+      verifyPaymentDto?.mode,
+    );
   }
 
   @Patch(':orderNumber/items/:itemId/status')

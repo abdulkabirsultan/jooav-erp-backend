@@ -156,6 +156,22 @@ export class PaymentConfirmationDto {
   };
 }
 
+export class VerifyPaymentDto {
+  @ApiProperty({
+    description:
+      'Payment verification mode. Default is "auto" (Monnify verification). Use "manual" for admin confirmation.',
+    enum: ['auto', 'manual'],
+    required: false,
+    default: 'auto',
+    example: 'auto',
+  })
+  @IsOptional()
+  @IsEnum(['auto', 'manual'], {
+    message: 'mode must be either "auto" or "manual"',
+  })
+  mode?: 'auto' | 'manual';
+}
+
 export class UpdateOrderItemStatusDto {
   @ApiProperty({
     description: 'New status for the order item',
@@ -295,6 +311,32 @@ export class PaymentResponseDto {
     checkoutUrl: string;
     expiryDate: string;
     invoiceReference: string;
+  };
+}
+
+export class ManualPaymentResponseDto {
+  @ApiProperty({
+    description: 'Success status',
+    example: true,
+  })
+  success: boolean;
+
+  @ApiProperty({
+    description: 'Response message',
+    example: 'Manual payment initiated successfully',
+  })
+  message: string;
+
+  @ApiProperty({
+    description: 'Order data',
+  })
+  data: {
+    order: {
+      id: string;
+      orderNumber: string;
+      totalAmount: number;
+      status: string;
+    };
   };
 }
 
