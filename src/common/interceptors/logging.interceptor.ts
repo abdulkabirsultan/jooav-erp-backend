@@ -22,7 +22,7 @@ export class LoggingInterceptor implements NestInterceptor {
 
     // Async logging for incoming request - don't block the request
     setImmediate(() => {
-      this.logger.log(`Incoming Request: ${method} ${url}`, {
+      const logContext = {
         method,
         url,
         body: this.sanitizeBody(body),
@@ -30,7 +30,12 @@ export class LoggingInterceptor implements NestInterceptor {
         params: Object.keys(params || {}).length > 0 ? params : undefined,
         userAgent: userAgent.substring(0, 100), // Truncate long user agents
         ip,
-      });
+      };
+
+      this.logger.log(
+        `Incoming Request: ${method} ${url}`,
+        JSON.stringify(logContext, null, 2),
+      );
     });
 
     return next.handle().pipe(
@@ -54,12 +59,12 @@ export class LoggingInterceptor implements NestInterceptor {
             if (duration > 1000) {
               this.logger.warn(
                 `Slow request: ${method} ${url} - ${duration.toFixed(2)}ms`,
-                responseInfo,
+                JSON.stringify(responseInfo, null, 2),
               );
             } else {
               this.logger.log(
                 `Request completed: ${method} ${url} - ${duration.toFixed(2)}ms`,
-                responseInfo,
+                JSON.stringify(responseInfo, null, 2),
               );
             }
           });
@@ -69,15 +74,17 @@ export class LoggingInterceptor implements NestInterceptor {
 
           // Async logging for errors - don't block error handling
           setImmediate(() => {
+            const errorInfo = {
+              method,
+              url,
+              duration: `${duration.toFixed(2)}ms`,
+              error: error.message,
+              status: 'ERROR',
+            };
+
             this.logger.error(
               `Request failed: ${method} ${url} - ${duration.toFixed(2)}ms`,
-              {
-                method,
-                url,
-                duration: `${duration.toFixed(2)}ms`,
-                error: error.message,
-                status: 'ERROR',
-              },
+              JSON.stringify(errorInfo, null, 2),
             );
           });
         },

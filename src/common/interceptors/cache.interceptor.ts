@@ -43,7 +43,8 @@ export class CacheInterceptor implements NestInterceptor {
 
       if (cachedResult) {
         this.logger.debug(`Cache hit for key: ${cacheKey}`);
-        return of(JSON.parse(cachedResult));
+        // CacheService.get() already handles JSON parsing, so return directly
+        return of(cachedResult);
       }
 
       this.logger.debug(`Cache miss for key: ${cacheKey}`);

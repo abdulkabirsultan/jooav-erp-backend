@@ -83,7 +83,10 @@ export class CacheService implements OnModuleInit {
 
       try {
         return JSON.parse(result) as T;
-      } catch {
+      } catch (parseError) {
+        this.logger.warn(
+          `Failed to parse cached JSON for key ${key}: ${parseError.message}. Raw value: ${result?.substring(0, 100)}...`,
+        );
         return result as unknown as T;
       }
     } catch (error) {
@@ -98,7 +101,18 @@ export class CacheService implements OnModuleInit {
     options?: { ex?: number; px?: number },
   ): Promise<void> {
     try {
-      const serializedValue = JSON.stringify(value);
+      let serializedValue: string;
+
+      try {
+        serializedValue = JSON.stringify(value);
+      } catch (stringifyError) {
+        this.logger.error(
+          `Failed to serialize value for key ${key}: ${stringifyError.message}`,
+        );
+        throw new Error(
+          `Cannot serialize value for cache key ${key}: ${stringifyError.message}`,
+        );
+      }
 
       if (this.clientType === 'upstash' && this.upstashClient) {
         if (options?.ex) {
