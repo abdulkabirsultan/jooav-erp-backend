@@ -8,6 +8,7 @@ import {
   Delete,
   Query,
   UseGuards,
+  UseInterceptors,
   Request,
   ParseEnumPipe,
   HttpStatus,
@@ -31,6 +32,8 @@ import { UnifiedAuthGuard } from '../../common/guards/unified-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { CurrentUserId } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { Cache } from '../../common/decorators/cache.decorator';
+import { CacheInterceptor } from '../../common/interceptors/cache.interceptor';
 import { AuditLog } from '../../common/decorators/audit-log.decorator';
 import { PaginatedResponse } from '../../common/dto/paginated-response.dto';
 import { SuccessResponse } from '../../common/dto/api-response.dto';
@@ -68,6 +71,13 @@ export class UsersController {
   // ================================
 
   @Get()
+  @UseInterceptors(CacheInterceptor)
+  @Cache({
+    key: 'users',
+    ttl: 600, // 10 minutes - user data doesn't change very often
+    includeParams: true,
+    tags: ['users'],
+  })
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   @ApiOperation({

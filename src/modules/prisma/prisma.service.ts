@@ -45,7 +45,7 @@ export class PrismaService
         ? new PrismaPg({
             connectionString:
               databaseUrl +
-              '?connection_limit=20&pool_timeout=20&schema_name=public',
+              '?connection_limit=50&pool_timeout=30&idle_timeout=30&statement_cache_size=100&schema_name=public',
           })
         : undefined;
 

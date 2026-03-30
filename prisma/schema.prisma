@@ -86,6 +86,10 @@ model User {
   @@index([lastLogin])
   @@index([role, status])
   @@index([createdAt])
+  // New critical performance indexes
+  @@index([email])                           // Authentication lookups
+  @@index([username])                        // Username searches
+  @@index([role, status, emailVerified])     // User filtering queries
   @@map("users")
 }
 
@@ -359,6 +363,12 @@ model Product {
   @@index([deletedAt])
   @@index([status, deletedAt])
   @@index([createdAt])
+  // New critical performance indexes for product queries
+  @@index([brandId, subcategoryId])          // Product filtering by brand + category
+  @@index([manufacturerId, status, deletedAt]) // Manufacturer product queries
+  @@index([variantId, status, deletedAt])    // Variant filtering
+  @@index([status, quantity, deletedAt])     // Live product availability
+  @@index([name, status])                    // Product name search
   @@map("products")
 }
 
@@ -416,6 +426,11 @@ model Order {
   @@index([assignedProcurementOfficerId])
   @@index([submittedAt])
   @@index([orderDate])
+  // New critical performance indexes for order queries
+  @@index([wholesalerId, status, orderDate]) // Wholesaler order history
+  @@index([assignedProcurementOfficerId, assignmentStatus]) // Officer workload queries
+  @@index([status, submittedAt, orderDate]) // Order listing with dates
+  @@index([monnifyInvoiceRef])               // Payment reference lookups
   @@map("orders")
 }
 
@@ -449,6 +464,9 @@ model OrderItem {
   @@index([status])
   @@index([productId])
   @@index([statusUpdatedAt])
+  // New critical performance indexes for order items
+  @@index([orderId, status])                 // Order items by status
+  @@index([productId, status])               // Product usage tracking
   @@map("order_items")
 }
 
