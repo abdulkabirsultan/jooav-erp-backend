@@ -566,6 +566,41 @@ export class UsersController {
     );
   }
 
+  @Delete('me/account')
+  @ApiOperation({
+    summary: 'Delete own account',
+    description:
+      'Permanently delete your own account. This action cannot be undone. Super Admins and Admins cannot delete their accounts through this endpoint.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Account deleted successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean', example: true },
+        message: { type: 'string', example: 'Account deleted successfully' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Bad request - Admin/Super Admin accounts cannot be self-deleted, or user has active orders',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @AuditLog({
+    action: 'DELETE_OWN_ACCOUNT',
+    resource: 'USER',
+  })
+  async deleteMyAccount(
+    @CurrentUserId() userId: string,
+    @Request() req: any,
+  ): Promise<SuccessResponse<null>> {
+    await this.usersService.deleteMyAccount(userId, req);
+    return new SuccessResponse('Account deleted successfully', null);
+  }
+
   // ================================
   // USER ACTIVITY LOGS (ADMIN ONLY)
   // ================================
