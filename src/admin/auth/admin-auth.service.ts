@@ -60,7 +60,7 @@ export class AdminAuthService {
     // Find admin user with profile (now includes procurement officers)
     const admin = await this.prisma.user.findUnique({
       where: {
-        email,
+        email: email.toLowerCase(),
         role: {
           in: [
             UserRole.SUPER_ADMIN,
@@ -392,7 +392,7 @@ export class AdminAuthService {
     // Create Super Admin
     const superAdmin = await this.prisma.user.create({
       data: {
-        email: seedDto.email,
+        email: seedDto.email.toLowerCase(),
         password: passwordString,
         firstName: seedDto.firstName,
         lastName: seedDto.lastName,

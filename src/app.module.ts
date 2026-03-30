@@ -114,27 +114,76 @@ import { SentryModule } from '@sentry/nestjs/setup';
     // Bull Queue Management (for background jobs like email)
     BullModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        redis: {
-          host: configService.get<string>('REDIS_HOST') || 'localhost',
-          port: configService.get<number>('REDIS_PORT') || 6379,
-          password: configService.get<string>('REDIS_PASSWORD'),
-          // Upstash Redis requires TLS in production
-          tls:
-            configService.get<string>('REDIS_TLS') === 'true'
-              ? { rejectUnauthorized: false }
-              : undefined,
-        },
-        defaultJobOptions: {
-          attempts: 3,
-          backoff: {
-            type: 'exponential',
-            delay: 2000,
+      useFactory: async (configService: ConfigService) => {
+        const nodeEnv = configService.get<string>('NODE_ENV') || 'development';
+        const redisUrl = configService.get<string>('REDIS_URL');
+        const upstashUrl = configService.get<string>('UPSTASH_REDIS_REST_URL');
+
+        // Use Upstash Redis in production if available
+        if (nodeEnv === 'production' && (redisUrl || upstashUrl)) {
+          // Upstash provides REDIS_URL in rediss://... format
+          const connectionUrl = redisUrl || upstashUrl;
+
+          return {
+            redis: connectionUrl
+              ? // Use URL-based connection for Upstash
+                {
+                  url: connectionUrl,
+                  // Critical ioredis options for Upstash
+                  maxRetriesPerRequest: 3,
+                  retryDelayOnFailover: 100,
+                  enableReadyCheck: false,
+                  lazyConnect: true,
+                  keepAlive: 30000,
+                  family: 4,
+                  connectTimeout: 60000,
+                  commandTimeout: 5000,
+                  tls: { rejectUnauthorized: false },
+                }
+              : // Fallback to host/port for production Redis without URL
+                {
+                  host: configService.get<string>('REDIS_HOST') || 'localhost',
+                  port: configService.get<number>('REDIS_PORT') || 6380,
+                  password: configService.get<string>('REDIS_PASSWORD'),
+                  tls: { rejectUnauthorized: false },
+                  maxRetriesPerRequest: 3,
+                  retryDelayOnFailover: 100,
+                  enableReadyCheck: false,
+                  lazyConnect: true,
+                },
+            defaultJobOptions: {
+              attempts: 3,
+              backoff: {
+                type: 'exponential',
+                delay: 2000,
+              },
+              removeOnComplete: 100,
+              removeOnFail: 50,
+            },
+          };
+        }
+
+        // Use traditional Redis for development
+        return {
+          redis: {
+            host: configService.get<string>('REDIS_HOST') || 'localhost',
+            port: configService.get<number>('REDIS_PORT') || 6379,
+            password: configService.get<string>('REDIS_PASSWORD'),
+            // Local Redis options
+            maxRetriesPerRequest: 3,
+            retryDelayOnFailover: 100,
           },
-          removeOnComplete: 100,
-          removeOnFail: 50,
-        },
-      }),
+          defaultJobOptions: {
+            attempts: 3,
+            backoff: {
+              type: 'exponential',
+              delay: 2000,
+            },
+            removeOnComplete: 100,
+            removeOnFail: 50,
+          },
+        };
+      },
       inject: [ConfigService],
     }),
 
