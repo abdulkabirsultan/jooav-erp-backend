@@ -40,6 +40,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { APP_CONSTANTS } from '../../shared/constants/app.constants';
 import { EmailEvent } from '../email/types/email.types';
+import { CacheInvalidationService } from '../cache/cache-invalidation.service';
 
 @Injectable()
 export class OrderService {
@@ -50,6 +51,7 @@ export class OrderService {
     private readonly monnifyService: MonnifyService,
     private readonly configService: ConfigService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly cacheInvalidationService: CacheInvalidationService,
   ) {}
 
   private async getOrderEmailPayloadById(orderId: string) {
@@ -779,6 +781,8 @@ export class OrderService {
         });
       }
 
+      await this.cacheInvalidationService.invalidateOrders();
+
       return {
         success: true,
         message: 'Payment initiated successfully',
@@ -1085,6 +1089,8 @@ export class OrderService {
           order: paymentOrderPayload,
         });
       }
+
+      await this.cacheInvalidationService.invalidateOrders();
 
       return {
         success: true,
@@ -1614,6 +1620,8 @@ export class OrderService {
             );
           }
         }
+
+        await this.cacheInvalidationService.invalidateOrders();
 
         return {
           success: true,
@@ -4370,6 +4378,8 @@ export class OrderService {
             undefined,
         });
       }
+
+      await this.cacheInvalidationService.invalidateOrders();
 
       return {
         success: true,

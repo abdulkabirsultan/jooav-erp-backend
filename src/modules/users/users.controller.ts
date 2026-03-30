@@ -163,6 +163,7 @@ export class UsersController {
       currentUserId,
       req,
     );
+
     return new SuccessResponse(
       ResponseMessages.created('User', user.email),
       user as CreateUserResponseDto,
@@ -410,6 +411,7 @@ export class UsersController {
     @Request() req: any,
   ): Promise<{ message: string }> {
     await this.usersService.remove(id, currentUserId, req);
+
     return { message: 'User deleted successfully' };
   }
 

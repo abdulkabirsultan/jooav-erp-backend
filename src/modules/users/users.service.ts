@@ -13,6 +13,7 @@ import { generatePasswordResetToken } from '../../common/utils/token.util';
 import { AuditService } from '../audit/audit.service';
 import { NotificationService } from '../email/services/notification.service';
 import { CacheService } from '../cache/cache.service';
+import { CacheInvalidationService } from '../cache/cache-invalidation.service';
 import { ConfigService } from '@nestjs/config';
 import { PaginationDto, PaginatedResponse } from '../../common/dto';
 import {
@@ -45,6 +46,7 @@ export class UsersService {
     private notificationService: NotificationService,
     private configService: ConfigService,
     private cacheService: CacheService,
+    private cacheInvalidationService: CacheInvalidationService,
     private eventEmitter: EventEmitter2,
   ) {}
 
@@ -394,6 +396,10 @@ export class UsersService {
     );
 
     const { password, ...userWithoutPassword } = user;
+
+    // Invalidate users cache after creation
+    await this.cacheInvalidationService.invalidateUsers();
+
     return {
       ...userWithoutPassword,
       resetUrl,
@@ -483,6 +489,9 @@ export class UsersService {
       updatedUser,
       request,
     );
+
+    // Invalidate users cache after update
+    await this.cacheInvalidationService.invalidateUsers();
 
     return updatedUser as UserProfileDto;
   }
@@ -977,6 +986,9 @@ export class UsersService {
       },
       reason: 'Account archived by administrator',
     });
+
+    // Invalidate users cache after removal
+    await this.cacheInvalidationService.invalidateUsers();
   }
 
   /**

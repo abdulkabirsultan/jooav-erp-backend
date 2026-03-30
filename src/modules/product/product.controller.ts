@@ -212,6 +212,7 @@ export class ProductController {
     }
 
     const product = await this.productService.create(createProductDto, userId);
+
     return new SuccessResponse(
       ResponseMessages.created('Product', product.name),
       product,
@@ -519,6 +520,7 @@ export class ProductController {
       updateProductDto,
       userId,
     );
+
     return new SuccessResponse(
       ResponseMessages.updated('Product', product.name),
       product,
@@ -628,6 +630,7 @@ export class ProductController {
     @CurrentUserId() userId: string,
   ): Promise<SuccessResponse<null>> {
     await this.productService.remove(id, userId);
+
     return new SuccessResponse(
       ResponseMessages.deleted('Product', 'item'),
       null,
