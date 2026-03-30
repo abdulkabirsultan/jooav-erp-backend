@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { TerminusModule } from '@nestjs/terminus';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { BullModule } from '@nestjs/bull';
 import { APP_FILTER, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { WinstonModule } from 'nest-winston';
@@ -109,6 +110,33 @@ import { SentryModule } from '@sentry/nestjs/setup';
 
     // Domain events
     EventEmitterModule.forRoot(),
+
+    // Bull Queue Management (for background jobs like email)
+    BullModule.forRootAsync({
+      imports: [ConfigModule],
+      useFactory: async (configService: ConfigService) => ({
+        redis: {
+          host: configService.get<string>('REDIS_HOST') || 'localhost',
+          port: configService.get<number>('REDIS_PORT') || 6379,
+          password: configService.get<string>('REDIS_PASSWORD'),
+          // Upstash Redis requires TLS in production
+          tls:
+            configService.get<string>('REDIS_TLS') === 'true'
+              ? { rejectUnauthorized: false }
+              : undefined,
+        },
+        defaultJobOptions: {
+          attempts: 3,
+          backoff: {
+            type: 'exponential',
+            delay: 2000,
+          },
+          removeOnComplete: 100,
+          removeOnFail: 50,
+        },
+      }),
+      inject: [ConfigService],
+    }),
 
     // Feature modules
     CacheModule,

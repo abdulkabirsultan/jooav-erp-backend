@@ -14,6 +14,7 @@ import * as argon2 from 'argon2';
 import { v4 as uuidv4 } from 'uuid';
 
 import { PrismaService } from '../prisma/prisma.service';
+import { CacheService } from '../cache/cache.service';
 import { generatePasswordResetToken } from '../../common/utils/token.util';
 import { AuditService } from '../audit/audit.service';
 import { NotificationService } from '../email/services/notification.service';
@@ -43,7 +44,6 @@ export class AuthService {
     parallelism: 1,
     type: argon2.argon2id,
   };
-  private readonly blacklistedTokens = new Set<string>();
 
   constructor(
     private prisma: PrismaService,
@@ -52,6 +52,7 @@ export class AuthService {
     private auditService: AuditService,
     private notificationService: NotificationService,
     private eventEmitter: EventEmitter2,
+    private cacheService: CacheService,
   ) {
     this.jwtSecret =
       this.configService.get('security.jwtSecret') || 'your-secret-key';
@@ -338,10 +339,24 @@ export class AuthService {
       where: { userId },
     });
 
-    // Add token to blacklist if provided
+    // Add token to blacklist if provided (store in Redis for TTL management)
     if (tokenId) {
-      this.blacklistedTokens.add(tokenId);
+      try {
+        // Try to decode the token to get expiration time
+        const payload = this.jwtService.decode(tokenId) as any;
+        const ttlSeconds = payload?.exp
+          ? Math.max(60, Math.floor((payload.exp * 1000 - Date.now()) / 1000))
+          : 3600; // Default to 1 hour if can't decode
+
+        await this.cacheService.addTokenToBlacklist(tokenId, ttlSeconds);
+      } catch (error) {
+        // If token decoding fails, still blacklist with default TTL
+        await this.cacheService.addTokenToBlacklist(tokenId, 3600);
+      }
     }
+
+    // Invalidate user cache to force fresh data on next login
+    await this.cacheService.invalidateUserCache(userId);
 
     // Log logout
     await this.auditService.logAuthEvent(userId, 'LOGOUT', request);
@@ -391,6 +406,9 @@ export class AuthService {
     await this.prisma.userSession.deleteMany({
       where: { userId },
     });
+
+    // Invalidate user cache to force fresh data
+    await this.cacheService.invalidateUserCache(userId);
 
     // Send password change confirmation email
     try {
@@ -569,7 +587,7 @@ export class AuthService {
    * Check if token is blacklisted
    */
   async isTokenBlacklisted(tokenId: string): Promise<boolean> {
-    return this.blacklistedTokens.has(tokenId);
+    return await this.cacheService.isTokenBlacklisted(tokenId);
   }
 
   /**
@@ -582,7 +600,10 @@ export class AuthService {
       });
 
       // Check if token is blacklisted
-      if (payload.jti && this.blacklistedTokens.has(payload.jti)) {
+      if (
+        payload.jti &&
+        (await this.cacheService.isTokenBlacklisted(payload.jti))
+      ) {
         return { valid: false };
       }
 
@@ -749,6 +770,9 @@ export class AuthService {
 
     // Invalidate all JWT tokens for this user by updating passwordChangedAt
     // This will cause token validation to fail since tokens issued before passwordChangedAt are invalid
+
+    // Invalidate user cache to force fresh data
+    await this.cacheService.invalidateUserCache(user.id);
 
     // Send password reset success confirmation email
     try {

@@ -8,6 +8,7 @@ import {
   Delete,
   Query,
   UseGuards,
+  UseInterceptors,
   Request,
   ParseEnumPipe,
   HttpStatus,
@@ -31,6 +32,8 @@ import { UnifiedAuthGuard } from '../../common/guards/unified-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { CurrentUserId } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { Cache } from '../../common/decorators/cache.decorator';
+import { CacheInterceptor } from '../../common/interceptors/cache.interceptor';
 import { AuditLog } from '../../common/decorators/audit-log.decorator';
 import { PaginatedResponse } from '../../common/dto/paginated-response.dto';
 import { SuccessResponse } from '../../common/dto/api-response.dto';
@@ -68,6 +71,13 @@ export class UsersController {
   // ================================
 
   @Get()
+  @UseInterceptors(CacheInterceptor)
+  @Cache({
+    key: 'users',
+    ttl: 600, // 10 minutes - user data doesn't change very often
+    includeParams: true,
+    tags: ['users'],
+  })
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   @ApiOperation({
@@ -153,6 +163,7 @@ export class UsersController {
       currentUserId,
       req,
     );
+
     return new SuccessResponse(
       ResponseMessages.created('User', user.email),
       user as CreateUserResponseDto,
@@ -400,6 +411,7 @@ export class UsersController {
     @Request() req: any,
   ): Promise<{ message: string }> {
     await this.usersService.remove(id, currentUserId, req);
+
     return { message: 'User deleted successfully' };
   }
 
@@ -564,6 +576,41 @@ export class UsersController {
       'Wholesaler addresses retrieved successfully',
       result,
     );
+  }
+
+  @Delete('me/account')
+  @ApiOperation({
+    summary: 'Delete own account',
+    description:
+      'Permanently delete your own account. This action cannot be undone. Super Admins and Admins cannot delete their accounts through this endpoint.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Account deleted successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean', example: true },
+        message: { type: 'string', example: 'Account deleted successfully' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Bad request - Admin/Super Admin accounts cannot be self-deleted, or user has active orders',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @AuditLog({
+    action: 'DELETE_OWN_ACCOUNT',
+    resource: 'USER',
+  })
+  async deleteMyAccount(
+    @CurrentUserId() userId: string,
+    @Request() req: any,
+  ): Promise<SuccessResponse<null>> {
+    await this.usersService.deleteMyAccount(userId, req);
+    return new SuccessResponse('Account deleted successfully', null);
   }
 
   // ================================

@@ -128,6 +128,66 @@ export class CacheInvalidationService {
   }
 
   /**
+   * Invalidate all order-related caches using tags
+   */
+  async invalidateOrders(): Promise<void> {
+    try {
+      const deletedCount = await this.cacheService.invalidateByTag('orders');
+      this.logger.log(`Invalidated ${deletedCount} order cache entries`);
+    } catch (error) {
+      this.logger.error('Failed to invalidate order caches', error);
+    }
+  }
+
+  /**
+   * Invalidate caches for a specific order using tags
+   */
+  async invalidateOrder(orderNumber: string): Promise<void> {
+    try {
+      const tags = [`order:${orderNumber}`, 'orders', 'order-details'];
+      const deletedCount = await this.cacheService.invalidateByTags(tags);
+      this.logger.log(
+        `Invalidated ${deletedCount} cache entries for order: ${orderNumber}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to invalidate caches for order: ${orderNumber}`,
+        error,
+      );
+    }
+  }
+
+  /**
+   * Invalidate all user-related caches using tags
+   */
+  async invalidateUsers(): Promise<void> {
+    try {
+      const deletedCount = await this.cacheService.invalidateByTag('users');
+      this.logger.log(`Invalidated ${deletedCount} user cache entries`);
+    } catch (error) {
+      this.logger.error('Failed to invalidate user caches', error);
+    }
+  }
+
+  /**
+   * Invalidate caches for a specific user using tags
+   */
+  async invalidateUser(userId: string): Promise<void> {
+    try {
+      const tags = [`user:${userId}`, 'users'];
+      const deletedCount = await this.cacheService.invalidateByTags(tags);
+      this.logger.log(
+        `Invalidated ${deletedCount} cache entries for user: ${userId}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to invalidate caches for user: ${userId}`,
+        error,
+      );
+    }
+  }
+
+  /**
    * Clear all caches (use with caution)
    */
   async flushAll(): Promise<void> {

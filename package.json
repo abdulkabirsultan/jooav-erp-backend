@@ -62,6 +62,7 @@
     "@prisma/adapter-pg": "^6.19.0",
     "@prisma/client": "^6.19.0",
     "@prisma/extension-accelerate": "^3.0.1",
+    "@prisma/sqlcommenter-query-insights": "^7.6.0",
     "@sentry/nestjs": "^10.29.0",
     "@sentry/profiling-node": "^10.30.0",
     "@types/bcryptjs": "^3.0.0",

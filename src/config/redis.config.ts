@@ -28,6 +28,7 @@ export const redisConfig = registerAs('redis', () => {
     host: process.env.REDIS_HOST || 'localhost',
     port: parseInt(process.env.REDIS_PORT || '6379', 10),
     password: process.env.REDIS_PASSWORD,
+    tls: process.env.REDIS_TLS === 'true',
     type: 'traditional',
     retryAttempts: parseInt(process.env.REDIS_RETRY_ATTEMPTS || '3', 10),
     retryDelay: parseInt(process.env.REDIS_RETRY_DELAY || '1000', 10),
@@ -44,6 +45,7 @@ export const redisConfigSchema = {
   }),
   REDIS_PORT: Joi.number().port().default(6379),
   REDIS_PASSWORD: Joi.string().optional(),
+  REDIS_TLS: Joi.boolean().default(false),
 
   // Upstash Redis
   UPSTASH_REDIS_REST_URL: Joi.string().uri().optional(),
@@ -67,6 +69,7 @@ export interface RedisConfig {
   host?: string;
   port?: number;
   password?: string;
+  tls?: boolean;
   type: 'upstash' | 'traditional';
   retryAttempts: number;
   retryDelay: number;
