@@ -8,6 +8,7 @@ import { PrismaClient } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { withAccelerate } from '@prisma/extension-accelerate';
+import { prismaQueryInsights } from '@prisma/sqlcommenter-query-insights';
 
 @Injectable()
 export class PrismaService
@@ -37,7 +38,7 @@ export class PrismaService
 
       Object.assign(this, this.$extends(withAccelerate()));
       this.logger.log(
-        'Prisma initialized in Accelerate mode with enhanced logging',
+        'Prisma initialized in Accelerate mode with Query Insights and enhanced logging',
       );
     } else {
       const adapter = databaseUrl
@@ -68,9 +69,33 @@ export class PrismaService
   }
 
   private setupQueryPerformanceMonitoring() {
-    // Monitor slow queries
+    const queryMetrics = new Map<
+      string,
+      { count: number; totalDuration: number; maxDuration: number }
+    >();
+
+    // Monitor all queries for insights
     (this as any).$on('query', (e: any) => {
       const duration = Number(e.duration);
+
+      // Extract query pattern (first 100 chars for grouping similar queries)
+      const queryPattern = e.query.substring(0, 100).trim();
+
+      // Track query metrics
+      const existing = queryMetrics.get(queryPattern);
+      if (existing) {
+        existing.count++;
+        existing.totalDuration += duration;
+        existing.maxDuration = Math.max(existing.maxDuration, duration);
+      } else {
+        queryMetrics.set(queryPattern, {
+          count: 1,
+          totalDuration: duration,
+          maxDuration: duration,
+        });
+      }
+
+      // Log slow queries with context
       if (duration > 2000) {
         // Log queries taking more than 2 seconds
         this.logger.warn(`Slow query detected: ${duration}ms`, {
@@ -78,6 +103,7 @@ export class PrismaService
             e.query.substring(0, 200) + (e.query.length > 200 ? '...' : ''),
           params: e.params,
           duration: `${duration}ms`,
+          target: e.target,
         });
       }
 
@@ -87,6 +113,29 @@ export class PrismaService
           query: e.query,
           params: e.params,
           duration: `${duration}ms`,
+          target: e.target,
+        });
+      }
+
+      // Log query insights summary every 100 queries
+      if (
+        Array.from(queryMetrics.values()).reduce((sum, m) => sum + m.count, 0) %
+          100 ===
+        0
+      ) {
+        const insights = Array.from(queryMetrics.entries())
+          .map(([pattern, metrics]) => ({
+            pattern: pattern.substring(0, 60) + '...',
+            count: metrics.count,
+            avgDuration: Math.round(metrics.totalDuration / metrics.count),
+            maxDuration: metrics.maxDuration,
+          }))
+          .sort((a, b) => b.avgDuration - a.avgDuration)
+          .slice(0, 5);
+
+        this.logger.log('Query Insights - Top 5 Slowest Query Patterns:', {
+          insights,
+          tip: 'Use relationJoins, caching, or indexes to optimize',
         });
       }
     });
