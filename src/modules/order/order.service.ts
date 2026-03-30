@@ -441,6 +441,8 @@ export class OrderService {
           : null,
       };
 
+      await this.cacheInvalidationService.invalidateOrders();
+
       return {
         success: true,
         message: 'Draft order created successfully',
@@ -1806,6 +1808,8 @@ export class OrderService {
       `Order item ${itemId} status updated to ${updateDto.status} by admin ${userId}`,
     );
 
+    await this.cacheInvalidationService.invalidateOrders();
+
     return {
       success: true,
       message: 'Order item status updated successfully',
@@ -2056,6 +2060,8 @@ export class OrderService {
 
     const successCount = results.filter((result) => result.success).length;
     const failureCount = results.filter((result) => !result.success).length;
+
+    await this.cacheInvalidationService.invalidateOrders();
 
     return {
       success: true,
@@ -2797,6 +2803,8 @@ export class OrderService {
       },
     });
 
+    await this.cacheInvalidationService.invalidateOrders();
+
     return {
       success: true,
       message: 'Out-of-stock report resolved successfully',
@@ -3529,6 +3537,8 @@ export class OrderService {
       }
     }
 
+    await this.cacheInvalidationService.invalidateOrders();
+
     return {
       success: true,
       message: isReassignment
@@ -3663,6 +3673,8 @@ export class OrderService {
         );
       }
     }
+
+    await this.cacheInvalidationService.invalidateOrders();
 
     return {
       success: true,
@@ -4907,6 +4919,8 @@ export class OrderService {
         `Order ${orderNumber} updated:`,
         JSON.stringify(auditLog, null, 2),
       );
+
+      await this.cacheInvalidationService.invalidateOrders();
 
       return {
         success: true,

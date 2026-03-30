@@ -583,6 +583,9 @@ export class UsersService {
       });
     }
 
+    // Invalidate users cache after status update
+    await this.cacheInvalidationService.invalidateUsers();
+
     return updatedUser as UserProfileDto;
   }
 
@@ -667,6 +670,9 @@ export class UsersService {
       newRole: updatedUser.role,
     });
 
+    // Invalidate users cache after role update
+    await this.cacheInvalidationService.invalidateUsers();
+
     return updatedUser as UserProfileDto;
   }
 
@@ -719,6 +725,9 @@ export class UsersService {
       updateProfileDto,
       request,
     );
+
+    // Invalidate users cache after profile update
+    await this.cacheInvalidationService.invalidateUsers();
 
     return updatedUser as UserProfileDto;
   }
@@ -918,6 +927,9 @@ export class UsersService {
       request,
     );
 
+    // Invalidate users cache after admin permissions update
+    await this.cacheInvalidationService.invalidateUsers();
+
     return updatedUser as UserProfileDto;
   }
 
@@ -1091,6 +1103,9 @@ export class UsersService {
       },
       reason: 'Account deleted by user',
     });
+
+    // Invalidate users cache after account deletion
+    await this.cacheInvalidationService.invalidateUsers();
   }
 
   /**
