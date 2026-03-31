@@ -188,7 +188,9 @@ import { SentryModule } from '@sentry/nestjs/setup';
               maxRetriesPerRequest: null,
               retryDelayOnFailover: 1000,
               enableReadyCheck: false,
-              lazyConnect: true,
+              // CRITICAL: lazyConnect MUST be false for Bull processors to work
+              // Bull needs to establish blocking connections (BRPOPLPUSH) immediately
+              lazyConnect: false,
               keepAlive: 30000,
               family: 4,
               connectTimeout: 60000,
