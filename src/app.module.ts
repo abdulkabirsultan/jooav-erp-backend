@@ -122,6 +122,54 @@ import { SentryModule } from '@sentry/nestjs/setup';
           'UPSTASH_REDIS_REST_TOKEN',
         );
 
+        // Redis Cloud configuration for Bull Queue (new)
+        const redisCloudHost = configService.get<string>('REDIS_CLOUD_HOST');
+        const redisCloudPort = configService.get<number>('REDIS_CLOUD_PORT');
+        const redisCloudUsername = configService.get<string>(
+          'REDIS_CLOUD_USERNAME',
+        );
+        const redisCloudPassword = configService.get<string>(
+          'REDIS_CLOUD_PASSWORD',
+        );
+
+        // Use Redis Cloud for Bull if available (recommended for production)
+        if (nodeEnv === 'production' && redisCloudHost && redisCloudPassword) {
+          return {
+            redis: {
+              host: redisCloudHost,
+              port: redisCloudPort || 6379,
+              username: redisCloudUsername || 'default',
+              password: redisCloudPassword,
+              // Optimized ioredis options for Redis Cloud
+              maxRetriesPerRequest: null,
+              retryDelayOnFailover: 1000,
+              enableReadyCheck: false,
+              lazyConnect: false,
+              keepAlive: 30000,
+              family: 4,
+              connectTimeout: 60000,
+              commandTimeout: 300000, // 5 minutes
+              // Redis Cloud free tier doesn't require TLS for cloud instances
+            },
+            defaultJobOptions: {
+              attempts: 2,
+              backoff: {
+                type: 'exponential',
+                delay: 5000,
+              },
+              timeout: 20000,
+              removeOnComplete: 10,
+              removeOnFail: 5,
+            },
+            settings: {
+              stalledInterval: 30000,
+              maxStalledCount: 1,
+              retryProcessDelay: 10000,
+            },
+          };
+        }
+
+        // Fallback to Upstash Redis for production if Redis Cloud not configured
         const buildRedisConnection = () => {
           const directRedisUrl = redisUrl?.trim();
           const restRedisUrl = upstashUrl?.trim();
@@ -168,7 +216,7 @@ import { SentryModule } from '@sentry/nestjs/setup';
           return null;
         };
 
-        // Use Upstash Redis in production if available
+        // Use Upstash Redis in production if available (fallback)
         if (nodeEnv === 'production' && (redisUrl || upstashUrl)) {
           const cloudRedis = buildRedisConnection();
 
@@ -184,20 +232,14 @@ import { SentryModule } from '@sentry/nestjs/setup';
               port: cloudRedis.port,
               username: cloudRedis.username,
               password: cloudRedis.password,
-              // Optimized ioredis options for Upstash Redis
               maxRetriesPerRequest: null,
               retryDelayOnFailover: 1000,
               enableReadyCheck: false,
-              // CRITICAL: lazyConnect MUST be false for Bull processors to work
-              // Bull needs to establish blocking connections (BRPOPLPUSH) immediately
               lazyConnect: false,
               keepAlive: 30000,
               family: 4,
               connectTimeout: 60000,
-              // IMPORTANT: commandTimeout must be very high for Bull's blocking operations
-              // Bull uses BRPOPLPUSH which blocks for up to 5s + network latency
-              // Setting too low causes timeout loops. 5 minutes is safe for blocking ops.
-              commandTimeout: 300000, // 5 minutes
+              commandTimeout: 300000,
               tls: cloudRedis.tls,
             },
             defaultJobOptions: {
@@ -224,10 +266,9 @@ import { SentryModule } from '@sentry/nestjs/setup';
             host: configService.get<string>('REDIS_HOST') || 'localhost',
             port: configService.get<number>('REDIS_PORT') || 6379,
             password: configService.get<string>('REDIS_PASSWORD'),
-            // Local Redis options - optimized for reliability
-            maxRetriesPerRequest: null, // Consistent with production
-            retryDelayOnFailover: 1000, // Consistent retry delay
-            commandTimeout: 300000, // 5 minutes - safe for Bull blocking operations
+            maxRetriesPerRequest: null,
+            retryDelayOnFailover: 1000,
+            commandTimeout: 300000,
           },
           defaultJobOptions: {
             attempts: 2,
