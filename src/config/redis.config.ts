@@ -30,7 +30,7 @@ export const redisConfig = registerAs('redis', () => {
         family: 4,
         connectTimeout: 60000,
         commandTimeout: 15000, // Increased from 5s to 15s
-        tls: { rejectUnauthorized: false },
+        tls: {}, // Simplified TLS config
       },
     };
   }
@@ -103,6 +103,6 @@ export interface RedisConfig {
     family?: number;
     connectTimeout?: number;
     commandTimeout?: number;
-    tls?: { rejectUnauthorized: boolean };
+    tls?: {}; // Simplified TLS object
   };
 }
