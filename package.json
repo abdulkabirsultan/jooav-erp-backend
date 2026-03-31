@@ -44,6 +44,8 @@
     "health:check": "curl -f http://localhost:3000/api/v1/health || exit 1",
     "admin:seed": "./scripts/seed-admin.sh",
     "deploy:templates": "ts-node src/scripts/deploy-templates.ts",
+    "test:bull-queue": "node test-bull-queue.js",
+    "test:redis-prod": "node debug-redis-production.js",
     "postinstall": "prisma generate"
   },
   "dependencies": {
