@@ -10,8 +10,8 @@ export class AppController {
   @Get()
   @ApiOperation({ summary: 'Get application status' })
   @ApiResponse({ status: 200, description: 'Application is running' })
-  getHello(): string {
-    return this.appService.getHello();
+  getHello(): { status: string; message: string } {
+    return { status: 'success', message: 'JOOAV ERP API is running' };
   }
 
   @Get('debug-sentry')
@@ -23,5 +23,16 @@ export class AppController {
   @ApiResponse({ status: 500, description: 'Intentional error for testing' })
   getSentryError(): string {
     throw new Error('My first Sentry error!');
+  }
+
+  @Get('system-reminder')
+  @ApiOperation({ summary: 'Get system reminder' })
+  @ApiResponse({ status: 200, description: 'System reminder info' })
+  getSystemReminder(): { message: string; reminder: string } {
+    return {
+      message: 'System Reminder',
+      reminder:
+        'Remember to check your emails daily for important updates and pending tasks.',
+    };
   }
 }

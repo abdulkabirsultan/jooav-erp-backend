@@ -28,26 +28,43 @@ let testStartTime = Date.now();
 let lastJobCompletionTime = null;
 let monitoringInterval = null;
 
-// Parse Redis URL
-function parseRedisUrl(url) {
-  const parsed = new URL(url);
-  return {
+// Redis configuration - Use Redis Cloud for Bull, fallback to REDIS_URL
+const redisCloudHost = process.env.REDIS_CLOUD_HOST;
+const redisCloudPort = process.env.REDIS_CLOUD_PORT;
+const redisCloudUsername = process.env.REDIS_CLOUD_USERNAME;
+const redisCloudPassword = process.env.REDIS_CLOUD_PASSWORD;
+
+let redisConfig;
+let redisSource;
+
+if (redisCloudHost && redisCloudPassword) {
+  // Use Redis Cloud for Bull (recommended - unlimited commands)
+  redisConfig = {
+    host: redisCloudHost,
+    port: redisCloudPort ? parseInt(redisCloudPort, 10) : 6379,
+    username: redisCloudUsername || 'default',
+    password: redisCloudPassword,
+    tls: undefined, // Redis Cloud doesn't require TLS for cloud instances
+  };
+  redisSource = 'Redis Cloud';
+} else {
+  // Fallback to REDIS_URL (original behavior)
+  const redisUrl = process.env.REDIS_URL;
+  if (!redisUrl) {
+    console.error('❌ REDIS_URL not found in environment');
+    process.exit(1);
+  }
+  const parsed = new URL(redisUrl);
+  redisConfig = {
     host: parsed.hostname,
     port: parsed.port ? parseInt(parsed.port, 10) : 6379,
     username: parsed.username ? decodeURIComponent(parsed.username) : undefined,
     password: parsed.password ? decodeURIComponent(parsed.password) : undefined,
     tls: parsed.protocol === 'rediss:' ? {} : undefined,
   };
+  redisSource = 'REDIS_URL';
 }
 
-// Redis configuration with commandTimeout: 0
-const redisUrl = process.env.REDIS_URL;
-if (!redisUrl) {
-  console.error('❌ REDIS_URL not found in environment');
-  process.exit(1);
-}
-
-const redisConfig = parseRedisUrl(redisUrl);
 const bullRedisConfig = {
   ...redisConfig,
   maxRetriesPerRequest: null,
@@ -57,17 +74,14 @@ const bullRedisConfig = {
   keepAlive: 30000,
   family: 4,
   connectTimeout: 60000,
-  // CRITICAL: Must disable commandTimeout for Bull's blocking operations
-  // Setting to undefined/null doesn't work, must explicitly set high value
-  commandTimeout: 300000, // 5 minutes - effectively no timeout for blocking ops
+  commandTimeout: 300000,
 };
 
 console.log('🔧 Test Configuration:');
+console.log(`   Redis Source: ${redisSource}`);
 console.log(`   Redis Host: ${redisConfig.host}:${redisConfig.port}`);
 console.log(`   TLS: ${redisConfig.tls ? 'enabled' : 'disabled'}`);
-console.log(
-  `   commandTimeout: ${bullRedisConfig.commandTimeout} (0 = disabled)`,
-);
+console.log(`   commandTimeout: ${bullRedisConfig.commandTimeout}ms`);
 console.log(`   Test Duration: ${TEST_DURATION / 1000}s after last job`);
 console.log(`   Jobs to Process: ${JOB_COUNT}`);
 console.log('');

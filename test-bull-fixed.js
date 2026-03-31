@@ -1,5 +1,6 @@
 /**
  * Final Verification - Bull with Production Config (lazyConnect: false)
+ * Uses Redis Cloud for Bull, falls back to REDIS_URL
  */
 
 const Queue = require('bull');
@@ -11,16 +12,54 @@ async function finalTest() {
     'Testing Bull with FIXED production config (lazyConnect: false)\n',
   );
 
-  const redisUrl = process.env.REDIS_URL;
-  const parsed = new URL(redisUrl);
+  // Redis Cloud configuration for Bull
+  const redisCloudHost = process.env.REDIS_CLOUD_HOST;
+  const redisCloudPort = process.env.REDIS_CLOUD_PORT;
+  const redisCloudUsername = process.env.REDIS_CLOUD_USERNAME;
+  const redisCloudPassword = process.env.REDIS_CLOUD_PASSWORD;
+
+  let redisConfig;
+
+  if (redisCloudHost && redisCloudPassword) {
+    redisConfig = {
+      host: redisCloudHost,
+      port: redisCloudPort ? parseInt(redisCloudPort, 10) : 6379,
+      username: redisCloudUsername || 'default',
+      password: redisCloudPassword,
+    };
+    console.log(
+      `📡 Using Redis Cloud: ${redisConfig.host}:${redisConfig.port}`,
+    );
+  } else {
+    // Fallback to REDIS_URL
+    const redisUrl = process.env.REDIS_URL;
+    if (!redisUrl) {
+      console.error('❌ No Redis configuration found');
+      process.exit(1);
+    }
+    const parsed = new URL(redisUrl);
+    redisConfig = {
+      host: parsed.hostname,
+      port: parseInt(parsed.port) || 6379,
+      username: parsed.username
+        ? decodeURIComponent(parsed.username)
+        : undefined,
+      password: parsed.password
+        ? decodeURIComponent(parsed.password)
+        : undefined,
+      tls: parsed.protocol === 'rediss:' ? {} : undefined,
+    };
+    console.log(`📡 Using REDIS_URL: ${redisConfig.host}:${redisConfig.port}`);
+  }
 
   // FIXED production config
   const productionConfig = {
     redis: {
-      host: parsed.hostname,
-      port: parseInt(parsed.port) || 6379,
-      password: decodeURIComponent(parsed.password),
-      tls: parsed.protocol === 'rediss:' ? {} : undefined,
+      host: redisConfig.host,
+      port: redisConfig.port,
+      username: redisConfig.username,
+      password: redisConfig.password,
+      tls: redisConfig.tls,
       maxRetriesPerRequest: null,
       retryDelayOnFailover: 1000,
       enableReadyCheck: false,
@@ -28,11 +67,10 @@ async function finalTest() {
       keepAlive: 30000,
       family: 4,
       connectTimeout: 60000,
-      commandTimeout: 15000,
+      commandTimeout: 300000,
     },
   };
 
-  console.log('📡 Connecting to:', parsed.hostname);
   const queue = new Queue('email', productionConfig);
 
   await queue.isReady();
