@@ -122,45 +122,68 @@ import { SentryModule } from '@sentry/nestjs/setup';
           'UPSTASH_REDIS_REST_TOKEN',
         );
 
-        // Use Upstash Redis in production if available
-        if (nodeEnv === 'production' && (redisUrl || upstashUrl)) {
-          // Bull/ioredis requires redis:// or rediss:// URL, not Upstash REST https:// URL
-          const connectionUrl = redisUrl;
+        const buildRedisConnection = () => {
+          const directRedisUrl = redisUrl?.trim();
+          const restRedisUrl = upstashUrl?.trim();
 
-          if (!connectionUrl) {
-            throw new Error(
-              'REDIS_URL is required in production for Bull queue. Do not use UPSTASH_REDIS_REST_URL for Bull/ioredis.',
-            );
+          if (
+            directRedisUrl &&
+            (directRedisUrl.startsWith('redis://') ||
+              directRedisUrl.startsWith('rediss://'))
+          ) {
+            const parsedRedisUrl = new URL(directRedisUrl);
+            const isTls = parsedRedisUrl.protocol === 'rediss:';
+
+            return {
+              host: parsedRedisUrl.hostname,
+              port: parsedRedisUrl.port
+                ? parseInt(parsedRedisUrl.port, 10)
+                : 6379,
+              username: parsedRedisUrl.username
+                ? decodeURIComponent(parsedRedisUrl.username)
+                : undefined,
+              password: parsedRedisUrl.password
+                ? decodeURIComponent(parsedRedisUrl.password)
+                : undefined,
+              tls: isTls ? {} : undefined,
+            };
           }
 
           if (
-            !connectionUrl.startsWith('redis://') &&
-            !connectionUrl.startsWith('rediss://')
+            restRedisUrl &&
+            (restRedisUrl.startsWith('https://') ||
+              restRedisUrl.startsWith('http://')) &&
+            upstashToken
           ) {
+            const parsedUpstashUrl = new URL(restRedisUrl);
+            return {
+              host: parsedUpstashUrl.hostname,
+              port: 6379,
+              username: 'default',
+              password: upstashToken,
+              tls: {},
+            };
+          }
+
+          return null;
+        };
+
+        // Use Upstash Redis in production if available
+        if (nodeEnv === 'production' && (redisUrl || upstashUrl)) {
+          const cloudRedis = buildRedisConnection();
+
+          if (!cloudRedis) {
             throw new Error(
-              `Invalid REDIS_URL protocol: ${connectionUrl.split(':')[0]}. Expected redis:// or rediss://`,
+              'Invalid Redis configuration. Set REDIS_URL to redis:// or rediss://, or set UPSTASH_REDIS_REST_URL (https://...) with UPSTASH_REDIS_REST_TOKEN.',
             );
           }
 
-          const parsedRedisUrl = new URL(connectionUrl);
-          const isTls = parsedRedisUrl.protocol === 'rediss:';
-          const redisHost = parsedRedisUrl.hostname;
-          const redisPort = parsedRedisUrl.port
-            ? parseInt(parsedRedisUrl.port, 10)
-            : 6379;
-          const redisUsername = parsedRedisUrl.username
-            ? decodeURIComponent(parsedRedisUrl.username)
-            : undefined;
-          const redisPassword = parsedRedisUrl.password
-            ? decodeURIComponent(parsedRedisUrl.password)
-            : undefined;
-
           return {
             redis: {
-              host: redisHost,
-              port: redisPort,
-              username: redisUsername,
-              password: redisPassword,
+              host: cloudRedis.host,
+              port: cloudRedis.port,
+              username: cloudRedis.username,
+              password: cloudRedis.password,
               // Optimized ioredis options for Upstash Redis
               maxRetriesPerRequest: null,
               retryDelayOnFailover: 1000,
@@ -170,7 +193,7 @@ import { SentryModule } from '@sentry/nestjs/setup';
               family: 4,
               connectTimeout: 60000,
               commandTimeout: 15000,
-              tls: isTls ? {} : undefined,
+              tls: cloudRedis.tls,
             },
             defaultJobOptions: {
               attempts: 2,
