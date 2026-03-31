@@ -124,50 +124,68 @@ import { SentryModule } from '@sentry/nestjs/setup';
 
         // Use Upstash Redis in production if available
         if (nodeEnv === 'production' && (redisUrl || upstashUrl)) {
-          // Upstash provides REDIS_URL in rediss://... format
-          const connectionUrl = redisUrl || upstashUrl;
+          // Bull/ioredis requires redis:// or rediss:// URL, not Upstash REST https:// URL
+          const connectionUrl = redisUrl;
+
+          if (!connectionUrl) {
+            throw new Error(
+              'REDIS_URL is required in production for Bull queue. Do not use UPSTASH_REDIS_REST_URL for Bull/ioredis.',
+            );
+          }
+
+          if (
+            !connectionUrl.startsWith('redis://') &&
+            !connectionUrl.startsWith('rediss://')
+          ) {
+            throw new Error(
+              `Invalid REDIS_URL protocol: ${connectionUrl.split(':')[0]}. Expected redis:// or rediss://`,
+            );
+          }
+
+          const parsedRedisUrl = new URL(connectionUrl);
+          const isTls = parsedRedisUrl.protocol === 'rediss:';
+          const redisHost = parsedRedisUrl.hostname;
+          const redisPort = parsedRedisUrl.port
+            ? parseInt(parsedRedisUrl.port, 10)
+            : 6379;
+          const redisUsername = parsedRedisUrl.username
+            ? decodeURIComponent(parsedRedisUrl.username)
+            : undefined;
+          const redisPassword = parsedRedisUrl.password
+            ? decodeURIComponent(parsedRedisUrl.password)
+            : undefined;
 
           return {
-            redis: connectionUrl
-              ? // Use URL-based connection for Upstash
-                {
-                  url: connectionUrl,
-                  // Optimized ioredis options for Upstash Redis
-                  maxRetriesPerRequest: null, // Unlimited retries as requested
-                  retryDelayOnFailover: 1000, // Increased from 100ms to 1s
-                  enableReadyCheck: false,
-                  lazyConnect: true,
-                  keepAlive: 30000,
-                  family: 4,
-                  connectTimeout: 60000,
-                  commandTimeout: 15000, // Increased from 5s to 15s
-                  tls: {}, // Simplified TLS config
-                }
-              : // Fallback to host/port parsing for Upstash URL
-                {
-                  host:
-                    (redisUrl || upstashUrl)?.split('@')[1]?.split(':')[0] ||
-                    'localhost',
-                  port: parseInt(
-                    (redisUrl || upstashUrl)?.split(':')[3] || '6379',
-                  ),
-                  password:
-                    upstashToken || configService.get<string>('REDIS_PASSWORD'),
-                  tls: {}, // Simplified TLS config
-                  maxRetriesPerRequest: null, // Unlimited retries for fallback too
-                  retryDelayOnFailover: 1000, // Increased delay
-                  enableReadyCheck: false,
-                  lazyConnect: true,
-                  commandTimeout: 15000, // Consistent timeout
-                },
+            redis: {
+              host: redisHost,
+              port: redisPort,
+              username: redisUsername,
+              password: redisPassword,
+              // Optimized ioredis options for Upstash Redis
+              maxRetriesPerRequest: null,
+              retryDelayOnFailover: 1000,
+              enableReadyCheck: false,
+              lazyConnect: true,
+              keepAlive: 30000,
+              family: 4,
+              connectTimeout: 60000,
+              commandTimeout: 15000,
+              tls: isTls ? {} : undefined,
+            },
             defaultJobOptions: {
-              attempts: 3,
+              attempts: 2,
               backoff: {
                 type: 'exponential',
-                delay: 2000,
+                delay: 5000,
               },
-              removeOnComplete: 100,
-              removeOnFail: 50,
+              timeout: 20000,
+              removeOnComplete: 10,
+              removeOnFail: 5,
+            },
+            settings: {
+              stalledInterval: 30000,
+              maxStalledCount: 1,
+              retryProcessDelay: 10000,
             },
           };
         }
@@ -184,13 +202,19 @@ import { SentryModule } from '@sentry/nestjs/setup';
             commandTimeout: 15000, // Consistent timeout
           },
           defaultJobOptions: {
-            attempts: 3,
+            attempts: 2,
             backoff: {
               type: 'exponential',
-              delay: 2000,
+              delay: 5000,
             },
-            removeOnComplete: 100,
-            removeOnFail: 50,
+            timeout: 20000,
+            removeOnComplete: 10,
+            removeOnFail: 5,
+          },
+          settings: {
+            stalledInterval: 30000,
+            maxStalledCount: 1,
+            retryProcessDelay: 10000,
           },
         };
       },
