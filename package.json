@@ -46,6 +46,7 @@
     "deploy:templates": "ts-node src/scripts/deploy-templates.ts",
     "test:bull-queue": "node test-bull-queue.js",
     "test:redis-prod": "node debug-redis-production.js",
+    "test:bull-timeout": "node test-bull-timeout-loop.js",
     "postinstall": "prisma generate"
   },
   "dependencies": {
