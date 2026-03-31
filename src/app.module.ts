@@ -141,7 +141,7 @@ import { SentryModule } from '@sentry/nestjs/setup';
                   family: 4,
                   connectTimeout: 60000,
                   commandTimeout: 15000, // Increased from 5s to 15s
-                  tls: { rejectUnauthorized: false },
+                  tls: {}, // Simplified TLS config
                 }
               : // Fallback to host/port parsing for Upstash URL
                 {
@@ -153,7 +153,7 @@ import { SentryModule } from '@sentry/nestjs/setup';
                   ),
                   password:
                     upstashToken || configService.get<string>('REDIS_PASSWORD'),
-                  tls: { rejectUnauthorized: false },
+                  tls: {}, // Simplified TLS config
                   maxRetriesPerRequest: null, // Unlimited retries for fallback too
                   retryDelayOnFailover: 1000, // Increased delay
                   enableReadyCheck: false,
