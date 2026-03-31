@@ -9,6 +9,7 @@ import {
   Param,
   Query,
   UseGuards,
+  UseInterceptors,
   HttpStatus,
   Logger,
   BadRequestException,
@@ -32,6 +33,8 @@ import { MonnifyService } from '../payment/monnify.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { Cache } from '../../common/decorators/cache.decorator';
+import { CacheInterceptor } from '../../common/interceptors/cache.interceptor';
 import {
   CurrentUser,
   CurrentUserId,
@@ -479,6 +482,14 @@ export class OrderController {
   }
 
   @Get(':orderNumber')
+  @UseInterceptors(CacheInterceptor)
+  @Cache({
+    key: 'order-details',
+    ttl: 180, // 3 minutes - order details change moderately
+    includeParams: true,
+    includeUserId: true,
+    tags: ['orders', 'order-details'],
+  })
   @Roles(
     UserRole.ADMIN,
     UserRole.SUPER_ADMIN,
@@ -506,6 +517,14 @@ export class OrderController {
   }
 
   @Get()
+  @UseInterceptors(CacheInterceptor)
+  @Cache({
+    key: 'orders',
+    ttl: 300, // 5 minutes - orders change frequently
+    includeParams: true,
+    includeUserId: true, // User-specific caching for role-based filtering
+    tags: ['orders'],
+  })
   @Roles(
     UserRole.ADMIN,
     UserRole.SUPER_ADMIN,

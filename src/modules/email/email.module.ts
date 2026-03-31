@@ -7,6 +7,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { EmailService } from './services/email.service';
 import { NotificationService } from './services/notification.service';
 import { TemplateSetupService } from './services/template-setup.service';
+import { QueueCircuitBreakerService } from './services/queue-circuit-breaker.service';
 
 // Processors
 import { EmailProcessor } from './processors/email.processor';
@@ -23,26 +24,9 @@ import { EmailTestController } from './controllers/email-test.controller';
   imports: [
     ConfigModule,
     PrismaModule,
-    BullModule.registerQueueAsync({
+    // Use the global Bull configuration instead of creating a separate one
+    BullModule.registerQueue({
       name: 'email',
-      imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        redis: {
-          host: configService.get<string>('REDIS_HOST'),
-          port: configService.get<number>('REDIS_PORT'),
-          password: configService.get<string>('REDIS_PASSWORD'),
-        },
-        defaultJobOptions: {
-          attempts: 3,
-          backoff: {
-            type: 'exponential',
-            delay: 2000,
-          },
-          removeOnComplete: 10,
-          removeOnFail: 5,
-        },
-      }),
-      inject: [ConfigService],
     }),
   ],
   controllers: [EmailTestController],
@@ -51,6 +35,7 @@ import { EmailTestController } from './controllers/email-test.controller';
     EmailService,
     NotificationService,
     TemplateSetupService,
+    QueueCircuitBreakerService,
 
     // Queue Processors
     EmailProcessor,

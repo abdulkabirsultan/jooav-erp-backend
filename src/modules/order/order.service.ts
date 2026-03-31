@@ -40,6 +40,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { APP_CONSTANTS } from '../../shared/constants/app.constants';
 import { EmailEvent } from '../email/types/email.types';
+import { CacheInvalidationService } from '../cache/cache-invalidation.service';
 
 @Injectable()
 export class OrderService {
@@ -50,6 +51,7 @@ export class OrderService {
     private readonly monnifyService: MonnifyService,
     private readonly configService: ConfigService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly cacheInvalidationService: CacheInvalidationService,
   ) {}
 
   private async getOrderEmailPayloadById(orderId: string) {
@@ -439,6 +441,8 @@ export class OrderService {
           : null,
       };
 
+      await this.cacheInvalidationService.invalidateOrders();
+
       return {
         success: true,
         message: 'Draft order created successfully',
@@ -779,6 +783,8 @@ export class OrderService {
         });
       }
 
+      await this.cacheInvalidationService.invalidateOrders();
+
       return {
         success: true,
         message: 'Payment initiated successfully',
@@ -1085,6 +1091,8 @@ export class OrderService {
           order: paymentOrderPayload,
         });
       }
+
+      await this.cacheInvalidationService.invalidateOrders();
 
       return {
         success: true,
@@ -1615,6 +1623,8 @@ export class OrderService {
           }
         }
 
+        await this.cacheInvalidationService.invalidateOrders();
+
         return {
           success: true,
           message: 'Payment confirmed successfully',
@@ -1797,6 +1807,8 @@ export class OrderService {
     this.logger.log(
       `Order item ${itemId} status updated to ${updateDto.status} by admin ${userId}`,
     );
+
+    await this.cacheInvalidationService.invalidateOrders();
 
     return {
       success: true,
@@ -2048,6 +2060,8 @@ export class OrderService {
 
     const successCount = results.filter((result) => result.success).length;
     const failureCount = results.filter((result) => !result.success).length;
+
+    await this.cacheInvalidationService.invalidateOrders();
 
     return {
       success: true,
@@ -2331,12 +2345,14 @@ export class OrderService {
                 name: true,
                 thumbnail: true,
                 images: true,
+                price: true,
+                discount: true,
+                // Optimize nested relations - get only essential data
                 brand: { select: { name: true } },
                 packSize: { select: { name: true } },
                 packType: { select: { name: true } },
-                price: true,
-                discount: true,
                 variant: { select: { id: true, name: true } },
+                // Use a single select instead of nested query
                 subcategory: {
                   select: {
                     name: true,
@@ -2346,6 +2362,8 @@ export class OrderService {
               },
             },
           },
+          // Limit order items per order to prevent huge responses
+          take: 50,
         },
       },
       orderBy: { createdAt: sortOrder as 'asc' | 'desc' },
@@ -2784,6 +2802,8 @@ export class OrderService {
         },
       },
     });
+
+    await this.cacheInvalidationService.invalidateOrders();
 
     return {
       success: true,
@@ -3517,6 +3537,8 @@ export class OrderService {
       }
     }
 
+    await this.cacheInvalidationService.invalidateOrders();
+
     return {
       success: true,
       message: isReassignment
@@ -3651,6 +3673,8 @@ export class OrderService {
         );
       }
     }
+
+    await this.cacheInvalidationService.invalidateOrders();
 
     return {
       success: true,
@@ -4367,6 +4391,8 @@ export class OrderService {
         });
       }
 
+      await this.cacheInvalidationService.invalidateOrders();
+
       return {
         success: true,
         message:
@@ -4893,6 +4919,8 @@ export class OrderService {
         `Order ${orderNumber} updated:`,
         JSON.stringify(auditLog, null, 2),
       );
+
+      await this.cacheInvalidationService.invalidateOrders();
 
       return {
         success: true,

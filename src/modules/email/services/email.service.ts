@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectQueue } from '@nestjs/bull';
 import type { Queue } from 'bull';
 import { Resend } from 'resend';
+import { QueueCircuitBreakerService } from './queue-circuit-breaker.service';
 import {
   EmailRequest,
   BatchEmailRequest,
@@ -27,6 +28,7 @@ export class EmailService {
   constructor(
     private readonly configService: ConfigService,
     @InjectQueue('email') private readonly emailQueue: Queue,
+    private readonly queueCircuitBreaker: QueueCircuitBreakerService,
   ) {
     this.emailConfig = this.configService.get<EmailConfig>('email')!;
     this.resend = new Resend(this.emailConfig.apiKey);
@@ -211,17 +213,67 @@ export class EmailService {
 
     this.validateTemplateVariables(request.templateAlias, request.variables);
 
-    await this.emailQueue.add('send-template-email', request, {
-      priority: this.getPriority(request.priority || EmailPriority.NORMAL),
-      attempts: request.retries || 3,
-      backoff: { type: 'exponential', delay: 2000 },
-      delay: request.delay,
-      removeOnComplete: 100,
-      removeOnFail: 50,
-    });
+    const fallbackEnabled = this.emailConfig.queueFallbackEnabled;
 
-    this.logger.log(
-      `Email queued: ${request.templateAlias} to ${Array.isArray(request.to) ? request.to.join(', ') : request.to}`,
+    if (!fallbackEnabled) {
+      const job = await this.emailQueue.add('send-template-email', request, {
+        priority: this.getPriority(request.priority || EmailPriority.NORMAL),
+        attempts: request.retries || 2,
+        backoff: { type: 'exponential', delay: 5000 },
+        timeout: 20000,
+        delay: request.delay,
+        removeOnComplete: 10,
+        removeOnFail: 5,
+      });
+
+      this.logger.log(
+        `Email queued (fallback disabled): job=${job.id} template=${request.templateAlias} to=${Array.isArray(request.to) ? request.to.join(', ') : request.to}`,
+      );
+      return;
+    }
+
+    await this.queueCircuitBreaker.executeWithFallback(
+      async () => {
+        const job = await this.emailQueue.add('send-template-email', request, {
+          priority: this.getPriority(request.priority || EmailPriority.NORMAL),
+          attempts: request.retries || 2,
+          backoff: { type: 'exponential', delay: 5000 },
+          timeout: 20000,
+          delay: request.delay,
+          removeOnComplete: 10,
+          removeOnFail: 5,
+        });
+
+        this.logger.log(
+          `Email queued: job=${job.id} template=${request.templateAlias} to=${Array.isArray(request.to) ? request.to.join(', ') : request.to}`,
+        );
+      },
+      async () => {
+        const directResult = await this.sendTemplateEmail({
+          from: request.from,
+          to: request.to,
+          cc: request.cc,
+          bcc: request.bcc,
+          replyTo: request.replyTo,
+          templateAlias: request.templateAlias,
+          variables: request.variables,
+          options: request.metadata
+            ? { headers: { 'X-Metadata': JSON.stringify(request.metadata) } }
+            : undefined,
+        });
+
+        if (!directResult.success) {
+          throw new Error(
+            directResult.error ||
+              `Failed direct email send for ${request.templateAlias}`,
+          );
+        }
+
+        this.logger.warn(
+          `Queue fallback used: sent ${request.templateAlias} directly to ${Array.isArray(request.to) ? request.to.join(', ') : request.to}`,
+        );
+      },
+      `queueEmail:${request.templateAlias}`,
     );
   }
 
@@ -245,7 +297,7 @@ export class EmailService {
     const chunks = this.chunkArray(requests, 100);
 
     for (const chunk of chunks) {
-      await this.emailQueue.add(
+      const job = await this.emailQueue.add(
         'send-batch-emails',
         { requests: chunk, priority },
         {
@@ -255,6 +307,10 @@ export class EmailService {
           removeOnComplete: 50,
           removeOnFail: 25,
         },
+      );
+
+      this.logger.log(
+        `Batch email job queued: job=${job.id} size=${chunk.length} priority=${priority}`,
       );
     }
 

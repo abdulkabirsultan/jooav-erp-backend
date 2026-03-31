@@ -44,6 +44,9 @@
     "health:check": "curl -f http://localhost:3000/api/v1/health || exit 1",
     "admin:seed": "./scripts/seed-admin.sh",
     "deploy:templates": "ts-node src/scripts/deploy-templates.ts",
+    "test:bull-queue": "node test-bull-queue.js",
+    "test:redis-prod": "node debug-redis-production.js",
+    "test:bull-timeout": "node test-bull-timeout-loop.js",
     "postinstall": "prisma generate"
   },
   "dependencies": {
@@ -62,6 +65,7 @@
     "@prisma/adapter-pg": "^6.19.0",
     "@prisma/client": "^6.19.0",
     "@prisma/extension-accelerate": "^3.0.1",
+    "@prisma/sqlcommenter-query-insights": "^7.6.0",
     "@sentry/nestjs": "^10.29.0",
     "@sentry/profiling-node": "^10.30.0",
     "@types/bcryptjs": "^3.0.0",

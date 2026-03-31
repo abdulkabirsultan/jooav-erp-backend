@@ -13,6 +13,7 @@ import { generatePasswordResetToken } from '../../common/utils/token.util';
 import { AuditService } from '../audit/audit.service';
 import { NotificationService } from '../email/services/notification.service';
 import { CacheService } from '../cache/cache.service';
+import { CacheInvalidationService } from '../cache/cache-invalidation.service';
 import { ConfigService } from '@nestjs/config';
 import { PaginationDto, PaginatedResponse } from '../../common/dto';
 import {
@@ -45,6 +46,7 @@ export class UsersService {
     private notificationService: NotificationService,
     private configService: ConfigService,
     private cacheService: CacheService,
+    private cacheInvalidationService: CacheInvalidationService,
     private eventEmitter: EventEmitter2,
   ) {}
 
@@ -394,6 +396,10 @@ export class UsersService {
     );
 
     const { password, ...userWithoutPassword } = user;
+
+    // Invalidate users cache after creation
+    await this.cacheInvalidationService.invalidateUsers();
+
     return {
       ...userWithoutPassword,
       resetUrl,
@@ -483,6 +489,9 @@ export class UsersService {
       updatedUser,
       request,
     );
+
+    // Invalidate users cache after update
+    await this.cacheInvalidationService.invalidateUsers();
 
     return updatedUser as UserProfileDto;
   }
@@ -574,6 +583,9 @@ export class UsersService {
       });
     }
 
+    // Invalidate users cache after status update
+    await this.cacheInvalidationService.invalidateUsers();
+
     return updatedUser as UserProfileDto;
   }
 
@@ -658,6 +670,9 @@ export class UsersService {
       newRole: updatedUser.role,
     });
 
+    // Invalidate users cache after role update
+    await this.cacheInvalidationService.invalidateUsers();
+
     return updatedUser as UserProfileDto;
   }
 
@@ -710,6 +725,9 @@ export class UsersService {
       updateProfileDto,
       request,
     );
+
+    // Invalidate users cache after profile update
+    await this.cacheInvalidationService.invalidateUsers();
 
     return updatedUser as UserProfileDto;
   }
@@ -909,6 +927,9 @@ export class UsersService {
       request,
     );
 
+    // Invalidate users cache after admin permissions update
+    await this.cacheInvalidationService.invalidateUsers();
+
     return updatedUser as UserProfileDto;
   }
 
@@ -977,6 +998,114 @@ export class UsersService {
       },
       reason: 'Account archived by administrator',
     });
+
+    // Invalidate users cache after removal
+    await this.cacheInvalidationService.invalidateUsers();
+  }
+
+  /**
+   * Delete own account (self-service)
+   * Users can delete their own accounts with restrictions
+   */
+  async deleteMyAccount(userId: string, request?: any): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        wholesalerOrders: {
+          where: {
+            status: {
+              in: [
+                OrderStatus.PENDING_PAYMENT,
+                OrderStatus.CONFIRMED,
+                OrderStatus.IN_PROGRESS,
+                OrderStatus.ASSIGNED,
+              ],
+            },
+          },
+        },
+        assignedOrders: {
+          where: {
+            status: {
+              in: [
+                OrderStatus.PENDING_PAYMENT,
+                OrderStatus.CONFIRMED,
+                OrderStatus.IN_PROGRESS,
+                OrderStatus.ASSIGNED,
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Prevent admin and super admin from deleting their own accounts
+    if (user.role === UserRole.ADMIN || user.role === UserRole.SUPER_ADMIN) {
+      throw new BadRequestException(
+        'Admin and Super Admin accounts cannot be self-deleted. Please contact a Super Admin to deactivate your account.',
+      );
+    }
+
+    // Check for active orders (wholesalers)
+    if (user.role === UserRole.WHOLESALER && user.wholesalerOrders.length > 0) {
+      throw new BadRequestException(
+        `Cannot delete account with ${user.wholesalerOrders.length} active order(s). Please complete or cancel all pending orders first.`,
+      );
+    }
+
+    // Check for assigned orders (procurement officers)
+    if (
+      user.role === UserRole.PROCUREMENT_OFFICER &&
+      user.assignedOrders.length > 0
+    ) {
+      throw new BadRequestException(
+        `Cannot delete account with ${user.assignedOrders.length} assigned order(s). Please complete or reassign all orders first.`,
+      );
+    }
+
+    // Soft delete by setting status to deactivated
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        status: UserStatus.DEACTIVATED,
+        updatedAt: new Date(),
+      },
+    });
+
+    // Invalidate all user sessions
+    await this.prisma.userSession.deleteMany({
+      where: { userId },
+    });
+
+    // Invalidate user cache
+    await this.cacheService.del(`user:${userId}`);
+
+    // Log account deletion
+    await this.auditService.logUserAction(
+      userId,
+      'DELETE_OWN_ACCOUNT',
+      'USER',
+      userId,
+      { email: user.email, role: user.role },
+      request,
+    );
+
+    // Emit event for notifications
+    this.eventEmitter.emit(EmailEvent.USER_ACCOUNT_DEACTIVATED, {
+      user: {
+        id: user.id,
+        firstName: user.firstName || '',
+        lastName: user.lastName || '',
+        email: user.email,
+      },
+      reason: 'Account deleted by user',
+    });
+
+    // Invalidate users cache after account deletion
+    await this.cacheInvalidationService.invalidateUsers();
   }
 
   /**

@@ -18,53 +18,82 @@ export class LoggingInterceptor implements NestInterceptor {
     const { method, url, body, query, params } = request;
     const userAgent = request.get('User-Agent') || '';
     const ip = request.ip;
-    const now = Date.now();
+    const startTime = performance.now();
 
-    this.logger.log(
-      `Incoming Request: ${method} ${url}`,
-      JSON.stringify({
+    // Async logging for incoming request - don't block the request
+    setImmediate(() => {
+      const logContext = {
         method,
         url,
         body: this.sanitizeBody(body),
-        query,
-        params,
-        userAgent,
+        query: Object.keys(query || {}).length > 0 ? query : undefined,
+        params: Object.keys(params || {}).length > 0 ? params : undefined,
+        userAgent: userAgent.substring(0, 100), // Truncate long user agents
         ip,
-      }),
-    );
+      };
+
+      this.logger.log(
+        `Incoming Request: ${method} ${url}`,
+        JSON.stringify(logContext, null, 2),
+      );
+    });
 
     return next.handle().pipe(
       tap({
         next: (data) => {
-          const duration = Date.now() - now;
-          this.logger.log(
-            `Request completed: ${method} ${url} - ${duration}ms`,
-            JSON.stringify({
+          const duration = performance.now() - startTime;
+
+          // Async logging for successful responses - don't block the response
+          setImmediate(() => {
+            // Estimate response size without full serialization
+            const responseSize = this.estimateResponseSize(data);
+            const responseInfo = {
               method,
               url,
-              duration: `${duration}ms`,
-              responseSize: JSON.stringify(data).length,
-            }),
-          );
+              duration: `${duration.toFixed(2)}ms`,
+              responseSize: `${responseSize}B`,
+              status: 'SUCCESS',
+            };
+
+            // Log performance warnings for slow requests
+            if (duration > 1000) {
+              this.logger.warn(
+                `Slow request: ${method} ${url} - ${duration.toFixed(2)}ms`,
+                JSON.stringify(responseInfo, null, 2),
+              );
+            } else {
+              this.logger.log(
+                `Request completed: ${method} ${url} - ${duration.toFixed(2)}ms`,
+                JSON.stringify(responseInfo, null, 2),
+              );
+            }
+          });
         },
         error: (error) => {
-          const duration = Date.now() - now;
-          this.logger.error(
-            `Request failed: ${method} ${url} - ${duration}ms`,
-            JSON.stringify({
+          const duration = performance.now() - startTime;
+
+          // Async logging for errors - don't block error handling
+          setImmediate(() => {
+            const errorInfo = {
               method,
               url,
-              duration: `${duration}ms`,
+              duration: `${duration.toFixed(2)}ms`,
               error: error.message,
-            }),
-          );
+              status: 'ERROR',
+            };
+
+            this.logger.error(
+              `Request failed: ${method} ${url} - ${duration.toFixed(2)}ms`,
+              JSON.stringify(errorInfo, null, 2),
+            );
+          });
         },
       }),
     );
   }
 
   private sanitizeBody(body: any): any {
-    if (!body) return body;
+    if (!body || typeof body !== 'object') return body;
 
     const sanitized = { ...body };
     const sensitiveFields = [
@@ -73,6 +102,9 @@ export class LoggingInterceptor implements NestInterceptor {
       'secret',
       'key',
       'authorization',
+      'currentPassword',
+      'newPassword',
+      'confirmPassword',
     ];
 
     for (const field of sensitiveFields) {
@@ -82,5 +114,33 @@ export class LoggingInterceptor implements NestInterceptor {
     }
 
     return sanitized;
+  }
+
+  /**
+   * Estimate response size without expensive JSON.stringify
+   */
+  private estimateResponseSize(data: any): number {
+    if (!data) return 0;
+
+    try {
+      if (typeof data === 'string') {
+        return data.length;
+      }
+
+      if (typeof data === 'object') {
+        // Quick size estimation without full serialization
+        if (Array.isArray(data)) {
+          return data.length * 100; // Rough estimate: 100 bytes per array item
+        }
+
+        const keys = Object.keys(data);
+        return keys.length * 50; // Rough estimate: 50 bytes per object property
+      }
+
+      return JSON.stringify(data).length;
+    } catch (error) {
+      // Fallback for circular references or other issues
+      return 0;
+    }
   }
 }

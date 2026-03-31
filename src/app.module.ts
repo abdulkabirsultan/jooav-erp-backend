@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { TerminusModule } from '@nestjs/terminus';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { BullModule } from '@nestjs/bull';
 import { APP_FILTER, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { WinstonModule } from 'nest-winston';
@@ -109,6 +110,185 @@ import { SentryModule } from '@sentry/nestjs/setup';
 
     // Domain events
     EventEmitterModule.forRoot(),
+
+    // Bull Queue Management (for background jobs like email)
+    BullModule.forRootAsync({
+      imports: [ConfigModule],
+      useFactory: async (configService: ConfigService) => {
+        const nodeEnv = configService.get<string>('NODE_ENV') || 'development';
+        const redisUrl = configService.get<string>('REDIS_URL');
+        const upstashUrl = configService.get<string>('UPSTASH_REDIS_REST_URL');
+        const upstashToken = configService.get<string>(
+          'UPSTASH_REDIS_REST_TOKEN',
+        );
+
+        // Redis Cloud configuration for Bull Queue (new)
+        const redisCloudHost = configService.get<string>('REDIS_CLOUD_HOST');
+        const redisCloudPort = configService.get<number>('REDIS_CLOUD_PORT');
+        const redisCloudUsername = configService.get<string>(
+          'REDIS_CLOUD_USERNAME',
+        );
+        const redisCloudPassword = configService.get<string>(
+          'REDIS_CLOUD_PASSWORD',
+        );
+
+        // Use Redis Cloud for Bull if available (recommended for production)
+        if (nodeEnv === 'production' && redisCloudHost && redisCloudPassword) {
+          return {
+            redis: {
+              host: redisCloudHost,
+              port: redisCloudPort || 6379,
+              username: redisCloudUsername || 'default',
+              password: redisCloudPassword,
+              // Optimized ioredis options for Redis Cloud
+              maxRetriesPerRequest: null,
+              retryDelayOnFailover: 1000,
+              enableReadyCheck: false,
+              lazyConnect: false,
+              keepAlive: 30000,
+              family: 4,
+              connectTimeout: 60000,
+              commandTimeout: 300000, // 5 minutes
+              // Redis Cloud free tier doesn't require TLS for cloud instances
+            },
+            defaultJobOptions: {
+              attempts: 2,
+              backoff: {
+                type: 'exponential',
+                delay: 5000,
+              },
+              timeout: 20000,
+              removeOnComplete: 10,
+              removeOnFail: 5,
+            },
+            settings: {
+              stalledInterval: 30000,
+              maxStalledCount: 1,
+              retryProcessDelay: 10000,
+            },
+          };
+        }
+
+        // Fallback to Upstash Redis for production if Redis Cloud not configured
+        const buildRedisConnection = () => {
+          const directRedisUrl = redisUrl?.trim();
+          const restRedisUrl = upstashUrl?.trim();
+
+          if (
+            directRedisUrl &&
+            (directRedisUrl.startsWith('redis://') ||
+              directRedisUrl.startsWith('rediss://'))
+          ) {
+            const parsedRedisUrl = new URL(directRedisUrl);
+            const isTls = parsedRedisUrl.protocol === 'rediss:';
+
+            return {
+              host: parsedRedisUrl.hostname,
+              port: parsedRedisUrl.port
+                ? parseInt(parsedRedisUrl.port, 10)
+                : 6379,
+              username: parsedRedisUrl.username
+                ? decodeURIComponent(parsedRedisUrl.username)
+                : undefined,
+              password: parsedRedisUrl.password
+                ? decodeURIComponent(parsedRedisUrl.password)
+                : undefined,
+              tls: isTls ? {} : undefined,
+            };
+          }
+
+          if (
+            restRedisUrl &&
+            (restRedisUrl.startsWith('https://') ||
+              restRedisUrl.startsWith('http://')) &&
+            upstashToken
+          ) {
+            const parsedUpstashUrl = new URL(restRedisUrl);
+            return {
+              host: parsedUpstashUrl.hostname,
+              port: 6379,
+              username: 'default',
+              password: upstashToken,
+              tls: {},
+            };
+          }
+
+          return null;
+        };
+
+        // Use Upstash Redis in production if available (fallback)
+        if (nodeEnv === 'production' && (redisUrl || upstashUrl)) {
+          const cloudRedis = buildRedisConnection();
+
+          if (!cloudRedis) {
+            throw new Error(
+              'Invalid Redis configuration. Set REDIS_URL to redis:// or rediss://, or set UPSTASH_REDIS_REST_URL (https://...) with UPSTASH_REDIS_REST_TOKEN.',
+            );
+          }
+
+          return {
+            redis: {
+              host: cloudRedis.host,
+              port: cloudRedis.port,
+              username: cloudRedis.username,
+              password: cloudRedis.password,
+              maxRetriesPerRequest: null,
+              retryDelayOnFailover: 1000,
+              enableReadyCheck: false,
+              lazyConnect: false,
+              keepAlive: 30000,
+              family: 4,
+              connectTimeout: 60000,
+              commandTimeout: 300000,
+              tls: cloudRedis.tls,
+            },
+            defaultJobOptions: {
+              attempts: 2,
+              backoff: {
+                type: 'exponential',
+                delay: 5000,
+              },
+              timeout: 20000,
+              removeOnComplete: 10,
+              removeOnFail: 5,
+            },
+            settings: {
+              stalledInterval: 30000,
+              maxStalledCount: 1,
+              retryProcessDelay: 10000,
+            },
+          };
+        }
+
+        // Use traditional Redis for development
+        return {
+          redis: {
+            host: configService.get<string>('REDIS_HOST') || 'localhost',
+            port: configService.get<number>('REDIS_PORT') || 6379,
+            password: configService.get<string>('REDIS_PASSWORD'),
+            maxRetriesPerRequest: null,
+            retryDelayOnFailover: 1000,
+            commandTimeout: 300000,
+          },
+          defaultJobOptions: {
+            attempts: 2,
+            backoff: {
+              type: 'exponential',
+              delay: 5000,
+            },
+            timeout: 20000,
+            removeOnComplete: 10,
+            removeOnFail: 5,
+          },
+          settings: {
+            stalledInterval: 30000,
+            maxStalledCount: 1,
+            retryProcessDelay: 10000,
+          },
+        };
+      },
+      inject: [ConfigService],
+    }),
 
     // Feature modules
     CacheModule,
