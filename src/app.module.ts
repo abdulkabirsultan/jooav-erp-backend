@@ -194,7 +194,10 @@ import { SentryModule } from '@sentry/nestjs/setup';
               keepAlive: 30000,
               family: 4,
               connectTimeout: 60000,
-              commandTimeout: 15000,
+              // IMPORTANT: commandTimeout must be very high for Bull's blocking operations
+              // Bull uses BRPOPLPUSH which blocks for up to 5s + network latency
+              // Setting too low causes timeout loops. 5 minutes is safe for blocking ops.
+              commandTimeout: 300000, // 5 minutes
               tls: cloudRedis.tls,
             },
             defaultJobOptions: {
@@ -224,7 +227,7 @@ import { SentryModule } from '@sentry/nestjs/setup';
             // Local Redis options - optimized for reliability
             maxRetriesPerRequest: null, // Consistent with production
             retryDelayOnFailover: 1000, // Consistent retry delay
-            commandTimeout: 15000, // Consistent timeout
+            commandTimeout: 300000, // 5 minutes - safe for Bull blocking operations
           },
           defaultJobOptions: {
             attempts: 2,
