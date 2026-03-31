@@ -14,7 +14,7 @@ export class EmailProcessor {
 
   constructor(private readonly emailService: EmailService) {}
 
-  @Process('send-template-email')
+  @Process({ name: 'send-template-email', concurrency: 2 })
   async handleSingleEmail(job: Job<QueueEmailRequest>) {
     const { data } = job;
 
@@ -53,7 +53,7 @@ export class EmailProcessor {
     }
   }
 
-  @Process('send-batch-emails')
+  @Process({ name: 'send-batch-emails', concurrency: 1 })
   async handleBatchEmails(
     job: Job<{ requests: BatchEmailRequest[]; priority: EmailPriority }>,
   ) {

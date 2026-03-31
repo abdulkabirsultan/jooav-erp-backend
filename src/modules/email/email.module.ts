@@ -7,6 +7,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { EmailService } from './services/email.service';
 import { NotificationService } from './services/notification.service';
 import { TemplateSetupService } from './services/template-setup.service';
+import { QueueCircuitBreakerService } from './services/queue-circuit-breaker.service';
 
 // Processors
 import { EmailProcessor } from './processors/email.processor';
@@ -34,6 +35,7 @@ import { EmailTestController } from './controllers/email-test.controller';
     EmailService,
     NotificationService,
     TemplateSetupService,
+    QueueCircuitBreakerService,
 
     // Queue Processors
     EmailProcessor,
