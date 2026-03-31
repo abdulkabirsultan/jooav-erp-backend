@@ -216,7 +216,7 @@ export class EmailService {
     const fallbackEnabled = this.emailConfig.queueFallbackEnabled;
 
     if (!fallbackEnabled) {
-      await this.emailQueue.add('send-template-email', request, {
+      const job = await this.emailQueue.add('send-template-email', request, {
         priority: this.getPriority(request.priority || EmailPriority.NORMAL),
         attempts: request.retries || 2,
         backoff: { type: 'exponential', delay: 5000 },
@@ -227,14 +227,14 @@ export class EmailService {
       });
 
       this.logger.log(
-        `Email queued (fallback disabled): ${request.templateAlias} to ${Array.isArray(request.to) ? request.to.join(', ') : request.to}`,
+        `Email queued (fallback disabled): job=${job.id} template=${request.templateAlias} to=${Array.isArray(request.to) ? request.to.join(', ') : request.to}`,
       );
       return;
     }
 
     await this.queueCircuitBreaker.executeWithFallback(
       async () => {
-        await this.emailQueue.add('send-template-email', request, {
+        const job = await this.emailQueue.add('send-template-email', request, {
           priority: this.getPriority(request.priority || EmailPriority.NORMAL),
           attempts: request.retries || 2,
           backoff: { type: 'exponential', delay: 5000 },
@@ -245,7 +245,7 @@ export class EmailService {
         });
 
         this.logger.log(
-          `Email queued: ${request.templateAlias} to ${Array.isArray(request.to) ? request.to.join(', ') : request.to}`,
+          `Email queued: job=${job.id} template=${request.templateAlias} to=${Array.isArray(request.to) ? request.to.join(', ') : request.to}`,
         );
       },
       async () => {
@@ -297,7 +297,7 @@ export class EmailService {
     const chunks = this.chunkArray(requests, 100);
 
     for (const chunk of chunks) {
-      await this.emailQueue.add(
+      const job = await this.emailQueue.add(
         'send-batch-emails',
         { requests: chunk, priority },
         {
@@ -307,6 +307,10 @@ export class EmailService {
           removeOnComplete: 50,
           removeOnFail: 25,
         },
+      );
+
+      this.logger.log(
+        `Batch email job queued: job=${job.id} size=${chunk.length} priority=${priority}`,
       );
     }
 
