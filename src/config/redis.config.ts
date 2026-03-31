@@ -20,16 +20,16 @@ export const redisConfig = registerAs('redis', () => {
       type: 'upstash',
       retryAttempts: parseInt(process.env.REDIS_RETRY_ATTEMPTS || '3', 10),
       retryDelay: parseInt(process.env.REDIS_RETRY_DELAY || '1000', 10),
-      // ioredis options for Upstash
+      // ioredis options for Upstash - UPDATED TO MATCH app.module.ts
       ioredisOptions: {
-        maxRetriesPerRequest: 3,
-        retryDelayOnFailover: 100,
+        maxRetriesPerRequest: null, // Unlimited retries
+        retryDelayOnFailover: 1000, // Increased from 100ms to 1s
         enableReadyCheck: false,
         lazyConnect: true,
         keepAlive: 30000,
         family: 4,
         connectTimeout: 60000,
-        commandTimeout: 5000,
+        commandTimeout: 15000, // Increased from 5s to 15s
         tls: { rejectUnauthorized: false },
       },
     };
@@ -46,10 +46,11 @@ export const redisConfig = registerAs('redis', () => {
     type: 'traditional',
     retryAttempts: parseInt(process.env.REDIS_RETRY_ATTEMPTS || '3', 10),
     retryDelay: parseInt(process.env.REDIS_RETRY_DELAY || '1000', 10),
-    // ioredis options for traditional Redis
+    // ioredis options for traditional Redis - UPDATED TO MATCH app.module.ts
     ioredisOptions: {
-      maxRetriesPerRequest: 3,
-      retryDelayOnFailover: 100,
+      maxRetriesPerRequest: null, // Unlimited retries for consistency
+      retryDelayOnFailover: 1000, // Increased delay
+      commandTimeout: 15000, // Consistent timeout
     },
   };
 });
@@ -94,7 +95,7 @@ export interface RedisConfig {
   retryAttempts: number;
   retryDelay: number;
   ioredisOptions: {
-    maxRetriesPerRequest: number;
+    maxRetriesPerRequest: number | null; // Allow null for unlimited retries
     retryDelayOnFailover: number;
     enableReadyCheck?: boolean;
     lazyConnect?: boolean;

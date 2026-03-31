@@ -34,14 +34,18 @@ export class CacheService implements OnModuleInit {
         `Initialized Upstash Redis client for ${nodeEnv} environment`,
       );
     } else {
-      // Initialize traditional Redis client
-      const options = {
+      // Initialize traditional Redis client with ioredisOptions
+      const baseOptions = {
         host: redisConfig?.host || 'localhost',
         port: redisConfig?.port || 6379,
         password: redisConfig?.password,
-        retryDelayOnFailover: redisConfig?.retryDelay || 1000,
-        maxRetriesPerRequest: redisConfig?.retryAttempts || 3,
         lazyConnect: true,
+      };
+      
+      // Merge with ioredisOptions for consistent timeout handling
+      const options = {
+        ...baseOptions,
+        ...redisConfig?.ioredisOptions,
       };
 
       this.ioredisClient = new IORedis(options);
