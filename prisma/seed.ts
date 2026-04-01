@@ -16,91 +16,95 @@ async function hashPassword(password: string): Promise<string> {
   return argon2.hash(password, argonOptions);
 }
 
+// Find or create user (replacement for upsert since email is no longer unique)
+async function findOrCreateUser(email: string, userData: any) {
+  const existingUser = await prisma.user.findFirst({
+    where: {
+      email: email,
+      deletedAt: null, // Only check active users
+    },
+  });
+
+  if (existingUser) {
+    return existingUser;
+  }
+
+  return prisma.user.create(userData);
+}
+
 async function main() {
   console.log('🌱 Starting database seeding...');
 
   // Create Super Admin user
-  const superAdmin = await prisma.user.upsert({
-    where: { email: 'superadmin@jooav.com' },
-    update: {},
-    create: {
-      email: 'superadmin@jooav.com',
-      firstName: 'Super',
-      lastName: 'Admin',
-      password: await hashPassword('password123'), // Argon2 hashed
-      role: UserRole.SUPER_ADMIN,
-      status: UserStatus.ACTIVE,
-      emailVerified: true,
-      profile: {
-        create: {
-          country: 'Nigeria',
-        },
+  const superAdmin = await findOrCreateUser('superadmin@jooav.com', {
+    email: 'superadmin@jooav.com',
+    firstName: 'Super',
+    lastName: 'Admin',
+    password: await hashPassword('password123'), // Argon2 hashed
+    role: UserRole.SUPER_ADMIN,
+    status: UserStatus.ACTIVE,
+    emailVerified: true,
+    profile: {
+      create: {
+        country: 'Nigeria',
       },
-      adminProfile: {
-        create: {
-          // Super Admin has full platform control
-          canModifySystemConfig: true,
-          canSuspendAdmins: true,
-          canChangeUserRoles: true,
-          canChangeUserEmails: true,
-        },
+    },
+    adminProfile: {
+      create: {
+        // Super Admin has full platform control
+        canModifySystemConfig: true,
+        canSuspendAdmins: true,
+        canChangeUserRoles: true,
+        canChangeUserEmails: true,
       },
     },
   });
 
   // Create admin user
-  const admin = await prisma.user.upsert({
-    where: { email: 'admin@jooav.com' },
-    update: {},
-    create: {
-      email: 'admin@jooav.com',
-      firstName: 'Platform',
-      lastName: 'Admin',
-      password: await hashPassword('password123'), // Argon2 hashed
-      role: UserRole.ADMIN,
-      status: UserStatus.ACTIVE,
-      emailVerified: true,
-      profile: {
-        create: {
-          country: 'Nigeria',
-        },
+  const admin = await findOrCreateUser('admin@jooav.com', {
+    email: 'admin@jooav.com',
+    firstName: 'Platform',
+    lastName: 'Admin',
+    password: await hashPassword('password123'), // Argon2 hashed
+    role: UserRole.ADMIN,
+    status: UserStatus.ACTIVE,
+    emailVerified: true,
+    profile: {
+      create: {
+        country: 'Nigeria',
       },
-      adminProfile: {
-        create: {
-          assignedRegions: ['Lagos', 'Abuja'], // Regional assignment
-          canModifySystemConfig: false, // Limited - cannot modify system config
-          canSuspendAdmins: false, // Limited - cannot suspend other admins
-          canChangeUserRoles: false, // Limited - cannot change user roles
-          canChangeUserEmails: false, // Limited - cannot change user emails
-        },
+    },
+    adminProfile: {
+      create: {
+        assignedRegions: ['Lagos', 'Abuja'], // Regional assignment
+        canModifySystemConfig: false, // Limited - cannot modify system config
+        canSuspendAdmins: false, // Limited - cannot suspend other admins
+        canChangeUserRoles: false, // Limited - cannot change user roles
+        canChangeUserEmails: false, // Limited - cannot change user emails
       },
     },
   });
 
   // Create sample users
-  const subAdmin = await prisma.user.upsert({
-    where: { email: 'subadmin@jooav.com' },
-    update: {},
-    create: {
-      email: 'subadmin@jooav.com',
-      firstName: 'John',
-      lastName: 'Smith',
-      password: await hashPassword('password123'), // Argon2 hashed
-      role: UserRole.PROCUREMENT_OFFICER,
-      status: UserStatus.ACTIVE,
-      emailVerified: true,
-      profile: {
-        create: {
-          country: 'Nigeria',
-        },
+  const subAdmin = await findOrCreateUser('subadmin@jooav.com', {
+    email: 'subadmin@jooav.com',
+    firstName: 'John',
+    lastName: 'Smith',
+    password: await hashPassword('password123'), // Argon2 hashed
+    role: UserRole.PROCUREMENT_OFFICER,
+    status: UserStatus.ACTIVE,
+    emailVerified: true,
+    profile: {
+      create: {
+        country: 'Nigeria',
       },
-      procurementOfficerProfile: {
-        create: {
-          specializations: ['Electronics', 'Industrial Equipment'],
-          maxOrderValue: 100000.0,
-          availabilityStatus: 'AVAILABLE', // Available PO
-          maxActiveOrders: 10,
-        },
+    },
+    procurementOfficerProfile: {
+      create: {
+        specializations: ['Electronics', 'Industrial Equipment'],
+        maxOrderValue: 100000.0,
+        availabilityStatus: 'AVAILABLE', // Available PO
+        maxActiveOrders: 10,
       },
     },
   });
@@ -108,115 +112,95 @@ async function main() {
   // Create regions
 
   // Create Wholesaler user
-  const wholesalerUser = await prisma.user.upsert({
-    where: { email: 'wholesaler@jooav.com' },
-    update: {},
-    create: {
-      email: 'wholesaler@jooav.com',
-      firstName: 'Wholesale Business',
-      lastName: 'Owner',
-      password: await hashPassword('password123'), // Argon2 hashed
-      role: UserRole.WHOLESALER,
-      status: UserStatus.ACTIVE,
-      emailVerified: true,
-      profile: {
-        create: {
-          country: 'Nigeria',
-        },
+  const wholesalerUser = await findOrCreateUser('wholesaler@jooav.com', {
+    email: 'wholesaler@jooav.com',
+    firstName: 'Wholesale Business',
+    lastName: 'Owner',
+    password: await hashPassword('password123'), // Argon2 hashed
+    role: UserRole.WHOLESALER,
+    status: UserStatus.ACTIVE,
+    emailVerified: true,
+    profile: {
+      create: {
+        country: 'Nigeria',
       },
     },
   });
 
   // Create additional procurement officers
-  const procurementOfficer2 = await prisma.user.upsert({
-    where: { email: 'po2@jooav.com' },
-    update: {},
-    create: {
-      email: 'po2@jooav.com',
-      firstName: 'Sarah',
-      lastName: 'Johnson',
-      password: await hashPassword('password123'),
-      role: UserRole.PROCUREMENT_OFFICER,
-      status: UserStatus.ACTIVE,
-      emailVerified: true,
-      profile: {
-        create: {
-          country: 'Nigeria',
-        },
+  const procurementOfficer2 = await findOrCreateUser('po2@jooav.com', {
+    email: 'po2@jooav.com',
+    firstName: 'Sarah',
+    lastName: 'Johnson',
+    password: await hashPassword('password123'),
+    role: UserRole.PROCUREMENT_OFFICER,
+    status: UserStatus.ACTIVE,
+    emailVerified: true,
+    profile: {
+      create: {
+        country: 'Nigeria',
       },
-      procurementOfficerProfile: {
-        create: {
-          specializations: ['Food & Beverages', 'Consumer Goods'],
-          maxOrderValue: 75000.0,
-          availabilityStatus: 'UNAVAILABLE', // This officer is unavailable
-          maxActiveOrders: 8,
-        },
+    },
+    procurementOfficerProfile: {
+      create: {
+        specializations: ['Food & Beverages', 'Consumer Goods'],
+        maxOrderValue: 75000.0,
+        availabilityStatus: 'UNAVAILABLE', // This officer is unavailable
+        maxActiveOrders: 8,
       },
     },
   });
 
-  const procurementOfficer3 = await prisma.user.upsert({
-    where: { email: 'po3@jooav.com' },
-    update: {},
-    create: {
-      email: 'po3@jooav.com',
-      firstName: 'Michael',
-      lastName: 'Chen',
-      password: await hashPassword('password123'),
-      role: UserRole.PROCUREMENT_OFFICER,
-      status: UserStatus.ACTIVE,
-      emailVerified: true,
-      profile: {
-        create: {
-          country: 'Nigeria',
-        },
+  const procurementOfficer3 = await findOrCreateUser('po3@jooav.com', {
+    email: 'po3@jooav.com',
+    firstName: 'Michael',
+    lastName: 'Chen',
+    password: await hashPassword('password123'),
+    role: UserRole.PROCUREMENT_OFFICER,
+    status: UserStatus.ACTIVE,
+    emailVerified: true,
+    profile: {
+      create: {
+        country: 'Nigeria',
       },
-      procurementOfficerProfile: {
-        create: {
-          specializations: ['Medical Equipment', 'Pharmaceuticals'],
-          maxOrderValue: 100000.0,
-          availabilityStatus: 'AVAILABLE',
-          maxActiveOrders: 6,
-        },
+    },
+    procurementOfficerProfile: {
+      create: {
+        specializations: ['Medical Equipment', 'Pharmaceuticals'],
+        maxOrderValue: 100000.0,
+        availabilityStatus: 'AVAILABLE',
+        maxActiveOrders: 6,
       },
     },
   });
 
   // Create additional wholesaler users
-  const wholesaler2 = await prisma.user.upsert({
-    where: { email: 'wholesaler2@jooav.com' },
-    update: {},
-    create: {
-      email: 'wholesaler2@jooav.com',
-      firstName: 'Jane',
-      lastName: 'Smith',
-      password: await hashPassword('password123'),
-      role: UserRole.WHOLESALER,
-      status: UserStatus.ACTIVE,
-      emailVerified: true,
-      profile: {
-        create: {
-          country: 'Nigeria',
-        },
+  const wholesaler2 = await findOrCreateUser('wholesaler2@jooav.com', {
+    email: 'wholesaler2@jooav.com',
+    firstName: 'Jane',
+    lastName: 'Smith',
+    password: await hashPassword('password123'),
+    role: UserRole.WHOLESALER,
+    status: UserStatus.ACTIVE,
+    emailVerified: true,
+    profile: {
+      create: {
+        country: 'Nigeria',
       },
     },
   });
 
-  const wholesaler3 = await prisma.user.upsert({
-    where: { email: 'wholesaler3@jooav.com' },
-    update: {},
-    create: {
-      email: 'wholesaler3@jooav.com',
-      firstName: 'David',
-      lastName: 'Brown',
-      password: await hashPassword('password123'),
-      role: UserRole.WHOLESALER,
-      status: UserStatus.ACTIVE,
-      emailVerified: true,
-      profile: {
-        create: {
-          country: 'Nigeria',
-        },
+  const wholesaler3 = await findOrCreateUser('wholesaler3@jooav.com', {
+    email: 'wholesaler3@jooav.com',
+    firstName: 'David',
+    lastName: 'Brown',
+    password: await hashPassword('password123'),
+    role: UserRole.WHOLESALER,
+    status: UserStatus.ACTIVE,
+    emailVerified: true,
+    profile: {
+      create: {
+        country: 'Nigeria',
       },
     },
   });

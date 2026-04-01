@@ -99,6 +99,7 @@ export class NotificationService {
       where: {
         role: { in: [UserRole.ADMIN, UserRole.SUPER_ADMIN] },
         status: UserStatus.ACTIVE,
+        deletedAt: null, // Exclude soft-deleted admins from notifications
       },
       select: { email: true },
     });

@@ -24,12 +24,12 @@ export class PackSizeService {
     }
 
     // Check if pack size name already exists for this variant
-    const existingPackSize = await this.prisma.packSize.findUnique({
+    // Check if pack size already exists (exclude soft-deleted ones)
+    const existingPackSize = await this.prisma.packSize.findFirst({
       where: {
-        variantId_name: {
-          variantId,
-          name: name.trim(),
-        },
+        variantId,
+        name: name.trim(),
+        deletedAt: null,
       },
     });
 
@@ -139,16 +139,17 @@ export class PackSizeService {
 
     // If name is being updated, check for uniqueness
     if (name && name !== packSize.name) {
-      const existingPackSize = await this.prisma.packSize.findUnique({
+      // Check if new name conflicts with existing active pack sizes
+      const existingPackSize = await this.prisma.packSize.findFirst({
         where: {
-          variantId_name: {
-            variantId: packSize.variantId,
-            name: name.trim(),
-          },
+          variantId: packSize.variantId,
+          name: name.trim(),
+          deletedAt: null,
+          NOT: { id },
         },
       });
 
-      if (existingPackSize && existingPackSize.id !== id) {
+      if (existingPackSize) {
         throw new BadRequestException(
           `Pack size "${name}" already exists for this variant`,
         );

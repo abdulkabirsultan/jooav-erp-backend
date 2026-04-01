@@ -58,7 +58,7 @@ export class AdminAuthService {
     const { email, password, role: expectedRole } = loginDto;
 
     // Find admin user with profile (now includes procurement officers)
-    const admin = await this.prisma.user.findUnique({
+    const admin = await this.prisma.user.findFirst({
       where: {
         email: email.toLowerCase(),
         role: {
@@ -69,6 +69,7 @@ export class AdminAuthService {
           ],
         },
         status: UserStatus.ACTIVE,
+        deletedAt: null, // Exclude soft-deleted admins
       },
       include: {
         adminProfile: true,
@@ -373,9 +374,13 @@ export class AdminAuthService {
    * Seed Super Admin (Internal use only)
    */
   async seedSuperAdmin(seedDto: AdminSeedDto): Promise<AdminProfileDto> {
-    // Check if Super Admin already exists
+    // Check if Super Admin already exists (exclude soft-deleted)
     const existingAdmin = await this.prisma.user.findFirst({
-      where: { role: UserRole.SUPER_ADMIN },
+      where: {
+        role: UserRole.SUPER_ADMIN,
+        deletedAt: null,
+        status: UserStatus.ACTIVE,
+      },
     });
 
     if (existingAdmin) {
@@ -422,7 +427,7 @@ export class AdminAuthService {
    * Validate admin by ID
    */
   async validateAdminById(adminId: string): Promise<any> {
-    const admin = await this.prisma.user.findUnique({
+    const admin = await this.prisma.user.findFirst({
       where: {
         id: adminId,
         role: {
@@ -433,6 +438,7 @@ export class AdminAuthService {
           ],
         },
         status: UserStatus.ACTIVE,
+        deletedAt: null, // Exclude soft-deleted admins
       },
       include: {
         adminProfile: true,
@@ -536,6 +542,8 @@ export class AdminAuthService {
     return {
       id: admin.id,
       email: admin.email,
+      username: admin.username,
+      phone: admin.phone,
       firstName: admin.firstName,
       lastName: admin.lastName,
       role: admin.role,
