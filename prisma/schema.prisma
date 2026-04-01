@@ -22,8 +22,8 @@ datasource db {
 
 model User {
   id                String     @id @default(cuid())
-  email             String     @unique
-  username          String?    @unique
+  email             String     // Note: Unique constraint handled by partial index in migration (where deletedAt IS NULL)
+  username          String?    // Note: Unique constraint handled by partial index in migration (where deletedAt IS NULL)
   password          String
   firstName         String?
   lastName          String?
@@ -34,6 +34,10 @@ model User {
   emailVerified     Boolean    @default(false)
   lastLogin         DateTime?
   passwordChangedAt DateTime?
+
+  // Soft delete fields
+  deletedAt DateTime?
+  deletedBy String?
 
   // Timestamps
   createdAt DateTime @default(now())
@@ -49,6 +53,10 @@ model User {
   itemStatusUpdates OrderItem[] @relation("ItemStatusUpdatedBy")
   outOfStockReports OutOfStockReport[] @relation("OutOfStockReportedBy")
   resolvedOutOfStockReports OutOfStockReport[] @relation("OutOfStockResolvedBy")
+
+  // Soft delete relation
+  deletedByUser User?         @relation("DeletedUser", fields: [deletedBy], references: [id])
+  deletedUsers  User[]        @relation("DeletedUser")
 
   // JooavERP specific relations
   adminProfile              AdminProfile?
@@ -166,8 +174,8 @@ model UserActivity {
 
 model Category {
   id          String         @id @default(cuid())
-  name        String         @unique
-  slug        String         @unique // URL-friendly name
+  name        String         // Note: Unique constraint handled by partial index in migration (where deletedAt IS NULL)
+  slug        String         // Note: Unique constraint handled by partial index in migration (where deletedAt IS NULL)
   description String?
   status      CategoryStatus @default(ACTIVE)
   
@@ -193,7 +201,7 @@ model Category {
 model Subcategory {
   id          String             @id @default(cuid())
   name        String             
-  slug        String             @unique // URL-friendly name
+  slug        String             // Note: Unique constraint handled by partial index in migration (where deletedAt IS NULL)
   description String?
   categoryId  String
   status      SubcategoryStatus  @default(ACTIVE)
@@ -214,7 +222,7 @@ model Subcategory {
   deletedByUser User?     @relation("DeletedSubcategories", fields: [deletedBy], references: [id])
 
   // Prevent duplicate subcategory names within same category
-  @@unique([categoryId, name])
+  // Note: Unique constraint for [categoryId, name] handled by partial index in migration (where deletedAt IS NULL)
   @@index([status])
   @@index([createdAt])
   @@map("subcategories")
@@ -267,8 +275,8 @@ model PackSize {
   updatedByUser User      @relation("UpdatedPackSizes", fields: [updatedBy], references: [id])
   deletedByUser User?     @relation("DeletedPackSizes", fields: [deletedBy], references: [id])
 
-  // Prevent duplicate names per variant
-  @@unique([variantId, name])
+  // Note: Unique constraint for [variantId, name] will be handled by partial index in migration
+  // to exclude soft-deleted records (where deletedAt IS NULL)
   @@map("pack_sizes")
 }
 
@@ -293,8 +301,8 @@ model PackType {
   updatedByUser User      @relation("UpdatedPackTypes", fields: [updatedBy], references: [id])
   deletedByUser User?     @relation("DeletedPackTypes", fields: [deletedBy], references: [id])
 
-  // Prevent duplicate names per variant
-  @@unique([variantId, name])
+  // Note: Unique constraint for [variantId, name] will be handled by partial index in migration
+  // to exclude soft-deleted records (where deletedAt IS NULL)
   @@map("pack_types")
 }
 
@@ -302,9 +310,9 @@ model Product {
   id              String        @id @default(cuid())
   
   // Basic Product Information
-  name            String        @unique // User-provided product name (must be unique)
+  name            String        // Note: Unique constraint handled by partial index in migration (where deletedAt IS NULL)
   description     String?
-  sku             String        @unique // Auto-generated: Brand Variant PackSize (PackType)
+  sku             String        // Note: Unique constraint handled by partial index in migration (where deletedAt IS NULL)
   
   // Product Classification & Relations
   brandId         String

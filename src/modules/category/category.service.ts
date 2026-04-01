@@ -781,12 +781,6 @@ export class CategoryService {
       operationsSummary.deleted +
       operationsSummary.created;
 
-    if (remainingSubcategoriesCount === 0) {
-      throw new BadRequestException(
-        'Category must have at least one subcategory',
-      );
-    }
-
     if (operationsSummary.errors.length > 0) {
       throw new BadRequestException({
         message: 'Some subcategory operations failed',

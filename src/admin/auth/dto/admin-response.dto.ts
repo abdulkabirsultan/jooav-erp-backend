@@ -15,6 +15,18 @@ export class AdminProfileDto {
   email: string;
 
   @ApiProperty({
+    description: 'Admin username',
+    example: 'adminuser',
+  })
+  username?: string;
+
+  @ApiProperty({
+    description: 'Admin phone number',
+    example: '+234-801-234-5678',
+  })
+  phone?: string;
+
+  @ApiProperty({
     description: 'Admin first name',
     example: 'John',
   })

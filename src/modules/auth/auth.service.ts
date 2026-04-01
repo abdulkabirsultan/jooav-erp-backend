@@ -68,8 +68,11 @@ export class AuthService {
    * Validate user credentials for login
    */
   async validateUser(email: string, password: string): Promise<User | null> {
-    const user = await this.prisma.user.findUnique({
-      where: { email: email.toLowerCase() },
+    const user = await this.prisma.user.findFirst({
+      where: {
+        email: email.toLowerCase(),
+        deletedAt: null, // Exclude soft-deleted users
+      },
       include: { profile: true, wholesalerProfile: true },
     });
 
@@ -114,8 +117,11 @@ export class AuthService {
    * Validate user by ID (for JWT strategy)
    */
   async validateUserById(id: string): Promise<User | null> {
-    let user = await this.prisma.user.findUnique({
-      where: { id },
+    let user = await this.prisma.user.findFirst({
+      where: {
+        id,
+        deletedAt: null, // Exclude soft-deleted users
+      },
       include: {
         profile: true,
         wholesalerProfile: true,
@@ -186,13 +192,14 @@ export class AuthService {
     registerDto: RegisterDto,
     request?: any,
   ): Promise<AuthResponseDto> {
-    // Check if user already exists
+    // Check if user already exists (exclude soft-deleted users)
     const existingUser = await this.prisma.user.findFirst({
       where: {
         OR: [
           { email: registerDto.email.toLowerCase() },
           ...(registerDto.username ? [{ username: registerDto.username }] : []),
         ],
+        deletedAt: null, // Only check non-deleted users
       },
     });
 
@@ -654,8 +661,11 @@ export class AuthService {
     const { email } = forgotPasswordDto;
 
     // Check if user exists
-    const user = await this.prisma.user.findUnique({
-      where: { email: email.toLowerCase() },
+    const user = await this.prisma.user.findFirst({
+      where: {
+        email: email.toLowerCase(),
+        deletedAt: null, // Only consider active users
+      },
     });
 
     // Don't reveal if email exists or not for security
@@ -733,8 +743,11 @@ export class AuthService {
     }
 
     // Find user
-    const user = await this.prisma.user.findUnique({
-      where: { email: passwordReset.email },
+    const user = await this.prisma.user.findFirst({
+      where: {
+        email: passwordReset.email,
+        deletedAt: null, // Only consider active users
+      },
     });
 
     if (!user) {
