@@ -325,6 +325,7 @@ export class VariantService {
             id: packSizeId,
             variantId: id,
             status: 'ACTIVE',
+            deletedAt: null, // Only consider non-deleted pack sizes
           },
           include: {
             _count: {
@@ -365,6 +366,7 @@ export class VariantService {
           operationsSummary.productsAffected += productCount;
         }
 
+        // Soft delete pack size (like user deletion flow)
         writeOperations.push(
           this.prisma.packSize.update({
             where: { id: packSizeId },
@@ -389,6 +391,7 @@ export class VariantService {
             id: packSizeId,
             variantId: id,
             status: 'ACTIVE',
+            deletedAt: null, // Only consider non-deleted pack sizes
           },
         });
 
@@ -405,6 +408,7 @@ export class VariantService {
               variantId: id,
               name: { equals: newName, mode: 'insensitive' },
               status: 'ACTIVE',
+              deletedAt: null, // Only check non-deleted pack sizes
               NOT: { id: packSizeId },
             },
           });
@@ -453,6 +457,7 @@ export class VariantService {
             mode: 'insensitive',
           },
           status: 'ACTIVE',
+          deletedAt: null, // Only check non-deleted pack sizes
         },
         select: { name: true },
       });
@@ -485,6 +490,7 @@ export class VariantService {
             id: packTypeId,
             variantId: id,
             status: 'ACTIVE',
+            deletedAt: null, // Only consider non-deleted pack types
           },
           include: {
             _count: {
@@ -525,6 +531,7 @@ export class VariantService {
           operationsSummary.productsAffected += productCount;
         }
 
+        // Soft delete pack type (like user deletion flow)
         writeOperations.push(
           this.prisma.packType.update({
             where: { id: packTypeId },
@@ -549,6 +556,7 @@ export class VariantService {
             id: packTypeId,
             variantId: id,
             status: 'ACTIVE',
+            deletedAt: null, // Only consider non-deleted pack types
           },
         });
 
@@ -565,6 +573,7 @@ export class VariantService {
               variantId: id,
               name: { equals: newName, mode: 'insensitive' },
               status: 'ACTIVE',
+              deletedAt: null, // Only check non-deleted pack types
               NOT: { id: packTypeId },
             },
           });
@@ -613,6 +622,7 @@ export class VariantService {
             mode: 'insensitive',
           },
           status: 'ACTIVE',
+          deletedAt: null, // Only check non-deleted pack types
         },
         select: { name: true },
       });

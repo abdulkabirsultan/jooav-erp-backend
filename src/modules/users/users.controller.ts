@@ -10,6 +10,7 @@ import {
   UseGuards,
   UseInterceptors,
   Request,
+  Req,
   ParseEnumPipe,
   HttpStatus,
 } from '@nestjs/common';
@@ -129,6 +130,41 @@ export class UsersController {
       { role: queryDto.role, search: queryDto.search },
       currentUserId,
     );
+  }
+
+  /**
+   * Reactivate a deleted user account (Admin only)
+   */
+  @Patch(':id/reactivate')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Reactivate deleted user account',
+    description:
+      'Restore a deleted user account to active status. Requires appropriate admin permissions.',
+  })
+  @ApiParam({ name: 'id', description: 'User ID to reactivate' })
+  @ApiResponse({
+    status: 200,
+    description: 'User successfully reactivated',
+    type: UserProfileDto,
+  })
+  @ApiResponse({ status: 404, description: 'User not found or not deleted' })
+  @ApiResponse({
+    status: 409,
+    description: 'Email/username conflict with existing active user',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Insufficient permissions',
+  })
+  async reactivateUser(
+    @Param('id') id: string,
+    @CurrentUserId() currentUserId: string,
+    @Req() request: Request,
+  ): Promise<UserProfileDto> {
+    return this.usersService.activate(id, currentUserId, request);
   }
 
   @Post()
@@ -581,8 +617,6 @@ export class UsersController {
   @Delete('me/account')
   @ApiOperation({
     summary: 'Delete own account',
-    description:
-      'Permanently delete your own account. This action cannot be undone. Super Admins and Admins cannot delete their accounts through this endpoint.',
   })
   @ApiResponse({
     status: 200,
@@ -597,8 +631,7 @@ export class UsersController {
   })
   @ApiResponse({
     status: 400,
-    description:
-      'Bad request - Admin/Super Admin accounts cannot be self-deleted, or user has active orders',
+    description: 'Bad request - Procurement officer has orders in progress',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @AuditLog({

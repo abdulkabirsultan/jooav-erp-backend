@@ -277,9 +277,12 @@ export class ProductService {
       throw new ConflictException(`Product with name "${name}" already exists`);
     }
 
-    // Check if SKU already exists
-    const existingProduct = await this.prisma.product.findUnique({
-      where: { sku },
+    // Check if SKU already exists (exclude soft-deleted products)
+    const existingProduct = await this.prisma.product.findFirst({
+      where: {
+        sku,
+        deletedAt: null,
+      },
     });
 
     if (existingProduct) {
@@ -771,8 +774,11 @@ export class ProductService {
 
       // Check if new SKU conflicts with existing products (excluding current)
       if (sku !== existingProduct.sku) {
-        const existingSkuProduct = await this.prisma.product.findUnique({
-          where: { sku },
+        const existingSkuProduct = await this.prisma.product.findFirst({
+          where: {
+            sku,
+            deletedAt: null,
+          },
         });
 
         if (existingSkuProduct && existingSkuProduct.id !== id) {

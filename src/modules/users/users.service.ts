@@ -79,6 +79,12 @@ export class UsersService {
 
     const where: any = {};
 
+    // For archived/deactivated users, include soft-deleted users
+    // For all other queries, exclude soft-deleted users
+    if (status !== UserStatus.DEACTIVATED) {
+      where.deletedAt = null;
+    }
+
     // Role-based filtering: Regular ADMIN cannot see SUPER_ADMIN or other ADMIN accounts
     if (currentUser && currentUser.role === UserRole.ADMIN) {
       where.role = {
@@ -234,7 +240,7 @@ export class UsersService {
       );
     }
 
-    // Check if user already exists
+    // Check if user already exists (exclude soft-deleted users)
     const existingUser = await this.prisma.user.findFirst({
       where: {
         OR: [
@@ -243,6 +249,7 @@ export class UsersService {
             ? [{ username: createUserDto.username.toLowerCase() }]
             : []),
         ],
+        deletedAt: null, // Only check non-deleted users
       },
     });
 
@@ -440,12 +447,13 @@ export class UsersService {
       );
     }
 
-    // Check for conflicts if username is being updated
+    // Check for conflicts if username is being updated (exclude soft-deleted users)
     if (updateUserDto.username) {
       const conflictUser = await this.prisma.user.findFirst({
         where: {
           username: updateUserDto.username.toLowerCase(),
           id: { not: id },
+          deletedAt: null, // Exclude soft-deleted users
         },
       });
 
@@ -529,12 +537,30 @@ export class UsersService {
       );
     }
 
+    // Prepare update data
+    const updateData: any = {
+      status: updateStatusDto.status,
+      updatedAt: new Date(),
+    };
+
+    // If setting to DEACTIVATED, also set deletedAt
+    if (updateStatusDto.status === UserStatus.DEACTIVATED) {
+      updateData.deletedAt = new Date();
+      updateData.deletedBy = updatedBy;
+    }
+
+    // If reactivating from DEACTIVATED, clear deletedAt
+    if (
+      updateStatusDto.status !== UserStatus.DEACTIVATED &&
+      existingUser.status === UserStatus.DEACTIVATED
+    ) {
+      updateData.deletedAt = null;
+      updateData.deletedBy = null;
+    }
+
     const updatedUser = await this.prisma.user.update({
       where: { id },
-      data: {
-        status: updateStatusDto.status,
-        updatedAt: new Date(),
-      },
+      data: updateData,
       select: {
         id: true,
         email: true,
@@ -965,11 +991,13 @@ export class UsersService {
       throw new BadRequestException('Super Admin cannot delete themselves');
     }
 
-    // Soft delete by setting status to deactivated
+    // Soft delete by setting status to deactivated and marking deletion timestamp
     await this.prisma.user.update({
       where: { id },
       data: {
         status: UserStatus.DEACTIVATED,
+        deletedAt: new Date(),
+        deletedBy: deletedBy,
         updatedAt: new Date(),
       },
     });
@@ -1011,27 +1039,10 @@ export class UsersService {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
-        wholesalerOrders: {
-          where: {
-            status: {
-              in: [
-                OrderStatus.PENDING_PAYMENT,
-                OrderStatus.CONFIRMED,
-                OrderStatus.IN_PROGRESS,
-                OrderStatus.ASSIGNED,
-              ],
-            },
-          },
-        },
         assignedOrders: {
           where: {
             status: {
-              in: [
-                OrderStatus.PENDING_PAYMENT,
-                OrderStatus.CONFIRMED,
-                OrderStatus.IN_PROGRESS,
-                OrderStatus.ASSIGNED,
-              ],
+              in: [OrderStatus.IN_PROGRESS, OrderStatus.ASSIGNED],
             },
           },
         },
@@ -1042,35 +1053,23 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
 
-    // Prevent admin and super admin from deleting their own accounts
-    if (user.role === UserRole.ADMIN || user.role === UserRole.SUPER_ADMIN) {
-      throw new BadRequestException(
-        'Admin and Super Admin accounts cannot be self-deleted. Please contact a Super Admin to deactivate your account.',
-      );
-    }
-
-    // Check for active orders (wholesalers)
-    if (user.role === UserRole.WHOLESALER && user.wholesalerOrders.length > 0) {
-      throw new BadRequestException(
-        `Cannot delete account with ${user.wholesalerOrders.length} active order(s). Please complete or cancel all pending orders first.`,
-      );
-    }
-
     // Check for assigned orders (procurement officers)
     if (
       user.role === UserRole.PROCUREMENT_OFFICER &&
       user.assignedOrders.length > 0
     ) {
       throw new BadRequestException(
-        `Cannot delete account with ${user.assignedOrders.length} assigned order(s). Please complete or reassign all orders first.`,
+        `Cannot delete account with ${user.assignedOrders.length} order(s) in progress. Please complete or reassign all orders first.`,
       );
     }
 
-    // Soft delete by setting status to deactivated
+    // Soft delete by setting status to deactivated and marking deletion timestamp
     await this.prisma.user.update({
       where: { id: userId },
       data: {
         status: UserStatus.DEACTIVATED,
+        deletedAt: new Date(),
+        deletedBy: null, // null indicates self-delete
         updatedAt: new Date(),
       },
     });
@@ -1106,6 +1105,107 @@ export class UsersService {
 
     // Invalidate users cache after account deletion
     await this.cacheInvalidationService.invalidateUsers();
+  }
+
+  /**
+   * Reactivate a deleted user account
+   * @param id - User ID to reactivate
+   * @param activatedBy - ID of admin performing reactivation
+   * @returns Reactivated user profile
+   */
+  async activate(
+    id: string,
+    activatedBy: string,
+    request?: any,
+  ): Promise<UserProfileDto> {
+    // Find deleted user
+    const deletedUser = await this.prisma.user.findFirst({
+      where: {
+        id,
+        deletedAt: { not: null }, // Must be soft-deleted
+      },
+    });
+
+    if (!deletedUser) {
+      throw new NotFoundException('User not found or is not in deleted state');
+    }
+
+    // Check for conflicts with active users (same email or username)
+    const conflictUser = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: deletedUser.email },
+          ...(deletedUser.username ? [{ username: deletedUser.username }] : []),
+        ],
+        deletedAt: null, // Active user
+        NOT: { id }, // Exclude the user being reactivated
+      },
+    });
+
+    if (conflictUser) {
+      const field =
+        conflictUser.email === deletedUser.email ? 'email' : 'username';
+      throw new ConflictException(
+        `Cannot reactivate: another user with this ${field} already exists`,
+      );
+    }
+
+    // Get current admin user for permission check
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: activatedBy },
+      include: { adminProfile: true },
+    });
+
+    if (!currentUser) {
+      throw new NotFoundException('Current user not found');
+    }
+
+    // Permission check: reactivating admin accounts requires canSuspendAdmins permission
+    if (
+      (deletedUser.role === UserRole.ADMIN ||
+        deletedUser.role === UserRole.SUPER_ADMIN) &&
+      !currentUser.adminProfile?.canSuspendAdmins
+    ) {
+      throw new BadRequestException(
+        'Insufficient permissions to reactivate admin accounts',
+      );
+    }
+
+    // Reactivate user
+    const reactivatedUser = await this.prisma.user.update({
+      where: { id },
+      data: {
+        status: UserStatus.ACTIVE,
+        deletedAt: null,
+        deletedBy: null,
+        updatedAt: new Date(),
+      },
+      include: {
+        profile: true,
+        adminProfile: true,
+        procurementOfficerProfile: true,
+        wholesalerProfile: true,
+      },
+    });
+
+    // Log activity
+    await this.auditService.logUserAction(
+      activatedBy,
+      'REACTIVATE_USER',
+      'USER',
+      id,
+      {
+        reactivatedUserEmail: reactivatedUser.email,
+        reactivatedUserRole: reactivatedUser.role,
+      },
+      request,
+    );
+
+    // Invalidate users cache after reactivation
+    await this.cacheInvalidationService.invalidateUsers();
+
+    const { password, ...userWithoutPassword } = reactivatedUser;
+    return userWithoutPassword as UserProfileDto;
   }
 
   /**
@@ -1272,6 +1372,7 @@ export class UsersService {
         createdAt: {
           gte: thirtyDaysAgo,
         },
+        deletedAt: null, // Exclude soft-deleted users from registration stats
       },
     });
   }
@@ -1499,10 +1600,13 @@ export class UsersService {
     archived: number;
   }> {
     const [totalUsers, archived] = await Promise.all([
-      this.prisma.user.count(),
+      this.prisma.user.count({
+        where: { deletedAt: null }, // Only count active users (not soft-deleted)
+      }),
       this.prisma.user.count({
         where: {
           status: UserStatus.DEACTIVATED,
+          // Note: We don't filter by deletedAt here because we want both old and new deactivated users
         },
       }),
     ]);
@@ -1608,6 +1712,8 @@ export class UsersService {
           const superAdminCount = await this.prisma.user.count({
             where: {
               role: UserRole.SUPER_ADMIN,
+              status: UserStatus.ACTIVE,
+              deletedAt: null, // Only count active super admins
             },
           });
 
@@ -1625,6 +1731,8 @@ export class UsersService {
           where: { id: userId },
           data: {
             status: UserStatus.DEACTIVATED,
+            deletedAt: new Date(),
+            deletedBy: currentUserId,
             updatedAt: new Date(),
           },
         });
