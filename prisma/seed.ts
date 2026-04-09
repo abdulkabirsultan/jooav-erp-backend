@@ -29,7 +29,9 @@ async function findOrCreateUser(email: string, userData: any) {
     return existingUser;
   }
 
-  return prisma.user.create(userData);
+  return prisma.user.create({
+    data: userData,
+  });
 }
 
 async function main() {

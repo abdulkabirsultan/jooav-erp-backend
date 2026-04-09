@@ -5057,8 +5057,8 @@ export class OrderService {
       this.prismaService.user.findMany({
         where:
           userRole === UserRole.SUPER_ADMIN
-            ? {} // Super admin sees all
-            : { role: { not: UserRole.SUPER_ADMIN } }, // Admin doesn't see super admins
+            ? { deletedAt: null } // Super admin sees all
+            : { role: { not: UserRole.SUPER_ADMIN }, deletedAt: null }, // Admin doesn't see super admins
         select: {
           id: true,
           firstName: true,
@@ -5094,7 +5094,7 @@ export class OrderService {
       }),
 
       // 6. Get all users count
-      this.prismaService.user.count(),
+      this.prismaService.user.count({ where: { deletedAt: null } }),
     ]);
 
     // Transform active orders to include procurement officer names
