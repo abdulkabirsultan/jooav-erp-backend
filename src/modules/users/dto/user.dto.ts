@@ -129,6 +129,42 @@ export class UpdateUserDto {
   @IsOptional()
   @IsString()
   avatar?: string;
+
+  @ApiProperty({
+    description: 'Street address',
+    example: '45 Broad Street',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  address?: string;
+
+  @ApiProperty({
+    description: 'City',
+    example: 'Lagos Island',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  city?: string;
+
+  @ApiProperty({
+    description: 'State',
+    example: 'Lagos',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  state?: string;
+
+  @ApiProperty({
+    description: 'Country',
+    example: 'Nigeria',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  country?: string;
 }
 
 export class UpdateUserStatusDto {
