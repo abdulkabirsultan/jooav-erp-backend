@@ -462,12 +462,29 @@ export class UsersService {
       }
     }
 
+    // Separate profile fields from user-level fields
+    const { address, city, state, country, ...userLevelFields } = updateUserDto;
+    const hasProfileFields = address !== undefined || city !== undefined || state !== undefined || country !== undefined;
+
     const updatedUser = await this.prisma.user.update({
       where: { id },
       data: {
-        ...updateUserDto,
-        username: updateUserDto.username?.toLowerCase(),
+        ...userLevelFields,
+        username: userLevelFields.username?.toLowerCase(),
         updatedAt: new Date(),
+        ...(hasProfileFields && {
+          profile: {
+            upsert: {
+              create: { address, city, state, country },
+              update: {
+                ...(address !== undefined && { address }),
+                ...(city !== undefined && { city }),
+                ...(state !== undefined && { state }),
+                ...(country !== undefined && { country }),
+              },
+            },
+          },
+        }),
       },
       select: {
         id: true,
