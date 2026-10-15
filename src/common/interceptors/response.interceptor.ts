@@ -19,21 +19,37 @@ export class ResponseInterceptor<T> implements NestInterceptor<
   ): Observable<BaseResponse<T>> {
     return next.handle().pipe(
       map((data) => {
-        // Check if the response is already formatted with our custom SuccessResponse
-        if (
-          data &&
+        // A handler that supplied its own `success` and `message` has already
+        // described the outcome; preserve that wording.
+        //
+        // `data` is intentionally NOT required here. Handlers that omit it
+        // previously fell through to the generic per-method strings below,
+        // which is why endpoints like admin login surfaced "Resource created
+        // successfully". The response *shape* is unaffected either way: the
+        // generic path passed the whole handler object through as
+        // BaseResponse.data, so relaxing this guard changes only the message.
+        const isHandlerFormatted =
+          data !== null &&
           typeof data === 'object' &&
           'success' in data &&
-          'message' in data &&
-          'data' in data
-        ) {
-          // If it's already our custom format, convert it to BaseResponse
-          // Use the meta from SuccessResponse if available
+          'message' in data;
+
+        if (isHandlerFormatted) {
+          const handler = data as Record<string, any>;
+
+          // Only unwrap when the handler actually provided a payload.
+          // `data: undefined` must not shadow sibling fields such as
+          // paymentDetails.
+          const hasPayload =
+            'data' in handler &&
+            handler.data !== undefined &&
+            handler.data !== null;
+
           return new BaseResponse(
-            data.message,
-            data.data,
+            handler.message,
+            hasPayload ? handler.data : handler,
             ResponseStatus.SUCCESS,
-            data.meta,
+            handler.meta,
           );
         }
 
