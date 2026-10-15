@@ -16,6 +16,9 @@ import { LoggerService, AppLogger } from './common/utils/logger.service';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     logger: ['log', 'error', 'warn', 'debug', 'verbose'],
+    // Preserve the raw request body so webhook signatures can be verified
+    // against the exact bytes Monnify signed (see verifyWebhook).
+    rawBody: true,
   });
 
   const configService = app.get(ConfigService);
