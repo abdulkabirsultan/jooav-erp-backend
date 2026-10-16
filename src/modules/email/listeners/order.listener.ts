@@ -24,6 +24,39 @@ export class OrderEmailListener {
     }
   }
 
+  @OnEvent(EmailEvent.PAYMENT_CLAIMED)
+  async handlePaymentClaimed(payload: { order: any }) {
+    try {
+      await this.notificationService.notifyPaymentClaimed(payload.order);
+      this.logger.log(
+        `Payment claimed email event handled for order: ${payload.order.orderNumber}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to handle payment claimed email event: ${error.message}`,
+        error.stack,
+      );
+    }
+  }
+
+  @OnEvent(EmailEvent.PAYMENT_CLAIM_REJECTED)
+  async handlePaymentClaimRejected(payload: { order: any; reason?: string }) {
+    try {
+      await this.notificationService.notifyPaymentClaimRejected(
+        payload.order,
+        payload.reason,
+      );
+      this.logger.log(
+        `Payment claim rejected email event handled for order: ${payload.order.orderNumber}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to handle payment claim rejected email event: ${error.message}`,
+        error.stack,
+      );
+    }
+  }
+
   @OnEvent(EmailEvent.ORDER_ASSIGNED)
   async handleOrderAssignment(payload: { order: any; officer: any }) {
     try {

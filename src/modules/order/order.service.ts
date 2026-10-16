@@ -31,6 +31,8 @@ import {
   OrderItemStatus,
   PaymentMethod,
   PaymentStatus,
+  PaymentChannel,
+  PaymentClaimStatus,
   UserRole,
   AssignmentStatus,
   ProcurementOfficerStatus,
@@ -41,6 +43,9 @@ import { ConfigService } from '@nestjs/config';
 import { APP_CONSTANTS } from '../../shared/constants/app.constants';
 import { EmailEvent } from '../email/types/email.types';
 import { CacheInvalidationService } from '../cache/cache-invalidation.service';
+
+const DEFAULT_PAYMENT_CLAIM_REJECTION_REASON =
+  'Payment could not be verified on our account. Please confirm the transfer details and submit the claim again, or contact support with proof of payment.';
 
 @Injectable()
 export class OrderService {
@@ -726,6 +731,7 @@ export class OrderService {
               status: OrderStatus.PENDING_PAYMENT,
               subtotal: totalAmount,
               totalAmount: totalAmount,
+              paymentChannel: PaymentChannel.MONNIFY,
               monnifyInvoiceRef:
                 monnifyInvoice.responseBody.transactionReference,
               virtualAccounts: virtualAccounts,
@@ -770,6 +776,7 @@ export class OrderService {
                 ? { deliveryAddress: sourceOrder.deliveryAddress }
                 : {}),
               customerNotes: sourceOrder.customerNotes,
+              paymentChannel: PaymentChannel.MONNIFY,
               monnifyInvoiceRef:
                 monnifyInvoice.responseBody.transactionReference,
               virtualAccounts: virtualAccounts,
@@ -1037,6 +1044,7 @@ export class OrderService {
               status: OrderStatus.PENDING_PAYMENT,
               subtotal: totalAmount,
               totalAmount: totalAmount,
+              paymentChannel: PaymentChannel.MANUAL,
               monnifyInvoiceRef: null,
               virtualAccounts: Prisma.JsonNull,
               checkoutUrl: null,
@@ -1080,6 +1088,7 @@ export class OrderService {
                 ? { deliveryAddress: sourceOrder.deliveryAddress }
                 : {}),
               customerNotes: sourceOrder.customerNotes,
+              paymentChannel: PaymentChannel.MANUAL,
               monnifyInvoiceRef: null,
               virtualAccounts: Prisma.JsonNull,
               checkoutUrl: null,
@@ -1690,10 +1699,20 @@ export class OrderService {
           );
         }
 
-        // Update order status
+        // Update order status; a manual confirmation also closes out any
+        // pending "I have made payment" claim on the order.
         await this.prismaService.order.update({
           where: { id: order.id },
-          data: { status: OrderStatus.CONFIRMED },
+          data: {
+            status: OrderStatus.CONFIRMED,
+            ...(mode === 'manual' && order.paymentClaimStatus
+              ? {
+                  paymentClaimStatus: PaymentClaimStatus.APPROVED,
+                  paymentClaimReviewedAt: new Date(),
+                  paymentClaimReviewedById: userId,
+                }
+              : {}),
+          },
         });
 
         // Auto-confirm order items for paid orders
@@ -1808,6 +1827,146 @@ export class OrderService {
       );
       throw new BadRequestException('Failed to verify payment status');
     }
+  }
+
+  /**
+   * Resolve the channel an order was initiated with; legacy orders predate
+   * the channel field, so a Monnify ref means online payment.
+   */
+  private resolvePaymentChannel(order: {
+    paymentChannel: PaymentChannel | null;
+    monnifyInvoiceRef: string | null;
+  }): PaymentChannel {
+    if (order.paymentChannel) {
+      return order.paymentChannel;
+    }
+
+    return order.monnifyInvoiceRef
+      ? PaymentChannel.MONNIFY
+      : PaymentChannel.MANUAL;
+  }
+
+  /**
+   * Customer asserts that a bank transfer was made for a manual-payment order.
+   * The claim lives on the order (no Payment row) until an admin reviews it.
+   */
+  async createPaymentClaim(orderNumber: string, userId: string) {
+    const user = await this.prismaService.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const order = await this.prismaService.order.findUnique({
+      where: { orderNumber },
+    });
+
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    if (user.role === UserRole.WHOLESALER && order.wholesalerId !== userId) {
+      throw new ForbiddenException(
+        'You can only claim payment for your own orders',
+      );
+    }
+
+    if (order.status !== OrderStatus.PENDING_PAYMENT) {
+      throw new BadRequestException(
+        `Payment can only be claimed for orders awaiting payment. Current status: ${order.status}`,
+      );
+    }
+
+    if (this.resolvePaymentChannel(order) !== PaymentChannel.MANUAL) {
+      throw new BadRequestException(
+        'This order uses online payment; a manual payment claim is not required',
+      );
+    }
+
+    if (order.paymentClaimStatus === PaymentClaimStatus.PENDING) {
+      throw new BadRequestException(
+        'A payment claim is already awaiting review',
+      );
+    }
+
+    const updated = await this.prismaService.order.update({
+      where: { id: order.id },
+      data: {
+        paymentClaimStatus: PaymentClaimStatus.PENDING,
+        paymentClaimedAt: new Date(),
+        paymentClaimReviewedAt: null,
+        paymentClaimReviewedById: null,
+        paymentClaimRejectionReason: null,
+      },
+    });
+
+    const orderPayload = await this.getOrderEmailPayloadById(order.id);
+    if (orderPayload) {
+      this.eventEmitter.emit(EmailEvent.PAYMENT_CLAIMED, {
+        order: orderPayload,
+      });
+    }
+
+    await this.cacheInvalidationService.invalidateOrders();
+
+    return updated;
+  }
+
+  /**
+   * Admin rejects a pending payment claim; the customer can claim again.
+   */
+  async rejectPaymentClaim(
+    orderNumber: string,
+    adminId: string,
+    reason?: string,
+  ) {
+    const order = await this.prismaService.order.findUnique({
+      where: { orderNumber },
+    });
+
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    if (!order.paymentClaimStatus) {
+      throw new BadRequestException(
+        'This order has no payment claim to review',
+      );
+    }
+
+    if (order.paymentClaimStatus !== PaymentClaimStatus.PENDING) {
+      throw new BadRequestException(
+        `This payment claim was already ${order.paymentClaimStatus.toLowerCase()}`,
+      );
+    }
+
+    const rejectionReason =
+      reason?.trim() || DEFAULT_PAYMENT_CLAIM_REJECTION_REASON;
+
+    const updated = await this.prismaService.order.update({
+      where: { id: order.id },
+      data: {
+        paymentClaimStatus: PaymentClaimStatus.REJECTED,
+        paymentClaimReviewedAt: new Date(),
+        paymentClaimReviewedById: adminId,
+        paymentClaimRejectionReason: rejectionReason,
+      },
+    });
+
+    const orderPayload = await this.getOrderEmailPayloadById(order.id);
+    if (orderPayload) {
+      this.eventEmitter.emit(EmailEvent.PAYMENT_CLAIM_REJECTED, {
+        order: orderPayload,
+        reason: rejectionReason,
+      });
+    }
+
+    await this.cacheInvalidationService.invalidateOrders();
+
+    return updated;
   }
 
   /**
