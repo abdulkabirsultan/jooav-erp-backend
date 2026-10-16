@@ -1658,30 +1658,37 @@ export class OrderService {
           );
         }
 
-        // Record the payment idempotently.
+        // Record the payment, tolerating a concurrent duplicate.
         //
         // `monnifyInvoiceRef` is @unique on Payment, so a concurrent second
-        // request (React StrictMode double-invoke, double click, or a network
-        // retry) would previously fail the whole verification with a P2002 even
-        // though the first request had already recorded the payment. upsert()
-        // makes a repeat call a no-op instead of an error.
-        //
-        // An empty `update` is deliberate: once a payment is recorded its
-        // amount, method and paidAt must never be rewritten.
-        await this.prismaService.payment.upsert({
-          where: { monnifyInvoiceRef: paymentDetails.transactionReference },
-          create: {
-            orderId: order.id,
-            amount: paymentDetails.amountPaid,
-            paymentMethod: this.mapMonnifyPaymentMethod(
-              paymentDetails.paymentMethod,
-            ),
-            status: PaymentStatus.COMPLETED,
-            monnifyInvoiceRef: paymentDetails.transactionReference,
-            paidAt: new Date(),
-          },
-          update: {},
-        });
+        // request (React StrictMode double-invoke, double click, a network
+        // retry, or the Monnify webhook racing this call) hits P2002. Catching
+        // it here makes the repeat a no-op instead of an error, and the
+        // `paymentCreated` flag lets the confirmation email be emitted exactly
+        // once: only the request that actually recorded the payment sends it.
+        let paymentCreated = false;
+        try {
+          await this.prismaService.payment.create({
+            data: {
+              orderId: order.id,
+              amount: paymentDetails.amountPaid,
+              paymentMethod: this.mapMonnifyPaymentMethod(
+                paymentDetails.paymentMethod,
+              ),
+              status: PaymentStatus.COMPLETED,
+              monnifyInvoiceRef: paymentDetails.transactionReference,
+              paidAt: new Date(),
+            },
+          });
+          paymentCreated = true;
+        } catch (error) {
+          if (!this.isUniqueConstraintError(error)) {
+            throw error;
+          }
+          this.logger.log(
+            `Payment for order ${orderNumber} was already recorded by a concurrent request; skipping duplicate write`,
+          );
+        }
 
         // Update order status
         await this.prismaService.order.update({
@@ -1702,11 +1709,18 @@ export class OrderService {
           },
         });
 
-        const orderPayload = await this.getOrderEmailPayloadById(order.id);
-        if (orderPayload) {
-          this.eventEmitter.emit(EmailEvent.ORDER_CONFIRMED, {
-            order: orderPayload,
-          });
+        // Emit the confirmation email only when this call recorded the
+        // payment. Repeat verifies (page refresh, retries) and requests that
+        // lost the race to the webhook must not resend it. The webhook path
+        // emits its own confirmation when it records the payment, so every
+        // order gets exactly one email regardless of which path wins.
+        if (paymentCreated) {
+          const orderPayload = await this.getOrderEmailPayloadById(order.id);
+          if (orderPayload) {
+            this.eventEmitter.emit(EmailEvent.ORDER_CONFIRMED, {
+              order: orderPayload,
+            });
+          }
         }
 
         // Trigger auto-assignment for paid orders
@@ -3087,18 +3101,17 @@ export class OrderService {
       };
     }
 
-    // Process the payment idempotently.
+    // Process the payment atomically.
     //
     // Monnify retries webhook deliveries, and this can also race the
-    // synchronous verify-payment call. `monnifyInvoiceRef` is @unique, so a bare
-    // create() would throw P2002 on the second delivery and roll back the whole
-    // transaction, leaving a genuinely paid order unconfirmed. upsert() makes
-    // the repeat delivery a no-op, and the empty `update` guarantees a recorded
-    // payment's amount, method and paidAt are never rewritten.
+    // synchronous verify-payment call. `monnifyInvoiceRef` is @unique, so a
+    // duplicate delivery hits P2002: the whole transaction rolls back and the
+    // catch below reports it as already processed — which is exactly right.
+    // Only the request that actually records the payment runs the order
+    // update and emits the confirmation email, so the email goes out once.
     await this.prismaService.$transaction([
-      this.prismaService.payment.upsert({
-        where: { monnifyInvoiceRef: transactionReference },
-        create: {
+      this.prismaService.payment.create({
+        data: {
           orderId: order.id,
           amount: eventData.amountPaid || eventData.totalPayable || 0,
           paymentMethod: this.mapMonnifyPaymentMethod(eventData.paymentMethod),
@@ -3108,7 +3121,6 @@ export class OrderService {
           // yields the 1970 epoch and an Invalid Date is rejected by Prisma.
           paidAt: this.toValidDate(eventData.paidOn),
         },
-        update: {},
       }),
       this.prismaService.order.update({
         where: { id: order.id },
@@ -3126,6 +3138,17 @@ export class OrderService {
         },
       }),
     ]);
+
+    // The webhook can win the race against the payer's return-to-app verify
+    // call, so emit the confirmation email here too. Combined with the gate in
+    // verifyPayment, every order gets exactly one email: only the path that
+    // actually recorded the payment emits it.
+    const orderPayload = await this.getOrderEmailPayloadById(order.id);
+    if (orderPayload) {
+      this.eventEmitter.emit(EmailEvent.ORDER_CONFIRMED, {
+        order: orderPayload,
+      });
+    }
 
     // Trigger auto-assignment if enabled (async - don't block webhook response)
     setImmediate(async () => {
