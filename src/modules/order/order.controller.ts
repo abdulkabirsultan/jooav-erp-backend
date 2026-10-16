@@ -15,6 +15,8 @@ import {
   BadRequestException,
   Headers,
   Req,
+  HttpCode,
+  type RawBodyRequest,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -27,6 +29,7 @@ import {
   ApiForbiddenResponse,
   ApiBadRequestResponse,
 } from '@nestjs/swagger';
+import type { Request } from 'express';
 
 import { OrderService } from './order.service';
 import { MonnifyService } from '../payment/monnify.service';
@@ -739,6 +742,7 @@ export class OrderController {
 
   @Post('webhook/monnify')
   @Public() // Skip authentication for webhook endpoints
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Monnify payment webhook',
     description:
@@ -756,7 +760,7 @@ export class OrderController {
   async handleMonnifyWebhook(
     @Body() webhookData: any,
     @Headers('monnify-signature') signature: string,
-    @Req() request: any,
+    @Req() request: RawBodyRequest<Request>,
   ): Promise<WebhookResponseDto> {
     // Log webhook receipt immediately
     this.logger.log(`Received Monnify webhook: ${webhookData.eventType}`, {
@@ -766,10 +770,12 @@ export class OrderController {
 
     try {
       // Step 1: Validate IP address (Best Practice #2)
+      const forwardedFor = request.headers['x-forwarded-for'];
       const clientIP =
         request.ip ||
         request.connection?.remoteAddress ||
-        request.headers['x-forwarded-for'];
+        (Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor) ||
+        '';
       const isValidIP = await this.monnifyService.validateWebhookIP(clientIP);
 
       if (!isValidIP) {
@@ -778,8 +784,18 @@ export class OrderController {
       }
 
       // Step 2: Verify webhook signature (Best Practice #1)
+      // Must verify against the raw request bytes: re-serializing the parsed
+      // body can alter number formatting/unicode and break the HMAC.
+      const rawBody = request.rawBody;
+      if (!rawBody) {
+        this.logger.error(
+          'Webhook rejected: raw request body unavailable for signature verification',
+        );
+        throw new BadRequestException('Invalid webhook payload');
+      }
+
       const isValidSignature = await this.monnifyService.verifyWebhook(
-        webhookData,
+        rawBody,
         signature,
       );
       if (!isValidSignature) {
@@ -820,17 +836,9 @@ export class OrderController {
         error.stack,
       );
 
-      // Still return 200 to prevent retries for validation errors
-      if (
-        error.message.includes('Invalid webhook signature') ||
-        error.message.includes('Unauthorized IP')
-      ) {
-        return {
-          success: false,
-          message: error.message,
-        };
-      }
-
+      // Reject with a real error status: any 2xx is treated as delivered by
+      // Monnify, which hides failures from their dashboard and suppresses
+      // retries. A 4xx surfaces the failure and lets Monnify retry.
       throw error;
     }
   }

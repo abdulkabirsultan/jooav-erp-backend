@@ -466,9 +466,15 @@ export class MonnifyService {
 
   /**
    * Verify Monnify webhook signature
-   * Implements SHA-512 HMAC signature verification as per Monnify documentation
+   * Implements SHA-512 HMAC signature verification as per Monnify documentation.
+   * The HMAC must be computed over the raw request body bytes as sent by Monnify;
+   * re-serializing the parsed body can alter number formatting/unicode and reject
+   * otherwise valid payloads.
    */
-  async verifyWebhook(webhookData: any, signature: string): Promise<boolean> {
+  async verifyWebhook(
+    rawBody: Buffer | undefined,
+    signature: string,
+  ): Promise<boolean> {
     try {
       const clientSecret = this.configService.get<string>('MONNIFY_SECRET_KEY');
       if (!clientSecret) {
@@ -481,23 +487,31 @@ export class MonnifyService {
         return false;
       }
 
-      // Convert webhook data to string (must match exactly how Monnify computes it)
-      const stringifiedData = JSON.stringify(webhookData);
+      if (!rawBody || rawBody.length === 0) {
+        this.logger.error(
+          'Raw request body unavailable for signature verification',
+        );
+        return false;
+      }
 
-      // Compute HMAC-SHA512 signature
+      // Compute HMAC-SHA512 over the exact raw request body bytes
       const computedSignature = crypto
         .createHmac('sha512', clientSecret)
-        .update(stringifiedData)
+        .update(rawBody)
         .digest('hex');
 
-      // Compare signatures
-      const isValid = computedSignature === signature;
+      // Constant-time comparison
+      const computedBuffer = Buffer.from(computedSignature, 'hex');
+      const receivedBuffer = Buffer.from(signature.trim(), 'hex');
+      const isValid =
+        computedBuffer.length === receivedBuffer.length &&
+        crypto.timingSafeEqual(computedBuffer, receivedBuffer);
 
       if (!isValid) {
         this.logger.warn('Webhook signature mismatch', {
-          computed: computedSignature,
-          received: signature,
-          data: stringifiedData,
+          bodyLength: rawBody.length,
+          computedSignatureLength: computedSignature.length,
+          receivedSignatureLength: signature.length,
         });
       } else {
         this.logger.log('Webhook signature verified successfully');
