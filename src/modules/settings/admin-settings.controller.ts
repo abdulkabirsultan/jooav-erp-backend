@@ -34,7 +34,13 @@ export class AdminSettingsController {
     description:
       'Requires the canModifySystemConfig permission; SUPER_ADMIN always has it.',
   })
-  updatePaymentSettings(@Body() dto: UpdatePaymentSettingsDto) {
-    return this.settingsService.updatePaymentSettings(dto);
+  async updatePaymentSettings(@Body() dto: UpdatePaymentSettingsDto) {
+    const settings = await this.settingsService.updatePaymentSettings(dto);
+
+    return {
+      success: true,
+      message: 'Payment settings updated successfully',
+      data: settings,
+    };
   }
 }

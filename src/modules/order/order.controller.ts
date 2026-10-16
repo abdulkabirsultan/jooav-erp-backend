@@ -315,7 +315,16 @@ export class OrderController {
     @Param('orderNumber') orderNumber: string,
     @CurrentUserId() userId: string,
   ) {
-    return this.orderService.createPaymentClaim(orderNumber, userId);
+    const order = await this.orderService.createPaymentClaim(
+      orderNumber,
+      userId,
+    );
+
+    return {
+      success: true,
+      message: 'Payment claim submitted successfully',
+      data: order,
+    };
   }
 
   @Post(':orderNumber/payment-claim/reject')
@@ -335,11 +344,17 @@ export class OrderController {
     @Body() dto: RejectPaymentClaimDto,
     @CurrentUserId() userId: string,
   ) {
-    return this.orderService.rejectPaymentClaim(
+    const order = await this.orderService.rejectPaymentClaim(
       orderNumber,
       userId,
       dto?.reason,
     );
+
+    return {
+      success: true,
+      message: 'Payment claim rejected',
+      data: order,
+    };
   }
 
   @Patch(':orderNumber/items/:itemId/status')
