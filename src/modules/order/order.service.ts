@@ -2518,6 +2518,10 @@ export class OrderService {
       where.status = queryDto.status;
     }
 
+    if (queryDto.paymentClaimStatus) {
+      where.paymentClaimStatus = queryDto.paymentClaimStatus;
+    }
+
     const search = queryDto.search?.trim();
     if (search) {
       where.OR = [
@@ -4503,13 +4507,18 @@ export class OrderService {
       }),
     ]);
 
-    // Get total revenue from completed orders
-    const completedOrdersRevenue = await this.prismaService.order.aggregate({
-      where: { ...where, status: OrderStatus.COMPLETED },
-      _sum: {
-        totalAmount: true,
-      },
-    });
+    // Get total revenue from completed orders + pending payment claims count
+    const [completedOrdersRevenue, claimsToVerifyCount] = await Promise.all([
+      this.prismaService.order.aggregate({
+        where: { ...where, status: OrderStatus.COMPLETED },
+        _sum: {
+          totalAmount: true,
+        },
+      }),
+      this.prismaService.order.count({
+        where: { ...where, paymentClaimStatus: PaymentClaimStatus.PENDING },
+      }),
+    ]);
 
     const [
       draftCount,
@@ -4545,6 +4554,7 @@ export class OrderService {
           activeOrders: confirmedCount + assignedCount + inProgressCount,
           completedOrders: completedCount,
           cancelledOrders: cancelledCount,
+          claimsToVerify: claimsToVerifyCount,
           totalRevenue, // Also include in summary
         },
       },
@@ -5350,6 +5360,7 @@ export class OrderService {
       completedOrdersCount,
       liveProductsCount,
       allUsersCount,
+      paymentsToVerifyCount,
     ] = await Promise.all([
       // 1. Get active orders (confirmed status upwards, excluding pending_payment)
       this.prismaService.order.findMany({
@@ -5449,6 +5460,11 @@ export class OrderService {
 
       // 6. Get all users count
       this.prismaService.user.count({ where: { deletedAt: null } }),
+
+      // 7. Get count of payments awaiting admin verification
+      this.prismaService.order.count({
+        where: { paymentClaimStatus: PaymentClaimStatus.PENDING },
+      }),
     ]);
 
     // Transform active orders to include procurement officer names
@@ -5470,6 +5486,7 @@ export class OrderService {
           completedOrders: completedOrdersCount,
           liveProducts: liveProductsCount,
           allUsers: allUsersCount,
+          paymentsToVerify: paymentsToVerifyCount,
         },
       },
     };

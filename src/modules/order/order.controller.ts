@@ -42,7 +42,7 @@ import {
   CurrentUser,
   CurrentUserId,
 } from '../../common/decorators/current-user.decorator';
-import { UserRole, OrderStatus } from '@prisma/client';
+import { UserRole, OrderStatus, PaymentClaimStatus } from '@prisma/client';
 import {
   CreateOrderDto,
   CheckoutResponseDto,
@@ -610,6 +610,12 @@ export class OrderController {
     required: false,
     enum: OrderStatus,
     description: 'Filter by order status',
+  })
+  @ApiQuery({
+    name: 'paymentClaimStatus',
+    required: false,
+    enum: PaymentClaimStatus,
+    description: 'Filter by payment claim status',
   })
   @ApiQuery({
     name: 'search',
