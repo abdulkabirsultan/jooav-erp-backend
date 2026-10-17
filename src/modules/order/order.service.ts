@@ -5101,53 +5101,46 @@ export class OrderService {
       };
 
       if (hasItemChange) {
-        const currentSubtotal = order.items.reduce(
-          (sum, orderItem) => sum + Number(orderItem.lineTotal),
-          0,
-        );
-
-        let recalculatedSubtotal = currentSubtotal;
+        // Apply totals as atomic increments so concurrent cart edits (e.g.
+        // two items added at once) compose instead of overwriting each other
+        // with a subtotal derived from a stale snapshot.
+        let totalsDelta = 0;
 
         if (itemOperation?.type === 'UPDATE') {
-          const existingItem = order.items.find(
+          const currentItem = order.items.find(
             (orderItem) => orderItem.id === itemOperation.itemId,
           );
 
-          if (!existingItem) {
+          if (!currentItem) {
             throw new NotFoundException(
               `Order item ${itemOperation.itemId} not found in order`,
             );
           }
 
-          recalculatedSubtotal =
-            currentSubtotal -
-            Number(existingItem.lineTotal) +
-            Number(itemOperation.lineTotal);
+          totalsDelta =
+            Number(itemOperation.lineTotal) - Number(currentItem.lineTotal);
         }
 
         if (itemOperation?.type === 'ADD') {
-          recalculatedSubtotal =
-            currentSubtotal + Number(itemOperation.lineTotal);
+          totalsDelta = Number(itemOperation.lineTotal);
         }
 
         if (itemOperation?.type === 'REMOVE') {
-          const existingItem = order.items.find(
+          const currentItem = order.items.find(
             (orderItem) => orderItem.id === itemOperation.itemId,
           );
 
-          if (!existingItem) {
+          if (!currentItem) {
             throw new NotFoundException(
               `Order item ${itemOperation.itemId} not found in order`,
             );
           }
 
-          recalculatedSubtotal =
-            currentSubtotal - Number(existingItem.lineTotal);
+          totalsDelta = -Number(currentItem.lineTotal);
         }
 
-        const normalizedSubtotal = Math.max(0, recalculatedSubtotal);
-        orderUpdateData.subtotal = normalizedSubtotal;
-        orderUpdateData.totalAmount = normalizedSubtotal;
+        orderUpdateData.subtotal = { increment: totalsDelta };
+        orderUpdateData.totalAmount = { increment: totalsDelta };
       }
 
       const operations: any[] = [];
@@ -5301,6 +5294,14 @@ export class OrderService {
         error instanceof ForbiddenException
       ) {
         throw error;
+      }
+
+      // Concurrent duplicate adds land here as a raw P2002; surface the same
+      // clean client error the in-order duplicate check returns.
+      if (this.isUniqueConstraintError(error)) {
+        throw new BadRequestException(
+          'Product already exists in order. Use UPDATE action instead.',
+        );
       }
 
       this.logger.error(
