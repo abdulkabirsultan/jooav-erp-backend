@@ -15,7 +15,11 @@ import {
   MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { OrderStatus, OrderItemStatus } from '@prisma/client';
+import {
+  OrderStatus,
+  OrderItemStatus,
+  PaymentClaimStatus,
+} from '@prisma/client';
 
 export class CreateOrderDto {
   @ApiProperty({
@@ -205,6 +209,15 @@ export class ListOrdersQueryDto {
   @IsOptional()
   @IsEnum(OrderStatus)
   status?: OrderStatus;
+
+  @ApiProperty({
+    description: 'Filter by payment claim status',
+    enum: PaymentClaimStatus,
+    required: false,
+  })
+  @IsOptional()
+  @IsEnum(PaymentClaimStatus)
+  paymentClaimStatus?: PaymentClaimStatus;
 
   @ApiProperty({
     description:
