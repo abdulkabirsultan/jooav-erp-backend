@@ -234,6 +234,13 @@ export class OrderController {
   }
 
   @Get('stats')
+  @UseInterceptors(CacheInterceptor)
+  @Cache({
+    key: 'orders-stats',
+    ttl: 60, // 1 minute - invalidated on every order write
+    includeUserId: true,
+    tags: ['orders'],
+  })
   @Roles(
     UserRole.ADMIN,
     UserRole.SUPER_ADMIN,
