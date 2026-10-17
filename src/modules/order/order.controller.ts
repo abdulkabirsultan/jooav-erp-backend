@@ -54,6 +54,7 @@ import {
   ManualPaymentResponseDto,
   DraftOrderResponseDto,
   VerifyPaymentDto,
+  RejectPaymentClaimDto,
 } from './dto/create-order.dto';
 import {
   CreateOutOfStockReportDto,
@@ -233,6 +234,13 @@ export class OrderController {
   }
 
   @Get('stats')
+  @UseInterceptors(CacheInterceptor)
+  @Cache({
+    key: 'orders-stats',
+    ttl: 60, // 1 minute - invalidated on every order write
+    includeUserId: true,
+    tags: ['orders'],
+  })
   @Roles(
     UserRole.ADMIN,
     UserRole.SUPER_ADMIN,
@@ -296,6 +304,64 @@ export class OrderController {
       userId,
       verifyPaymentDto?.mode,
     );
+  }
+
+  @Post(':orderNumber/payment-claim')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.WHOLESALER)
+  @ApiOperation({
+    summary: 'Claim payment made (manual bank transfer)',
+    description:
+      'The customer asserts that a bank transfer was made for a manual-payment order. The claim is recorded on the order and reviewed by an admin.',
+  })
+  @ApiParam({
+    name: 'orderNumber',
+    description: 'Order number to claim payment for',
+    example: 'JOO-1234567890',
+  })
+  async createPaymentClaim(
+    @Param('orderNumber') orderNumber: string,
+    @CurrentUserId() userId: string,
+  ) {
+    const order = await this.orderService.createPaymentClaim(
+      orderNumber,
+      userId,
+    );
+
+    return {
+      success: true,
+      message: 'Payment claim submitted successfully',
+      data: order,
+    };
+  }
+
+  @Post(':orderNumber/payment-claim/reject')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'Reject a pending payment claim',
+    description:
+      'Rejects the customer payment claim with an optional reason. The order stays awaiting payment and the customer can claim again.',
+  })
+  @ApiParam({
+    name: 'orderNumber',
+    description: 'Order number whose payment claim should be rejected',
+    example: 'JOO-1234567890',
+  })
+  async rejectPaymentClaim(
+    @Param('orderNumber') orderNumber: string,
+    @Body() dto: RejectPaymentClaimDto,
+    @CurrentUserId() userId: string,
+  ) {
+    const order = await this.orderService.rejectPaymentClaim(
+      orderNumber,
+      userId,
+      dto?.reason,
+    );
+
+    return {
+      success: true,
+      message: 'Payment claim rejected',
+      data: order,
+    };
   }
 
   @Patch(':orderNumber/items/:itemId/status')

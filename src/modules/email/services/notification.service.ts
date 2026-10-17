@@ -23,6 +23,7 @@ interface Order {
   totalAmount: number;
   createdAt: Date;
   items: Array<{ id: string }>;
+  paymentClaimedAt?: Date | string | null;
   wholesaler: {
     firstName?: string;
     lastName?: string;
@@ -391,6 +392,65 @@ export class NotificationService {
     }
 
     await this.emailService.queueBatchEmails(notifications, EmailPriority.HIGH);
+  }
+
+  async notifyPaymentClaimed(order: Order): Promise<void> {
+    const wholesaler = this.getWholesalerContact(order);
+    const adminRecipients = await this.getAdminAlertRecipients();
+
+    if (adminRecipients.length === 0) {
+      return;
+    }
+
+    await this.emailService.queueBatchEmails(
+      [
+        {
+          templateAlias: EMAIL_TEMPLATES.PAYMENT_CLAIMED,
+          to: adminRecipients,
+          variables: {
+            CUSTOMER_NAME:
+              `${wholesaler.firstName} ${wholesaler.lastName}`.trim(),
+            ORDER_NUMBER: order.orderNumber,
+            ORDER_TOTAL: order.totalAmount.toLocaleString(),
+            CLAIMED_AT: (order.paymentClaimedAt
+              ? new Date(order.paymentClaimedAt)
+              : new Date()
+            ).toLocaleString(),
+            ADMIN_ORDER_URL: `${this.emailConfig.baseUrl}/dashboard/order-logs`,
+          } as Record<string, string | number>,
+          priority: EmailPriority.HIGH,
+        },
+      ],
+      EmailPriority.HIGH,
+    );
+
+    this.logger.log(
+      `Payment claim notification queued for order: ${order.orderNumber}`,
+    );
+  }
+
+  async notifyPaymentClaimRejected(
+    order: Order,
+    reason?: string,
+  ): Promise<void> {
+    const wholesaler = this.getWholesalerContact(order);
+
+    await this.emailService.queueEmail({
+      templateAlias: EMAIL_TEMPLATES.PAYMENT_REJECTED,
+      to: [wholesaler.email],
+      variables: {
+        CUSTOMER_NAME: wholesaler.firstName,
+        ORDER_NUMBER: order.orderNumber,
+        ORDER_TOTAL: order.totalAmount.toLocaleString(),
+        REASON: reason || 'Payment could not be verified',
+        VIEW_ORDER_URL: `${this.emailConfig.wholesalerBaseUrl}/dashboard/orders`,
+      } as Record<string, string | number>,
+      priority: EmailPriority.HIGH,
+    });
+
+    this.logger.log(
+      `Payment claim rejection notification queued for order: ${order.orderNumber}`,
+    );
   }
 
   async notifyOrderReassigned(

@@ -12,6 +12,7 @@ import {
   IsDateString,
   IsInt,
   IsIn,
+  MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { OrderStatus, OrderItemStatus } from '@prisma/client';
@@ -359,4 +360,17 @@ export class DraftOrderResponseDto {
   data: {
     order: any; // Using any for now since the structure matches the database model with all includes
   };
+}
+
+export class RejectPaymentClaimDto {
+  @ApiProperty({
+    description:
+      'Optional reason shown to the customer. A default message is used when omitted.',
+    required: false,
+    example: 'Transfer reference not found on our account',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
 }

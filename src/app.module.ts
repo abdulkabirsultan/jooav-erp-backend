@@ -56,6 +56,7 @@ import { ProductModule } from './modules/product/product.module';
 import { PackSizeModule } from './modules/pack-size/pack-size.module';
 import { PackTypeModule } from './modules/pack-type/pack-type.module';
 import { OrderModule } from './modules/order/order.module';
+import { SettingsModule } from './modules/settings/settings.module';
 import { SentryModule } from '@sentry/nestjs/setup';
 
 @Module({
@@ -307,6 +308,7 @@ import { SentryModule } from '@sentry/nestjs/setup';
     PackSizeModule,
     PackTypeModule,
     OrderModule,
+    SettingsModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

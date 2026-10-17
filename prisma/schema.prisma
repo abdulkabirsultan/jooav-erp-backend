@@ -400,7 +400,15 @@ model Order {
   virtualAccounts    Json?          // Store virtual account details
   checkoutUrl        String?
   paymentExpiresAt   DateTime?
-  
+
+  // Payment channel + manual payment claim tracking
+  paymentChannel               PaymentChannel?
+  paymentClaimStatus           PaymentClaimStatus?
+  paymentClaimedAt             DateTime?
+  paymentClaimReviewedAt       DateTime?
+  paymentClaimReviewedById     String?
+  paymentClaimRejectionReason  String?
+
   // Simplified Financial
   subtotal           Decimal        @db.Decimal(10, 2)
   totalAmount        Decimal        @db.Decimal(10, 2)
@@ -913,6 +921,17 @@ enum PaymentStatus {
 enum PaymentMethod {
   BANK_TRANSFER
   CHECKOUT_URL
+}
+
+enum PaymentChannel {
+  MONNIFY // Online payment via Monnify virtual account
+  MANUAL // Offline bank transfer confirmed by admin
+}
+
+enum PaymentClaimStatus {
+  PENDING // Customer claims payment made, awaiting admin review
+  APPROVED // Admin confirmed the claimed payment
+  REJECTED // Admin could not verify the claimed payment
 }
 
 enum OutOfStockReportStatus {
