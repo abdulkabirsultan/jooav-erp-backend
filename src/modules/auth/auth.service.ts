@@ -726,7 +726,7 @@ export class AuthService {
   async resetPassword(
     resetPasswordDto: ResetPasswordDto,
     request?: any,
-  ): Promise<{ message: string }> {
+  ): Promise<{ message: string; role: UserRole }> {
     const { token, password } = resetPasswordDto;
 
     // Find valid reset token
@@ -808,6 +808,7 @@ export class AuthService {
     return {
       message:
         'Password has been reset successfully. Please log in with your new password.',
+      role: user.role,
     };
   }
 }
