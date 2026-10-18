@@ -424,6 +424,9 @@ export class OrderService {
         },
         include: {
           items: {
+            // Stable, deterministic order: Postgres physical order shifts when
+            // rows are updated, which would shuffle the cart on every edit.
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
             select: {
               id: true,
               quantity: true,
@@ -2401,6 +2404,9 @@ export class OrderService {
       where: { orderNumber },
       include: {
         items: {
+          // Stable, deterministic order: Postgres physical order shifts when
+          // rows are updated, which would shuffle the cart on every edit.
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
           include: {
             product: {
               select: {
@@ -5204,6 +5210,9 @@ export class OrderService {
         where: { id: result.id },
         include: {
           items: {
+            // Stable, deterministic order: Postgres physical order shifts when
+            // rows are updated, which would shuffle the cart on every edit.
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
             include: {
               product: {
                 select: {
