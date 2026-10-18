@@ -27,6 +27,29 @@ export const DEFAULT_PAYMENT_SETTINGS: PaymentSettings = {
   manualAccounts: [],
 };
 
+export const WAREHOUSE_SETTINGS_KEY = 'warehouse.settings';
+export const MAX_WAREHOUSE_CONTACTS = 5;
+
+export interface WarehouseContact {
+  id: string;
+  name: string;
+  phone: string; // International format, digits only (e.g. 2348167163339)
+}
+
+export interface WarehouseSettings {
+  contacts: WarehouseContact[];
+}
+
+export const DEFAULT_WAREHOUSE_SETTINGS: WarehouseSettings = {
+  contacts: [
+    {
+      id: 'default-warehouse',
+      name: 'Warehouse',
+      phone: '2348167163339',
+    },
+  ],
+};
+
 @Injectable()
 export class SettingsService {
   private readonly logger = new Logger(SettingsService.name);
@@ -123,6 +146,60 @@ export class SettingsService {
     return settings;
   }
 
+  /**
+   * Warehouse contacts used when sharing orders over WhatsApp in the admin.
+   */
+  async getWarehouseSettings(): Promise<WarehouseSettings> {
+    const config = await this.prismaService.systemConfig.findUnique({
+      where: { key: WAREHOUSE_SETTINGS_KEY },
+    });
+
+    return this.normalizeWarehouse(config?.value);
+  }
+
+  async updateWarehouseSettings(input: {
+    contacts: Array<{ id?: string; name: string; phone: string }>;
+  }): Promise<WarehouseSettings> {
+    if (!Array.isArray(input.contacts)) {
+      throw new BadRequestException('contacts must be an array');
+    }
+
+    if (input.contacts.length > MAX_WAREHOUSE_CONTACTS) {
+      throw new BadRequestException(
+        `A maximum of ${MAX_WAREHOUSE_CONTACTS} warehouse contacts is allowed`,
+      );
+    }
+
+    const contacts = input.contacts
+      .map((contact) => this.normalizeWarehouseContact(contact))
+      .filter((contact): contact is WarehouseContact => contact !== null);
+
+    if (contacts.length !== input.contacts.length) {
+      throw new BadRequestException(
+        'Each warehouse contact requires a name and a valid phone number',
+      );
+    }
+
+    const settings: WarehouseSettings = { contacts };
+
+    await this.prismaService.systemConfig.upsert({
+      where: { key: WAREHOUSE_SETTINGS_KEY },
+      create: {
+        key: WAREHOUSE_SETTINGS_KEY,
+        value: settings as unknown as Prisma.InputJsonValue,
+      },
+      update: {
+        value: settings as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    this.logger.log(
+      `Warehouse settings updated (contacts: ${settings.contacts.length})`,
+    );
+
+    return settings;
+  }
+
   private normalize(value: unknown): PaymentSettings {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       return { ...DEFAULT_PAYMENT_SETTINGS };
@@ -168,6 +245,49 @@ export class SettingsService {
       bankName,
       isVisible: account.isVisible !== false,
     };
+  }
+
+  private normalizeWarehouse(value: unknown): WarehouseSettings {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return { contacts: [...DEFAULT_WAREHOUSE_SETTINGS.contacts] };
+    }
+
+    const raw = value as Record<string, unknown>;
+    const contacts = Array.isArray(raw.contacts)
+      ? raw.contacts
+          .map((contact) => this.normalizeWarehouseContact(contact))
+          .filter((contact): contact is WarehouseContact => contact !== null)
+          .slice(0, MAX_WAREHOUSE_CONTACTS)
+      : [];
+
+    return { contacts };
+  }
+
+  private normalizeWarehouseContact(raw: unknown): WarehouseContact | null {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      return null;
+    }
+
+    const contact = raw as Record<string, unknown>;
+    const name = this.clean(contact.name);
+    const phone = this.normalizePhone(contact.phone);
+
+    if (!name || !phone) {
+      return null;
+    }
+
+    const id = this.clean(contact.id) || randomUUID();
+
+    return { id, name, phone };
+  }
+
+  private normalizePhone(value: unknown): string {
+    const digits = typeof value === 'string' ? value.replace(/\D/g, '') : '';
+
+    // Accept local Nigerian format (0816...) and convert to international.
+    const phone = digits.startsWith('0') ? `234${digits.slice(1)}` : digits;
+
+    return phone.length >= 10 && phone.length <= 15 ? phone : '';
   }
 
   private clean(value: unknown): string {
