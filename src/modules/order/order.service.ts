@@ -4481,7 +4481,7 @@ export class OrderService {
     }
 
     const userRole = user.role;
-    const where: any = {};
+    const where: Prisma.OrderWhereInput = {};
 
     // Apply role-based filtering
     if (userRole === UserRole.WHOLESALER) {
@@ -4514,7 +4514,13 @@ export class OrderService {
     ]);
 
     // Get total revenue from completed orders + pending payment claims count
-    const [completedOrdersRevenue, claimsToVerifyCount] = await Promise.all([
+    // + assignment-based counts used by the procurement officer dashboard
+    const [
+      completedOrdersRevenue,
+      claimsToVerifyCount,
+      pendingAcceptanceCount,
+      processingCount,
+    ] = await Promise.all([
       this.prismaService.order.aggregate({
         where: { ...where, status: OrderStatus.COMPLETED },
         _sum: {
@@ -4523,6 +4529,26 @@ export class OrderService {
       }),
       this.prismaService.order.count({
         where: { ...where, paymentClaimStatus: PaymentClaimStatus.PENDING },
+      }),
+      // Awaiting the officer's acceptance (same as the "Pending" tab)
+      this.prismaService.order.count({
+        where: {
+          ...where,
+          assignmentStatus: {
+            in: [
+              AssignmentStatus.PENDING_ACCEPTANCE,
+              AssignmentStatus.REASSIGNED,
+            ],
+          },
+        },
+      }),
+      // Accepted by the officer and still open (same as the "Processing" tab)
+      this.prismaService.order.count({
+        where: {
+          ...where,
+          assignmentStatus: AssignmentStatus.ACCEPTED,
+          status: { not: OrderStatus.COMPLETED },
+        },
       }),
     ]);
 
@@ -4561,6 +4587,8 @@ export class OrderService {
           completedOrders: completedCount,
           cancelledOrders: cancelledCount,
           claimsToVerify: claimsToVerifyCount,
+          pendingAcceptance: pendingAcceptanceCount, // Awaiting the officer's response
+          processingOrders: processingCount, // Accepted by the officer and still open
           totalRevenue, // Also include in summary
         },
       },
