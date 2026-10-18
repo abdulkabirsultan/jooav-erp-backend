@@ -31,6 +31,8 @@ import {
   OrderItemStatus,
   PaymentMethod,
   PaymentStatus,
+  PaymentChannel,
+  PaymentClaimStatus,
   UserRole,
   AssignmentStatus,
   ProcurementOfficerStatus,
@@ -41,6 +43,9 @@ import { ConfigService } from '@nestjs/config';
 import { APP_CONSTANTS } from '../../shared/constants/app.constants';
 import { EmailEvent } from '../email/types/email.types';
 import { CacheInvalidationService } from '../cache/cache-invalidation.service';
+
+const DEFAULT_PAYMENT_CLAIM_REJECTION_REASON =
+  'Payment could not be verified on our account. Please confirm the transfer details and submit the claim again, or contact support with proof of payment.';
 
 @Injectable()
 export class OrderService {
@@ -53,6 +58,41 @@ export class OrderService {
     private readonly eventEmitter: EventEmitter2,
     private readonly cacheInvalidationService: CacheInvalidationService,
   ) {}
+
+  /**
+   * Convert a provider-supplied date into a valid Date, or now.
+   *
+   * Guards two failure modes seen with Monnify payloads:
+   *   - `null`/empty: `new Date(null)` yields the 1970 epoch
+   *   - unparseable string: yields an Invalid Date, which Prisma rejects
+   */
+  private toValidDate(value?: string | Date | null): Date {
+    if (!value) {
+      return new Date();
+    }
+
+    const parsed = value instanceof Date ? value : new Date(value);
+    return isNaN(parsed.getTime()) ? new Date() : parsed;
+  }
+
+  /**
+   * Detect a Prisma unique-constraint violation (P2002).
+   *
+   * Used where a legitimately concurrent duplicate write must be treated as
+   * idempotent success rather than an error surfaced to the payer.
+   */
+  private isUniqueConstraintError(error: any): boolean {
+    const code = error?.code ?? error?.meta?.code;
+    if (code === 'P2002') {
+      return true;
+    }
+
+    // Prisma sometimes surfaces only the message on wrapped/known errors.
+    return (
+      typeof error?.message === 'string' &&
+      error.message.includes('Unique constraint failed')
+    );
+  }
 
   private async getOrderEmailPayloadById(orderId: string) {
     return this.prismaService.order.findUnique({
@@ -384,6 +424,9 @@ export class OrderService {
         },
         include: {
           items: {
+            // Stable, deterministic order: Postgres physical order shifts when
+            // rows are updated, which would shuffle the cart on every edit.
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
             select: {
               id: true,
               quantity: true,
@@ -691,6 +734,7 @@ export class OrderService {
               status: OrderStatus.PENDING_PAYMENT,
               subtotal: totalAmount,
               totalAmount: totalAmount,
+              paymentChannel: PaymentChannel.MONNIFY,
               monnifyInvoiceRef:
                 monnifyInvoice.responseBody.transactionReference,
               virtualAccounts: virtualAccounts,
@@ -735,6 +779,7 @@ export class OrderService {
                 ? { deliveryAddress: sourceOrder.deliveryAddress }
                 : {}),
               customerNotes: sourceOrder.customerNotes,
+              paymentChannel: PaymentChannel.MONNIFY,
               monnifyInvoiceRef:
                 monnifyInvoice.responseBody.transactionReference,
               virtualAccounts: virtualAccounts,
@@ -1002,6 +1047,7 @@ export class OrderService {
               status: OrderStatus.PENDING_PAYMENT,
               subtotal: totalAmount,
               totalAmount: totalAmount,
+              paymentChannel: PaymentChannel.MANUAL,
               monnifyInvoiceRef: null,
               virtualAccounts: Prisma.JsonNull,
               checkoutUrl: null,
@@ -1045,6 +1091,7 @@ export class OrderService {
                 ? { deliveryAddress: sourceOrder.deliveryAddress }
                 : {}),
               customerNotes: sourceOrder.customerNotes,
+              paymentChannel: PaymentChannel.MANUAL,
               monnifyInvoiceRef: null,
               virtualAccounts: Prisma.JsonNull,
               checkoutUrl: null,
@@ -1517,24 +1564,55 @@ export class OrderService {
       }
     }
 
-    try {
-      let paymentStatus: string;
-      let paymentDetails: {
-        transactionReference: string;
-        amountPaid: number;
-        paidOn: string;
-        paymentMethod: string;
-      };
+    // Declared outside the try so the catch block can still report what was
+    // resolved before a concurrent duplicate write failed the request.
+    let paymentStatus: string | undefined;
+    let paymentDetails:
+      | {
+          transactionReference: string;
+          amountPaid: number;
+          paidOn: string;
+          paymentMethod: string;
+        }
+      | undefined;
 
+    try {
       if (mode === 'manual') {
         // MANUAL MODE: Admin confirms payment without Monnify verification
         this.logger.log(
           `Manual payment verification initiated for order ${orderNumber} by admin ${userId}`,
         );
 
+        // A completed payment may already exist for this order, either from a
+        // previous manual confirmation or from the Monnify flow. Confirming a
+        // second time must not record a duplicate payment row.
+        const alreadyCompleted = order.payments.find(
+          (p) => p.status === PaymentStatus.COMPLETED,
+        );
+
+        if (alreadyCompleted) {
+          this.logger.log(
+            `Manual verification skipped for order ${orderNumber}: payment already completed`,
+          );
+          return {
+            success: true,
+            message: 'Payment was already confirmed for this order',
+            paymentDetails: {
+              transactionReference: alreadyCompleted.monnifyInvoiceRef,
+              amountPaid: Number(alreadyCompleted.amount),
+              paidOn: alreadyCompleted.paidAt?.toISOString() ?? '',
+              paymentMethod: this.mapMonnifyPaymentMethod(
+                alreadyCompleted.paymentMethod as string,
+              ),
+            },
+          };
+        }
+
         paymentStatus = 'PAID';
         paymentDetails = {
-          transactionReference: `MANUAL-${order.orderNumber}-${Date.now()}`,
+          // Deterministic per order (no timestamp) so a double-click resolves
+          // to the same unique key and upsert() collapses it to one row.
+          transactionReference: `MANUAL-${order.orderNumber}`,
           amountPaid: Number(order.totalAmount),
           paidOn: new Date().toISOString(),
           paymentMethod: 'BANK_TRANSFER',
@@ -1561,15 +1639,47 @@ export class OrderService {
 
       // Process payment if status is PAID
       if (paymentStatus === 'PAID') {
-        // Check if payment already recorded
-        const existingPayment = order.payments.find(
-          (p) =>
-            p.monnifyInvoiceRef === order.monnifyInvoiceRef &&
-            p.status === PaymentStatus.COMPLETED,
-        );
+        // Defensive: a PAID status with no settled amount means the provider
+        // returned a payload we cannot reconcile. Never confirm the order.
+        if (
+          !Number.isFinite(paymentDetails.amountPaid) ||
+          paymentDetails.amountPaid <= 0
+        ) {
+          this.logger.error(
+            `Order ${orderNumber} reported PAID with amountPaid=${paymentDetails.amountPaid}; refusing to confirm`,
+          );
+          throw new BadRequestException(
+            'Payment reported as paid but no amount was returned',
+          );
+        }
 
-        if (!existingPayment) {
-          // Record the payment
+        // Ensure the amount collected matches what the order is owed before
+        // value is delivered. The provider reports 0.00 while a transaction is
+        // pending, so this only runs on a settled payment.
+        const expectedAmount = Number(order.totalAmount);
+        if (
+          Number.isFinite(expectedAmount) &&
+          expectedAmount > 0 &&
+          paymentDetails.amountPaid + 0.01 < expectedAmount
+        ) {
+          this.logger.error(
+            `Order ${orderNumber} underpaid: collected ${paymentDetails.amountPaid}, expected ${expectedAmount}`,
+          );
+          throw new BadRequestException(
+            'Payment amount does not match the order total',
+          );
+        }
+
+        // Record the payment, tolerating a concurrent duplicate.
+        //
+        // `monnifyInvoiceRef` is @unique on Payment, so a concurrent second
+        // request (React StrictMode double-invoke, double click, a network
+        // retry, or the Monnify webhook racing this call) hits P2002. Catching
+        // it here makes the repeat a no-op instead of an error, and the
+        // `paymentCreated` flag lets the confirmation email be emitted exactly
+        // once: only the request that actually recorded the payment sends it.
+        let paymentCreated = false;
+        try {
           await this.prismaService.payment.create({
             data: {
               orderId: order.id,
@@ -1582,45 +1692,70 @@ export class OrderService {
               paidAt: new Date(),
             },
           });
+          paymentCreated = true;
+        } catch (error) {
+          if (!this.isUniqueConstraintError(error)) {
+            throw error;
+          }
+          this.logger.log(
+            `Payment for order ${orderNumber} was already recorded by a concurrent request; skipping duplicate write`,
+          );
+        }
 
-          // Update order status
-          await this.prismaService.order.update({
-            where: { id: order.id },
-            data: { status: OrderStatus.CONFIRMED },
-          });
+        // Update order status; a manual confirmation also closes out any
+        // pending "I have made payment" claim on the order.
+        await this.prismaService.order.update({
+          where: { id: order.id },
+          data: {
+            status: OrderStatus.CONFIRMED,
+            ...(mode === 'manual' && order.paymentClaimStatus
+              ? {
+                  paymentClaimStatus: PaymentClaimStatus.APPROVED,
+                  paymentClaimReviewedAt: new Date(),
+                  paymentClaimReviewedById: userId,
+                }
+              : {}),
+          },
+        });
 
-          // Auto-confirm order items for paid orders
-          await this.prismaService.orderItem.updateMany({
-            where: {
-              orderId: order.id,
-              status: OrderItemStatus.PENDING,
-            },
-            data: {
-              status: OrderItemStatus.PAID,
-              statusUpdatedAt: new Date(),
-              statusUpdatedBy: userId,
-            },
-          });
+        // Auto-confirm order items for paid orders
+        await this.prismaService.orderItem.updateMany({
+          where: {
+            orderId: order.id,
+            status: OrderItemStatus.PENDING,
+          },
+          data: {
+            status: OrderItemStatus.PAID,
+            statusUpdatedAt: new Date(),
+            statusUpdatedBy: userId,
+          },
+        });
 
+        // Emit the confirmation email only when this call recorded the
+        // payment. Repeat verifies (page refresh, retries) and requests that
+        // lost the race to the webhook must not resend it. The webhook path
+        // emits its own confirmation when it records the payment, so every
+        // order gets exactly one email regardless of which path wins.
+        if (paymentCreated) {
           const orderPayload = await this.getOrderEmailPayloadById(order.id);
           if (orderPayload) {
             this.eventEmitter.emit(EmailEvent.ORDER_CONFIRMED, {
               order: orderPayload,
             });
           }
+        }
 
-          // Trigger auto-assignment for paid orders
-          try {
-            await this.autoAssignOrder(order.orderNumber, userId);
-            this.logger.log(
-              `Auto-assignment triggered for order ${order.orderNumber}`,
-            );
-          } catch (autoAssignError) {
-            // Log but don't fail payment verification if auto-assignment fails
-            this.logger.warn(
-              `Auto-assignment failed for order ${order.orderNumber}: ${autoAssignError.message}`,
-            );
-          }
+        // Trigger auto-assignment for paid orders
+        try {
+          await this.autoAssignOrder(order.orderNumber, userId);
+          this.logger.log(
+            `Auto-assignment triggered for order ${order.orderNumber}`,
+          );
+        } catch (autoAssignError) {
+          // Log but don't fail payment verification if auto-assignment fails
+          this.logger.warn(
+            `Auto-assignment failed for order ${order.orderNumber}: ${autoAssignError.message}`,
+          );
         }
 
         await this.cacheInvalidationService.invalidateOrders();
@@ -1651,15 +1786,190 @@ export class OrderService {
         return {
           success: false,
           message: `Payment status: ${paymentStatus}`,
+          paymentDetails: {
+            transactionReference: paymentDetails.transactionReference,
+            amountPaid: paymentDetails.amountPaid,
+            paidOn: paymentDetails.paidOn,
+            paymentMethod: paymentDetails.paymentMethod,
+          },
         };
       }
     } catch (error) {
+      // A unique-constraint violation on monnifyInvoiceRef means a concurrent
+      // request already recorded this exact payment. That is a success, not a
+      // failure, and must not be reported to the user as an error.
+      if (this.isUniqueConstraintError(error)) {
+        this.logger.warn(
+          `Payment for order ${orderNumber} was already recorded by a concurrent request; treating as confirmed`,
+        );
+        await this.cacheInvalidationService.invalidateOrders();
+
+        const details = paymentDetails ?? {
+          transactionReference: order.monnifyInvoiceRef ?? '',
+          amountPaid: Number(order.totalAmount) || 0,
+          paidOn: '',
+          paymentMethod: '',
+        };
+
+        return {
+          success: true,
+          message: 'Payment confirmed successfully',
+          paymentDetails: details,
+        };
+      }
+
+      // A guard rejection (no amount, underpayment) already carries a precise
+      // explanation; surface it rather than masking it with the generic error.
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+
       this.logger.error(
         `Failed to verify payment for order ${orderNumber}: ${error.message}`,
         error.stack,
       );
       throw new BadRequestException('Failed to verify payment status');
     }
+  }
+
+  /**
+   * Resolve the channel an order was initiated with; legacy orders predate
+   * the channel field, so a Monnify ref means online payment.
+   */
+  private resolvePaymentChannel(order: {
+    paymentChannel: PaymentChannel | null;
+    monnifyInvoiceRef: string | null;
+  }): PaymentChannel {
+    if (order.paymentChannel) {
+      return order.paymentChannel;
+    }
+
+    return order.monnifyInvoiceRef
+      ? PaymentChannel.MONNIFY
+      : PaymentChannel.MANUAL;
+  }
+
+  /**
+   * Customer asserts that a bank transfer was made for a manual-payment order.
+   * The claim lives on the order (no Payment row) until an admin reviews it.
+   */
+  async createPaymentClaim(orderNumber: string, userId: string) {
+    const user = await this.prismaService.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const order = await this.prismaService.order.findUnique({
+      where: { orderNumber },
+    });
+
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    if (user.role === UserRole.WHOLESALER && order.wholesalerId !== userId) {
+      throw new ForbiddenException(
+        'You can only claim payment for your own orders',
+      );
+    }
+
+    if (order.status !== OrderStatus.PENDING_PAYMENT) {
+      throw new BadRequestException(
+        `Payment can only be claimed for orders awaiting payment. Current status: ${order.status}`,
+      );
+    }
+
+    if (this.resolvePaymentChannel(order) !== PaymentChannel.MANUAL) {
+      throw new BadRequestException(
+        'This order uses online payment; a manual payment claim is not required',
+      );
+    }
+
+    if (order.paymentClaimStatus === PaymentClaimStatus.PENDING) {
+      throw new BadRequestException(
+        'A payment claim is already awaiting review',
+      );
+    }
+
+    const updated = await this.prismaService.order.update({
+      where: { id: order.id },
+      data: {
+        paymentClaimStatus: PaymentClaimStatus.PENDING,
+        paymentClaimedAt: new Date(),
+        paymentClaimReviewedAt: null,
+        paymentClaimReviewedById: null,
+        paymentClaimRejectionReason: null,
+      },
+    });
+
+    const orderPayload = await this.getOrderEmailPayloadById(order.id);
+    if (orderPayload) {
+      this.eventEmitter.emit(EmailEvent.PAYMENT_CLAIMED, {
+        order: orderPayload,
+      });
+    }
+
+    await this.cacheInvalidationService.invalidateOrders();
+
+    return updated;
+  }
+
+  /**
+   * Admin rejects a pending payment claim; the customer can claim again.
+   */
+  async rejectPaymentClaim(
+    orderNumber: string,
+    adminId: string,
+    reason?: string,
+  ) {
+    const order = await this.prismaService.order.findUnique({
+      where: { orderNumber },
+    });
+
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    if (!order.paymentClaimStatus) {
+      throw new BadRequestException(
+        'This order has no payment claim to review',
+      );
+    }
+
+    if (order.paymentClaimStatus !== PaymentClaimStatus.PENDING) {
+      throw new BadRequestException(
+        `This payment claim was already ${order.paymentClaimStatus.toLowerCase()}`,
+      );
+    }
+
+    const rejectionReason =
+      reason?.trim() || DEFAULT_PAYMENT_CLAIM_REJECTION_REASON;
+
+    const updated = await this.prismaService.order.update({
+      where: { id: order.id },
+      data: {
+        paymentClaimStatus: PaymentClaimStatus.REJECTED,
+        paymentClaimReviewedAt: new Date(),
+        paymentClaimReviewedById: adminId,
+        paymentClaimRejectionReason: rejectionReason,
+      },
+    });
+
+    const orderPayload = await this.getOrderEmailPayloadById(order.id);
+    if (orderPayload) {
+      this.eventEmitter.emit(EmailEvent.PAYMENT_CLAIM_REJECTED, {
+        order: orderPayload,
+        reason: rejectionReason,
+      });
+    }
+
+    await this.cacheInvalidationService.invalidateOrders();
+
+    return updated;
   }
 
   /**
@@ -2094,6 +2404,9 @@ export class OrderService {
       where: { orderNumber },
       include: {
         items: {
+          // Stable, deterministic order: Postgres physical order shifts when
+          // rows are updated, which would shuffle the cart on every edit.
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
           include: {
             product: {
               select: {
@@ -2209,6 +2522,10 @@ export class OrderService {
     // Apply additional filters
     if (queryDto.status) {
       where.status = queryDto.status;
+    }
+
+    if (queryDto.paymentClaimStatus) {
+      where.paymentClaimStatus = queryDto.paymentClaimStatus;
     }
 
     const search = queryDto.search?.trim();
@@ -2883,6 +3200,20 @@ export class OrderService {
 
       return result;
     } catch (error) {
+      // A duplicate delivery that raced the upsert is a success: the payment is
+      // already recorded and Monnify only needs a 200. Never rethrow this, or
+      // Monnify will keep retrying a delivery that has in fact been handled.
+      if (this.isUniqueConstraintError(error)) {
+        this.logger.warn(
+          `Duplicate webhook delivery for ${transactionReference} (unique constraint); already recorded`,
+        );
+        return {
+          success: true,
+          message: 'Webhook already processed',
+          processed: false,
+        };
+      }
+
       this.logger.error(
         `Failed to process webhook for transaction ${transactionReference}:`,
         error.message,
@@ -2939,7 +3270,14 @@ export class OrderService {
       };
     }
 
-    // Process the payment
+    // Process the payment atomically.
+    //
+    // Monnify retries webhook deliveries, and this can also race the
+    // synchronous verify-payment call. `monnifyInvoiceRef` is @unique, so a
+    // duplicate delivery hits P2002: the whole transaction rolls back and the
+    // catch below reports it as already processed — which is exactly right.
+    // Only the request that actually records the payment runs the order
+    // update and emits the confirmation email, so the email goes out once.
     await this.prismaService.$transaction([
       this.prismaService.payment.create({
         data: {
@@ -2948,7 +3286,9 @@ export class OrderService {
           paymentMethod: this.mapMonnifyPaymentMethod(eventData.paymentMethod),
           monnifyInvoiceRef: transactionReference,
           status: PaymentStatus.COMPLETED,
-          paidAt: new Date(eventData.paidOn),
+          // Guard against a missing or unparseable paidOn: new Date(null)
+          // yields the 1970 epoch and an Invalid Date is rejected by Prisma.
+          paidAt: this.toValidDate(eventData.paidOn),
         },
       }),
       this.prismaService.order.update({
@@ -2967,6 +3307,17 @@ export class OrderService {
         },
       }),
     ]);
+
+    // The webhook can win the race against the payer's return-to-app verify
+    // call, so emit the confirmation email here too. Combined with the gate in
+    // verifyPayment, every order gets exactly one email: only the path that
+    // actually recorded the payment emits it.
+    const orderPayload = await this.getOrderEmailPayloadById(order.id);
+    if (orderPayload) {
+      this.eventEmitter.emit(EmailEvent.ORDER_CONFIRMED, {
+        order: orderPayload,
+      });
+    }
 
     // Trigger auto-assignment if enabled (async - don't block webhook response)
     setImmediate(async () => {
@@ -3016,15 +3367,22 @@ export class OrderService {
       return { success: false, message: 'Order not found' };
     }
 
-    // Log the failed payment attempt
-    await this.prismaService.payment.create({
-      data: {
+    // Record the failed attempt.
+    //
+    // Same @unique column as the success path, and Monnify can deliver several
+    // FAILED events for one transaction (one per declined attempt). A bare
+    // create() would throw P2002 on the second delivery. upsert() keeps the
+    // first recorded attempt and makes repeats a no-op.
+    await this.prismaService.payment.upsert({
+      where: { monnifyInvoiceRef: eventData.transactionReference },
+      create: {
         orderId: order.id,
-        amount: eventData.amountPaid || 0,
+        amount: Number(eventData.amountPaid) || 0,
         paymentMethod: this.mapMonnifyPaymentMethod(eventData.paymentMethod),
         monnifyInvoiceRef: eventData.transactionReference,
         status: PaymentStatus.FAILED,
       },
+      update: {},
     });
 
     this.logger.log(`Failed payment recorded for order ${order.orderNumber}`);
@@ -3068,6 +3426,12 @@ export class OrderService {
         return PaymentMethod.CHECKOUT_URL;
       case 'CASH':
         return PaymentMethod.BANK_TRANSFER;
+      // Already one of our own enum values. Reached when mapping a stored
+      // Payment.paymentMethod back for reporting, which would otherwise fall
+      // through to the default and report every card as a bank transfer.
+      case PaymentMethod.BANK_TRANSFER:
+      case PaymentMethod.CHECKOUT_URL:
+        return monnifyMethod as PaymentMethod;
       default:
         return PaymentMethod.BANK_TRANSFER;
     }
@@ -4149,13 +4513,18 @@ export class OrderService {
       }),
     ]);
 
-    // Get total revenue from completed orders
-    const completedOrdersRevenue = await this.prismaService.order.aggregate({
-      where: { ...where, status: OrderStatus.COMPLETED },
-      _sum: {
-        totalAmount: true,
-      },
-    });
+    // Get total revenue from completed orders + pending payment claims count
+    const [completedOrdersRevenue, claimsToVerifyCount] = await Promise.all([
+      this.prismaService.order.aggregate({
+        where: { ...where, status: OrderStatus.COMPLETED },
+        _sum: {
+          totalAmount: true,
+        },
+      }),
+      this.prismaService.order.count({
+        where: { ...where, paymentClaimStatus: PaymentClaimStatus.PENDING },
+      }),
+    ]);
 
     const [
       draftCount,
@@ -4191,6 +4560,7 @@ export class OrderService {
           activeOrders: confirmedCount + assignedCount + inProgressCount,
           completedOrders: completedCount,
           cancelledOrders: cancelledCount,
+          claimsToVerify: claimsToVerifyCount,
           totalRevenue, // Also include in summary
         },
       },
@@ -4737,53 +5107,46 @@ export class OrderService {
       };
 
       if (hasItemChange) {
-        const currentSubtotal = order.items.reduce(
-          (sum, orderItem) => sum + Number(orderItem.lineTotal),
-          0,
-        );
-
-        let recalculatedSubtotal = currentSubtotal;
+        // Apply totals as atomic increments so concurrent cart edits (e.g.
+        // two items added at once) compose instead of overwriting each other
+        // with a subtotal derived from a stale snapshot.
+        let totalsDelta = 0;
 
         if (itemOperation?.type === 'UPDATE') {
-          const existingItem = order.items.find(
+          const currentItem = order.items.find(
             (orderItem) => orderItem.id === itemOperation.itemId,
           );
 
-          if (!existingItem) {
+          if (!currentItem) {
             throw new NotFoundException(
               `Order item ${itemOperation.itemId} not found in order`,
             );
           }
 
-          recalculatedSubtotal =
-            currentSubtotal -
-            Number(existingItem.lineTotal) +
-            Number(itemOperation.lineTotal);
+          totalsDelta =
+            Number(itemOperation.lineTotal) - Number(currentItem.lineTotal);
         }
 
         if (itemOperation?.type === 'ADD') {
-          recalculatedSubtotal =
-            currentSubtotal + Number(itemOperation.lineTotal);
+          totalsDelta = Number(itemOperation.lineTotal);
         }
 
         if (itemOperation?.type === 'REMOVE') {
-          const existingItem = order.items.find(
+          const currentItem = order.items.find(
             (orderItem) => orderItem.id === itemOperation.itemId,
           );
 
-          if (!existingItem) {
+          if (!currentItem) {
             throw new NotFoundException(
               `Order item ${itemOperation.itemId} not found in order`,
             );
           }
 
-          recalculatedSubtotal =
-            currentSubtotal - Number(existingItem.lineTotal);
+          totalsDelta = -Number(currentItem.lineTotal);
         }
 
-        const normalizedSubtotal = Math.max(0, recalculatedSubtotal);
-        orderUpdateData.subtotal = normalizedSubtotal;
-        orderUpdateData.totalAmount = normalizedSubtotal;
+        orderUpdateData.subtotal = { increment: totalsDelta };
+        orderUpdateData.totalAmount = { increment: totalsDelta };
       }
 
       const operations: any[] = [];
@@ -4847,6 +5210,9 @@ export class OrderService {
         where: { id: result.id },
         include: {
           items: {
+            // Stable, deterministic order: Postgres physical order shifts when
+            // rows are updated, which would shuffle the cart on every edit.
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
             include: {
               product: {
                 select: {
@@ -4939,6 +5305,14 @@ export class OrderService {
         throw error;
       }
 
+      // Concurrent duplicate adds land here as a raw P2002; surface the same
+      // clean client error the in-order duplicate check returns.
+      if (this.isUniqueConstraintError(error)) {
+        throw new BadRequestException(
+          'Product already exists in order. Use UPDATE action instead.',
+        );
+      }
+
       this.logger.error(
         `Failed to update order ${orderNumber}: ${error.message}`,
         error.stack,
@@ -4996,6 +5370,7 @@ export class OrderService {
       completedOrdersCount,
       liveProductsCount,
       allUsersCount,
+      paymentsToVerifyCount,
     ] = await Promise.all([
       // 1. Get active orders (confirmed status upwards, excluding pending_payment)
       this.prismaService.order.findMany({
@@ -5095,6 +5470,11 @@ export class OrderService {
 
       // 6. Get all users count
       this.prismaService.user.count({ where: { deletedAt: null } }),
+
+      // 7. Get count of payments awaiting admin verification
+      this.prismaService.order.count({
+        where: { paymentClaimStatus: PaymentClaimStatus.PENDING },
+      }),
     ]);
 
     // Transform active orders to include procurement officer names
@@ -5116,6 +5496,7 @@ export class OrderService {
           completedOrders: completedOrdersCount,
           liveProducts: liveProductsCount,
           allUsers: allUsersCount,
+          paymentsToVerify: paymentsToVerifyCount,
         },
       },
     };

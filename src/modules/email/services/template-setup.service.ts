@@ -97,6 +97,8 @@ export class TemplateSetupService {
       this.createAssignmentRejectedTemplate(),
       this.createPaymentInitiatedTemplate(),
       this.createPaymentFailedTemplate(),
+      this.createPaymentClaimedTemplate(),
+      this.createPaymentRejectedTemplate(),
       this.createOrderCancelledTemplate(),
       this.createRoleUpdatedTemplate(),
       this.createAccountDeactivatedTemplate(),
@@ -721,6 +723,59 @@ export class TemplateSetupService {
         },
         { key: 'ITEM_COUNT', type: 'number', fallbackValue: 0 },
         { key: 'ADMIN_REPORT_URL', type: 'string', fallbackValue: '#' },
+      ],
+    };
+  }
+
+  private createPaymentClaimedTemplate(): TemplateDefinition {
+    return {
+      name: 'Payment Claimed Template',
+      alias: EMAIL_TEMPLATES.PAYMENT_CLAIMED,
+      subject: 'Payment Claimed {{{ORDER_NUMBER}}} - Action Required',
+      html: this.buildCorporateTemplate({
+        title: 'Customer Claims Payment Made',
+        intro:
+          'A customer has indicated that they have paid for an order via bank transfer. Please verify the payment and confirm or reject the claim.',
+        detailsHtml:
+          '<p><strong>Order Number:</strong> {{{ORDER_NUMBER}}}</p><p><strong>Customer:</strong> {{{CUSTOMER_NAME}}}</p><p><strong>Order Total:</strong> ₦{{{ORDER_TOTAL}}}</p><p><strong>Claimed At:</strong> {{{CLAIMED_AT}}}</p>',
+        ctaLabel: 'Review Order',
+        ctaUrl: '{{{ADMIN_ORDER_URL}}}',
+      }),
+      variables: [
+        { key: 'CUSTOMER_NAME', type: 'string', fallbackValue: 'Customer' },
+        { key: 'ORDER_NUMBER', type: 'string', fallbackValue: 'ORD-001' },
+        { key: 'ORDER_TOTAL', type: 'string', fallbackValue: '0' },
+        { key: 'CLAIMED_AT', type: 'string', fallbackValue: 'N/A' },
+        { key: 'ADMIN_ORDER_URL', type: 'string', fallbackValue: '#' },
+      ],
+    };
+  }
+
+  private createPaymentRejectedTemplate(): TemplateDefinition {
+    return {
+      name: 'Payment Claim Rejected Template',
+      alias: EMAIL_TEMPLATES.PAYMENT_REJECTED,
+      subject: 'Payment Not Verified for Order {{{ORDER_NUMBER}}}',
+      html: this.buildCorporateTemplate({
+        title: 'Payment Could Not Be Verified',
+        intro:
+          'Hello {{{CUSTOMER_NAME}}}, we could not verify the payment you reported for this order. Please review the details below and submit the claim again if the payment has been made.',
+        detailsHtml:
+          '<p><strong>Order Number:</strong> {{{ORDER_NUMBER}}}</p><p><strong>Order Total:</strong> ₦{{{ORDER_TOTAL}}}</p><p><strong>Reason:</strong> {{{REASON}}}</p>',
+        ctaLabel: 'View Order',
+        ctaUrl: '{{{VIEW_ORDER_URL}}}',
+        note: 'If you believe this is a mistake, please share proof of payment with our support team.',
+      }),
+      variables: [
+        { key: 'CUSTOMER_NAME', type: 'string', fallbackValue: 'Customer' },
+        { key: 'ORDER_NUMBER', type: 'string', fallbackValue: 'ORD-001' },
+        { key: 'ORDER_TOTAL', type: 'string', fallbackValue: '0' },
+        {
+          key: 'REASON',
+          type: 'string',
+          fallbackValue: 'Payment could not be verified',
+        },
+        { key: 'VIEW_ORDER_URL', type: 'string', fallbackValue: '#' },
       ],
     };
   }

@@ -65,6 +65,11 @@ export class AdminDashboardController {
                   type: 'number',
                   description: 'Total users count',
                 },
+                paymentsToVerify: {
+                  type: 'number',
+                  description:
+                    'Orders awaiting manual payment verification (pending payment claims)',
+                },
               },
             },
           },

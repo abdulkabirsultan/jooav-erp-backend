@@ -35,6 +35,7 @@ import {
   AdminProfileDto,
   AdminPermissionsDto,
 } from './dto/admin-response.dto';
+import { SuccessResponse } from '../../common/dto/api-response.dto';
 
 @ApiTags('Admin Authentication')
 @Controller('admin/auth')
@@ -65,8 +66,12 @@ export class AdminAuthController {
   async login(
     @Body() loginDto: AdminLoginDto,
     @Request() req: any,
-  ): Promise<AdminAuthResponseDto> {
-    return this.adminAuthService.login(loginDto, req);
+  ): Promise<SuccessResponse<AdminAuthResponseDto>> {
+    // Wrapped so ResponseInterceptor preserves the message. Returning the bare
+    // service result made the interceptor substitute its generic POST string,
+    // so admins saw "Resource created successfully" on login.
+    const result = await this.adminAuthService.login(loginDto, req);
+    return new SuccessResponse('User logged in successfully', result);
   }
 
   @Post('logout')
@@ -88,9 +93,9 @@ export class AdminAuthController {
   async logout(
     @CurrentAdminId() adminId: string,
     @Request() req: any,
-  ): Promise<{ message: string }> {
+  ): Promise<SuccessResponse<null>> {
     await this.adminAuthService.logout(adminId, req);
-    return { message: 'Logout successful' };
+    return new SuccessResponse('Admin logged out successfully');
   }
 
   @Post('refresh')
@@ -190,7 +195,8 @@ export class AdminAuthController {
   })
   async seedSuperAdmin(
     @Body() seedDto: AdminSeedDto,
-  ): Promise<AdminProfileDto> {
-    return this.adminAuthService.seedSuperAdmin(seedDto);
+  ): Promise<SuccessResponse<AdminProfileDto>> {
+    const result = await this.adminAuthService.seedSuperAdmin(seedDto);
+    return new SuccessResponse('Super admin created successfully', result);
   }
 }

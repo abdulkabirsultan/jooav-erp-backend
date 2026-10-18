@@ -18,6 +18,8 @@ export const EMAIL_TEMPLATES = {
   ORDER_CANCELLED: 'order-cancelled',
   PAYMENT_INITIATED: 'payment-initiated',
   PAYMENT_FAILED: 'payment-failed',
+  PAYMENT_CLAIMED: 'payment-claimed',
+  PAYMENT_REJECTED: 'payment-rejected',
   ASSIGNMENT_REJECTED: 'assignment-rejected',
   OUT_OF_STOCK_REPORT_OPENED: 'out-of-stock-report-opened',
 
@@ -118,6 +120,20 @@ export const TEMPLATE_REQUIRED_VARIABLES: Partial<
     'REASON',
     'VIEW_ORDER_URL',
   ],
+  [EMAIL_TEMPLATES.PAYMENT_CLAIMED]: [
+    'CUSTOMER_NAME',
+    'ORDER_NUMBER',
+    'ORDER_TOTAL',
+    'CLAIMED_AT',
+    'ADMIN_ORDER_URL',
+  ],
+  [EMAIL_TEMPLATES.PAYMENT_REJECTED]: [
+    'CUSTOMER_NAME',
+    'ORDER_NUMBER',
+    'ORDER_TOTAL',
+    'REASON',
+    'VIEW_ORDER_URL',
+  ],
   [EMAIL_TEMPLATES.ASSIGNMENT_REJECTED]: [
     'ORDER_NUMBER',
     'OFFICER_NAME',
@@ -181,6 +197,8 @@ export enum EmailEvent {
   PAYMENT_INITIATED = 'payment.initiated',
   PAYMENT_RECEIVED = 'payment.received',
   PAYMENT_FAILED = 'payment.failed',
+  PAYMENT_CLAIMED = 'payment.claimed',
+  PAYMENT_CLAIM_REJECTED = 'payment.claim_rejected',
 
   // System Events
   SYSTEM_MAINTENANCE = 'system.maintenance',

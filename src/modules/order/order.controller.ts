@@ -15,6 +15,8 @@ import {
   BadRequestException,
   Headers,
   Req,
+  HttpCode,
+  type RawBodyRequest,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -27,6 +29,7 @@ import {
   ApiForbiddenResponse,
   ApiBadRequestResponse,
 } from '@nestjs/swagger';
+import type { Request } from 'express';
 
 import { OrderService } from './order.service';
 import { MonnifyService } from '../payment/monnify.service';
@@ -39,7 +42,7 @@ import {
   CurrentUser,
   CurrentUserId,
 } from '../../common/decorators/current-user.decorator';
-import { UserRole, OrderStatus } from '@prisma/client';
+import { UserRole, OrderStatus, PaymentClaimStatus } from '@prisma/client';
 import {
   CreateOrderDto,
   CheckoutResponseDto,
@@ -51,6 +54,7 @@ import {
   ManualPaymentResponseDto,
   DraftOrderResponseDto,
   VerifyPaymentDto,
+  RejectPaymentClaimDto,
 } from './dto/create-order.dto';
 import {
   CreateOutOfStockReportDto,
@@ -230,6 +234,13 @@ export class OrderController {
   }
 
   @Get('stats')
+  @UseInterceptors(CacheInterceptor)
+  @Cache({
+    key: 'orders-stats',
+    ttl: 60, // 1 minute - invalidated on every order write
+    includeUserId: true,
+    tags: ['orders'],
+  })
   @Roles(
     UserRole.ADMIN,
     UserRole.SUPER_ADMIN,
@@ -293,6 +304,64 @@ export class OrderController {
       userId,
       verifyPaymentDto?.mode,
     );
+  }
+
+  @Post(':orderNumber/payment-claim')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.WHOLESALER)
+  @ApiOperation({
+    summary: 'Claim payment made (manual bank transfer)',
+    description:
+      'The customer asserts that a bank transfer was made for a manual-payment order. The claim is recorded on the order and reviewed by an admin.',
+  })
+  @ApiParam({
+    name: 'orderNumber',
+    description: 'Order number to claim payment for',
+    example: 'JOO-1234567890',
+  })
+  async createPaymentClaim(
+    @Param('orderNumber') orderNumber: string,
+    @CurrentUserId() userId: string,
+  ) {
+    const order = await this.orderService.createPaymentClaim(
+      orderNumber,
+      userId,
+    );
+
+    return {
+      success: true,
+      message: 'Payment claim submitted successfully',
+      data: order,
+    };
+  }
+
+  @Post(':orderNumber/payment-claim/reject')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'Reject a pending payment claim',
+    description:
+      'Rejects the customer payment claim with an optional reason. The order stays awaiting payment and the customer can claim again.',
+  })
+  @ApiParam({
+    name: 'orderNumber',
+    description: 'Order number whose payment claim should be rejected',
+    example: 'JOO-1234567890',
+  })
+  async rejectPaymentClaim(
+    @Param('orderNumber') orderNumber: string,
+    @Body() dto: RejectPaymentClaimDto,
+    @CurrentUserId() userId: string,
+  ) {
+    const order = await this.orderService.rejectPaymentClaim(
+      orderNumber,
+      userId,
+      dto?.reason,
+    );
+
+    return {
+      success: true,
+      message: 'Payment claim rejected',
+      data: order,
+    };
   }
 
   @Patch(':orderNumber/items/:itemId/status')
@@ -543,6 +612,12 @@ export class OrderController {
     description: 'Filter by order status',
   })
   @ApiQuery({
+    name: 'paymentClaimStatus',
+    required: false,
+    enum: PaymentClaimStatus,
+    description: 'Filter by payment claim status',
+  })
+  @ApiQuery({
     name: 'search',
     required: false,
     type: 'string',
@@ -739,6 +814,7 @@ export class OrderController {
 
   @Post('webhook/monnify')
   @Public() // Skip authentication for webhook endpoints
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Monnify payment webhook',
     description:
@@ -756,7 +832,7 @@ export class OrderController {
   async handleMonnifyWebhook(
     @Body() webhookData: any,
     @Headers('monnify-signature') signature: string,
-    @Req() request: any,
+    @Req() request: RawBodyRequest<Request>,
   ): Promise<WebhookResponseDto> {
     // Log webhook receipt immediately
     this.logger.log(`Received Monnify webhook: ${webhookData.eventType}`, {
@@ -766,10 +842,12 @@ export class OrderController {
 
     try {
       // Step 1: Validate IP address (Best Practice #2)
+      const forwardedFor = request.headers['x-forwarded-for'];
       const clientIP =
         request.ip ||
         request.connection?.remoteAddress ||
-        request.headers['x-forwarded-for'];
+        (Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor) ||
+        '';
       const isValidIP = await this.monnifyService.validateWebhookIP(clientIP);
 
       if (!isValidIP) {
@@ -778,8 +856,18 @@ export class OrderController {
       }
 
       // Step 2: Verify webhook signature (Best Practice #1)
+      // Must verify against the raw request bytes: re-serializing the parsed
+      // body can alter number formatting/unicode and break the HMAC.
+      const rawBody = request.rawBody;
+      if (!rawBody) {
+        this.logger.error(
+          'Webhook rejected: raw request body unavailable for signature verification',
+        );
+        throw new BadRequestException('Invalid webhook payload');
+      }
+
       const isValidSignature = await this.monnifyService.verifyWebhook(
-        webhookData,
+        rawBody,
         signature,
       );
       if (!isValidSignature) {
@@ -820,17 +908,9 @@ export class OrderController {
         error.stack,
       );
 
-      // Still return 200 to prevent retries for validation errors
-      if (
-        error.message.includes('Invalid webhook signature') ||
-        error.message.includes('Unauthorized IP')
-      ) {
-        return {
-          success: false,
-          message: error.message,
-        };
-      }
-
+      // Reject with a real error status: any 2xx is treated as delivered by
+      // Monnify, which hides failures from their dashboard and suppresses
+      // retries. A 4xx surfaces the failure and lets Monnify retry.
       throw error;
     }
   }

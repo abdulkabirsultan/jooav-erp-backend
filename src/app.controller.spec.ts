@@ -15,8 +15,11 @@ describe('AppController', () => {
   });
 
   describe('root', () => {
-    it('should return "Hello World!"', () => {
-      expect(appController.getHello()).toBe('Hello World!');
+    it('should return the application status', () => {
+      expect(appController.getHello()).toEqual({
+        status: 'success',
+        message: 'JOOAV ERP API is running',
+      });
     });
   });
 });
