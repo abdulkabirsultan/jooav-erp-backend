@@ -43,8 +43,13 @@ export class ManualPaymentAccountDto {
 }
 
 export class UpdatePaymentSettingsDto {
+  /**
+   * Optional for backward compatibility with older dashboard builds; the
+   * payment method is always MANUAL, so this value is ignored.
+   */
+  @IsOptional()
   @IsIn(PAYMENT_METHODS)
-  method: PaymentMethod;
+  method?: PaymentMethod;
 
   @IsArray()
   @ArrayMaxSize(MAX_MANUAL_ACCOUNTS)

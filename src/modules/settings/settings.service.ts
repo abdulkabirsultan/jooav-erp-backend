@@ -23,8 +23,16 @@ export interface PaymentSettings {
 }
 
 export const DEFAULT_PAYMENT_SETTINGS: PaymentSettings = {
-  method: 'MONNIFY',
-  manualAccounts: [],
+  method: 'MANUAL',
+  manualAccounts: [
+    {
+      id: 'default-moniepoint',
+      accountName: 'Jooav Companies Limited',
+      accountNumber: '6548385435',
+      bankName: 'Moniepoint MFB',
+      isVisible: true,
+    },
+  ],
 };
 
 export const WAREHOUSE_SETTINGS_KEY = 'warehouse.settings';
@@ -58,13 +66,46 @@ export class SettingsService {
 
   /**
    * Full payment settings for the admin app (includes hidden accounts).
+   *
+   * The payment method is fixed to MANUAL: when no visible manual account
+   * exists (e.g. a fresh database), the default Moniepoint account is seeded
+   * once. Afterwards the dashboard enforces keeping at least one visible
+   * account, so the seed never runs again.
    */
   async getPaymentSettings(): Promise<PaymentSettings> {
     const config = await this.prismaService.systemConfig.findUnique({
       where: { key: PAYMENT_SETTINGS_KEY },
     });
 
-    return this.normalize(config?.value);
+    const settings = this.normalize(config?.value);
+
+    if (!settings.manualAccounts.some((account) => account.isVisible)) {
+      settings.manualAccounts = [
+        ...settings.manualAccounts,
+        { ...DEFAULT_PAYMENT_SETTINGS.manualAccounts[0] },
+      ];
+
+      try {
+        await this.prismaService.systemConfig.upsert({
+          where: { key: PAYMENT_SETTINGS_KEY },
+          create: {
+            key: PAYMENT_SETTINGS_KEY,
+            value: settings as unknown as Prisma.InputJsonValue,
+          },
+          update: {
+            value: settings as unknown as Prisma.InputJsonValue,
+          },
+        });
+      } catch (error) {
+        this.logger.warn(
+          `Could not persist the default manual payment account: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+
+    return settings;
   }
 
   /**
@@ -82,7 +123,11 @@ export class SettingsService {
   }
 
   async updatePaymentSettings(input: {
-    method: PaymentMethod;
+    /**
+     * Kept optional for older dashboard builds; ignored — the payment
+     * method is always MANUAL.
+     */
+    method?: PaymentMethod;
     manualAccounts: Array<{
       id?: string;
       accountName: string;
@@ -91,12 +136,6 @@ export class SettingsService {
       isVisible?: boolean;
     }>;
   }): Promise<PaymentSettings> {
-    if (!PAYMENT_METHODS.includes(input.method)) {
-      throw new BadRequestException(
-        `Invalid payment method. Allowed values: ${PAYMENT_METHODS.join(', ')}`,
-      );
-    }
-
     if (!Array.isArray(input.manualAccounts)) {
       throw new BadRequestException('manualAccounts must be an array');
     }
@@ -117,16 +156,16 @@ export class SettingsService {
       );
     }
 
-    if (
-      input.method === 'MANUAL' &&
-      !manualAccounts.some((account) => account.isVisible)
-    ) {
+    if (!manualAccounts.some((account) => account.isVisible)) {
       throw new BadRequestException(
-        'At least one visible bank account is required when manual payment is enabled',
+        'At least one visible bank account is required for manual payments',
       );
     }
 
-    const settings: PaymentSettings = { method: input.method, manualAccounts };
+    const settings: PaymentSettings = {
+      method: 'MANUAL',
+      manualAccounts,
+    };
 
     await this.prismaService.systemConfig.upsert({
       where: { key: PAYMENT_SETTINGS_KEY },
@@ -201,14 +240,12 @@ export class SettingsService {
   }
 
   private normalize(value: unknown): PaymentSettings {
+    // The payment method is fixed to MANUAL.
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      return { ...DEFAULT_PAYMENT_SETTINGS };
+      return { method: 'MANUAL', manualAccounts: [] };
     }
 
     const raw = value as Record<string, unknown>;
-    const method = PAYMENT_METHODS.includes(raw.method as PaymentMethod)
-      ? (raw.method as PaymentMethod)
-      : DEFAULT_PAYMENT_SETTINGS.method;
 
     const manualAccounts = Array.isArray(raw.manualAccounts)
       ? raw.manualAccounts
@@ -219,7 +256,7 @@ export class SettingsService {
           .slice(0, MAX_MANUAL_ACCOUNTS)
       : [];
 
-    return { method, manualAccounts };
+    return { method: 'MANUAL', manualAccounts };
   }
 
   private normalizeAccount(raw: unknown): ManualPaymentAccount | null {
